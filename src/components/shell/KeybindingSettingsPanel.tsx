@@ -199,7 +199,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
     const overrides = extractKeybindingOverrides(mergedMap);
     const payload = JSON.stringify(
       {
-        schema: "notion-desktop-keybindings-v1",
+        schema: "xynote-keybindings-v1",
         version: "0.3.0",
         exportedAt: new Date().toISOString(),
         overrides,
@@ -215,7 +215,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "notion-keybindings.json";
+      a.download = "xynote-keybindings.json";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -223,7 +223,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
     } catch {
       // Ignore headless download restrictions
     }
-    onNotify("快捷键配置已导出为 notion-keybindings.json");
+    onNotify("快捷键配置已导出为 xynote-keybindings.json");
   };
 
   const handleImportJsonPicked = async (

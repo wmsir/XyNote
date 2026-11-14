@@ -1208,13 +1208,14 @@ impl Database {
                     unwrap_synthetic_export_root(&mut zip_texts, &mut zip_assets);
                     text_entries.extend(zip_texts);
                     asset_data_uris.extend(zip_assets);
-                } else if lower.ends_with(".css") || lower.ends_with(".notion-theme.json") {
+                } else if lower.ends_with(".css") || lower.ends_with(".xynote-theme.json") || lower.ends_with(".notion-theme.json") {
                     let bytes = std::fs::read(p)?;
                     let content = String::from_utf8(bytes)
                         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
                     self.import_style_plugin_content(&file_name, &content)?;
                 } else if lower.ends_with(".json")
                     && lower != "notion-config.json"
+                    && lower != "xynote-config.json"
                     && lower != "plugin-state.json"
                 {
                     let bytes = std::fs::read(p)?;

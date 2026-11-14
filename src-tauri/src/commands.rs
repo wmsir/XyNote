@@ -311,9 +311,15 @@ pub fn save_local_markdown_file(
     file_path: String,
     blocks: Option<Vec<SaveBlockItem>>,
     raw_markdown: Option<String>,
+    expected_updated_at: Option<String>,
 ) -> Result<LocalMarkdownDocument, String> {
-    crate::storage::save_local_markdown_file_disk(&file_path, blocks, raw_markdown)
-        .map_err(Into::into)
+    crate::storage::save_local_markdown_file_checked(
+        &file_path,
+        blocks,
+        raw_markdown,
+        expected_updated_at.as_deref(),
+    )
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -333,6 +339,18 @@ pub fn save_asset_image(
     mime_type: String,
 ) -> Result<SavedAssetResult, String> {
     db.save_asset_image(&filename, &data_base64, &mime_type)
+        .map_err(Into::into)
+}
+
+/// 粘贴到磁盘笔记的图片：存到笔记所在目录的 assets/ 下，返回相对路径
+#[tauri::command]
+pub fn save_local_note_image(
+    note_path: String,
+    filename: String,
+    data_base64: String,
+    mime_type: String,
+) -> Result<crate::storage::LocalNoteImage, String> {
+    crate::storage::save_local_note_image_disk(&note_path, &filename, &data_base64, &mime_type)
         .map_err(Into::into)
 }
 
@@ -364,6 +382,46 @@ pub fn rename_folder_entry(
     new_name: String,
 ) -> Result<crate::folders::FolderEntry, String> {
     crate::folders::rename_entry(&path, &new_name).map_err(Into::into)
+}
+
+/// 拖拽：把文件或文件夹移动到另一个文件夹
+#[tauri::command]
+pub fn move_folder_entry(
+    path: String,
+    target_dir: String,
+) -> Result<crate::folders::FolderEntry, String> {
+    crate::folders::move_entry(&path, &target_dir).map_err(Into::into)
+}
+
+/// 移到系统回收站
+#[tauri::command]
+pub fn trash_folder_entry(path: String) -> Result<(), String> {
+    crate::folders::trash_entry(&path).map_err(Into::into)
+}
+
+/// 在挂载的文件夹里全文搜索笔记；roots 为 [路径, 显示名]
+#[tauri::command]
+pub async fn search_folder_notes(
+    roots: Vec<(String, String)>,
+    query: String,
+) -> Result<Vec<crate::folders::FolderSearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::folders::search_notes(&roots, &query))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 设置要监听的文件夹（递归）与文件；有变化时发出 "xynote://fs-changed" 事件，携带变化的路径
+#[tauri::command]
+pub fn set_watched_paths(
+    app: AppHandle,
+    watcher: State<'_, crate::watch::FsWatcher>,
+    dirs: Vec<String>,
+    files: Vec<String>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    watcher.set_targets(dirs, files, move |paths| {
+        let _ = app.emit("xynote://fs-changed", paths);
+    })
 }
 
 #[tauri::command]

@@ -11,13 +11,16 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
 import {
   createFolderEntry,
   listFolderEntries,
+  moveFolderEntry,
   openPathInExplorer,
   renameFolderEntry,
+  trashFolderEntry,
 } from "../../api/client";
 import type { FolderEntry, WorkspaceFolder } from "../../types/notion";
 
@@ -39,6 +42,8 @@ export interface FolderTreeProps {
   onEntryRenamed: (oldPath: string, newPath: string) => void;
   /** 改名前先把正在编辑的内容写回磁盘，避免写到旧路径 */
   onBeforeRename: () => Promise<void>;
+  /** 文件或文件夹被移到回收站后通知外层：正在编辑的文件需要关闭 */
+  onEntryRemoved: (path: string) => void;
   notify: (message: string, durationMs?: number) => void;
 }
 
@@ -108,12 +113,17 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   onOpenFile,
   onEntryRenamed,
   onBeforeRename,
+  onEntryRemoved,
   notify,
 }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [edit, setEdit] = useState<EditState>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [confirmTrash, setConfirmTrash] = useState(false);
+  // 拖拽：正在拖动的条目与当前悬停的目标文件夹
+  const dragRef = useRef<{ path: string; parent: string; isDir: boolean } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listingsRef = useRef(listings);
   listingsRef.current = listings;
@@ -183,6 +193,28 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
       }
     });
   }, [expanded, folders, isTauri, load]);
+
+  // 磁盘监听：变化路径所在的目录（以及变化的目录本身）若已读取过，静默刷新
+  useEffect(() => {
+    if (!isTauri) return;
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const onChanged = (e: Event) => {
+      const paths = (e as CustomEvent<string[]>).detail ?? [];
+      const loaded = Object.keys(listingsRef.current);
+      const targets = new Set<string>();
+      paths.forEach((p) => {
+        const np = norm(p);
+        const parent = np.slice(0, Math.max(np.lastIndexOf("/"), 0));
+        loaded.forEach((dir) => {
+          const nd = norm(dir);
+          if (nd === parent || nd === np) targets.add(dir);
+        });
+      });
+      targets.forEach((dir) => void load(dir, true));
+    };
+    window.addEventListener("xynote:fs-changed", onChanged);
+    return () => window.removeEventListener("xynote:fs-changed", onChanged);
+  }, [isTauri, load]);
 
   // 回到窗口时静默刷新已展开的目录，反映在文件管理器里做的改动
   useEffect(() => {
@@ -270,9 +302,62 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     }
   };
 
+
+  const moveInto = async (targetDir: string) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setDropTarget(null);
+    if (!drag || samePath(drag.parent, targetDir) || samePath(drag.path, targetDir)) return;
+    try {
+      await onBeforeRename();
+      const moved = await moveFolderEntry(drag.path, targetDir);
+      await Promise.all([load(drag.parent, true), load(targetDir, true)]);
+      toggle(targetDir, true);
+      onEntryRenamed(drag.path, moved.path);
+      notify(`已移动到「${targetDir.split(/[\\/]/).pop()}」`);
+    } catch (err) {
+      notify(errText(err), 3600);
+    }
+  };
+
+  const dropHandlers = (dir: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      const drag = dragRef.current;
+      if (!drag || samePath(drag.path, dir) || samePath(drag.parent, dir)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (dropTarget !== dir) setDropTarget(dir);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+        setDropTarget((cur) => (cur === dir ? null : cur));
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void moveInto(dir);
+    },
+  });
+
+  const moveToTrash = async (m: MenuState) => {
+    setMenu(null);
+    setConfirmTrash(false);
+    try {
+      await onBeforeRename();
+      await trashFolderEntry(m.path);
+      await load(m.parent, true);
+      onEntryRemoved(m.path);
+      notify(`已将「${m.name}」移到回收站`);
+    } catch (err) {
+      notify(errText(err), 3600);
+    }
+  };
+
   const openMenu = (e: React.MouseEvent, m: Omit<MenuState, "top" | "left">) => {
     e.preventDefault();
     e.stopPropagation();
+    setConfirmTrash(false);
     const top = Math.min(e.clientY + 4, window.innerHeight - 260);
     const left = Math.min(e.clientX, window.innerWidth - 230);
     setMenu({ ...m, top, left });
@@ -388,10 +473,23 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     return (
       <div key={entry.path} role="treeitem" aria-expanded={entry.isDir ? isOpen : undefined}>
         <div
-          className={`nb-tree-row nb-folder-row${isActive ? " is-active" : ""}${menuOpen ? " menu-open" : ""}`}
+          className={`nb-tree-row nb-folder-row${isActive ? " is-active" : ""}${menuOpen ? " menu-open" : ""}${
+            entry.isDir && dropTarget === entry.path ? " is-drop-target" : ""
+          }`}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           title={entry.path}
           tabIndex={0}
+          draggable
+          onDragStart={(e) => {
+            dragRef.current = { path: entry.path, parent, isDir: entry.isDir };
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", entry.path);
+          }}
+          onDragEnd={() => {
+            dragRef.current = null;
+            setDropTarget(null);
+          }}
+          {...(entry.isDir ? dropHandlers(entry.path) : dropHandlers(parent))}
           onClick={onActivate}
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return;
@@ -477,7 +575,10 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
         return (
           <div key={root.path} className="nb-folder-root" role="treeitem" aria-expanded={isOpen}>
             <div
-              className={`nb-tree-row nb-folder-root-row${menuOpen ? " menu-open" : ""}`}
+              {...dropHandlers(root.path)}
+              className={`nb-tree-row nb-folder-root-row${menuOpen ? " menu-open" : ""}${
+                dropTarget === root.path ? " is-drop-target" : ""
+              }`}
               style={{ paddingLeft: "8px" }}
               title={root.path}
               tabIndex={0}
@@ -625,6 +726,24 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
               复制路径
             </span>
           </button>
+          {!menu.isRoot && (
+            <>
+              <div className="nb-menu-divider" />
+              <button
+                type="button"
+                className="nb-menu-item is-danger"
+                onClick={() => {
+                  if (!confirmTrash) setConfirmTrash(true);
+                  else void moveToTrash(menu);
+                }}
+              >
+                <span className="nb-menu-item-left">
+                  <Trash2 size={14} />
+                  {confirmTrash ? "再点一次确认移到回收站" : "移到回收站"}
+                </span>
+              </button>
+            </>
+          )}
           {menu.isRoot && (
             <>
               <div className="nb-menu-divider" />

@@ -65,6 +65,8 @@ import { PageHeader } from "./components/shell/PageHeader";
 import { CommandPalette } from "./components/shell/CommandPalette";
 import { TemplatesModal } from "./components/shell/TemplatesModal";
 import { TrashModal } from "./components/shell/TrashModal";
+import { FileConflictDialog } from "./components/shell/FileConflictDialog";
+import { useDiskSync } from "./hooks/useDiskSync";
 import { MarkdownModal } from "./components/shell/MarkdownModal";
 import { PageFooterExtras } from "./components/shell/PageFooterExtras";
 import {
@@ -328,6 +330,26 @@ export const App: React.FC = () => {
     }, durationMs);
   }, []);
 
+  // 磁盘文件：冲突检测、带冲突检测的保存、磁盘监听（见 hooks/useDiskSync.ts）
+  const {
+    localMtimeRef,
+    localSaveChainRef,
+    localConflict,
+    setLocalConflict,
+    rememberLocalMtime,
+    saveLocalChecked,
+    conflictBusy,
+    resolveConflict,
+  } = useDiskSync({
+    activeLocalMd,
+    activeLocalMdRef,
+    pendingLocalMdSaveRef,
+    setActiveLocalMd,
+    setIsSaving,
+    showToast,
+    workspaceFolders,
+  });
+
   const flushPendingBlockSave = useCallback(async () => {
     const pending = pendingSaveRef.current;
     if (pending) {
@@ -349,12 +371,12 @@ export const App: React.FC = () => {
       pendingLocalMdSaveRef.current = null;
       setIsSaving(true);
       try {
-        const saved = await saveLocalMarkdownFile(
+        const saved = await saveLocalChecked(
           pendingLocal.filePath,
           pendingLocal.items,
           pendingLocal.rawMarkdown
         );
-        setActiveLocalMd((prev) =>
+        if (saved) setActiveLocalMd((prev) =>
           prev && prev.filePath === saved.filePath
             ? { ...prev, markdown: saved.markdown, updatedAt: saved.updatedAt }
             : prev
@@ -365,7 +387,7 @@ export const App: React.FC = () => {
         setIsSaving(false);
       }
     }
-  }, []);
+  }, [saveLocalChecked]);
 
   const refreshSidebarLists = useCallback(async () => {
     const [activeList, trashList] = await Promise.all([
@@ -419,6 +441,7 @@ export const App: React.FC = () => {
       await flushPendingBlockSave();
       try {
         const doc = await openLocalMarkdownFile(filePath);
+        rememberLocalMtime(doc);
         setActiveLocalMd(doc);
         pushRecentLocalMd(doc);
         showToast(`正在直编本地文件：${doc.fileName}`);
@@ -429,7 +452,7 @@ export const App: React.FC = () => {
         );
       }
     },
-    [flushPendingBlockSave, pushRecentLocalMd, showToast]
+    [flushPendingBlockSave, pushRecentLocalMd, rememberLocalMtime, showToast]
   );
 
   const persistWorkspaceFolders = useCallback((next: WorkspaceFolder[]) => {
@@ -498,12 +521,36 @@ export const App: React.FC = () => {
       const movedActive = current ? remap(current.filePath) : null;
       if (movedActive) {
         openLocalMarkdownFile(movedActive)
-          .then((doc) => setActiveLocalMd(doc))
+          .then((doc) => {
+            localMtimeRef.current[doc.filePath] = doc.updatedAt;
+            setActiveLocalMd(doc);
+          })
           .catch(() => {});
       }
     },
     []
   );
+
+  // 文件或文件夹移到回收站后：关闭正在编辑的文件，并从最近列表移除
+  const handleFolderEntryRemoved = useCallback((removedPath: string) => {
+    const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+    const r = norm(removedPath);
+    const gone = (p: string) => norm(p) === r || norm(p).startsWith(r + "/");
+    setRecentLocalMdFiles((prev) => {
+      const next = prev.filter((item) => !gone(item.filePath));
+      if (next.length !== prev.length) setSetting("recentLocalMdFiles", JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+    const cur = activeLocalMdRef.current;
+    if (cur && gone(cur.filePath)) {
+      const pending = pendingLocalMdSaveRef.current;
+      if (pending) {
+        window.clearTimeout(pending.timer);
+        pendingLocalMdSaveRef.current = null;
+      }
+      setActiveLocalMd(null);
+    }
+  }, []);
 
   const handleOpenLocalMdDialog = useCallback(async () => {
     if (isTauriRuntime()) {
@@ -1103,13 +1150,11 @@ export const App: React.FC = () => {
           props: b.props,
           sortOrder: idx,
         }));
-        const saved = await saveLocalMarkdownFile(
-          curLocal.filePath,
-          items,
-          null
-        );
-        setActiveLocalMd(saved);
-        showToast(`已保存至磁盘：${saved.fileName}`);
+        const saved = await saveLocalChecked(curLocal.filePath, items, null);
+        if (saved) {
+          setActiveLocalMd(saved);
+          showToast(`已保存至磁盘：${saved.fileName}`);
+        }
       } finally {
         setIsSaving(false);
       }
@@ -1155,6 +1200,7 @@ export const App: React.FC = () => {
       );
       if (savedPath) {
         const opened = await openLocalMarkdownFile(savedPath);
+        rememberLocalMtime(opened);
         setActiveLocalMd(opened);
         pushRecentLocalMd(opened);
         showToast(`已另存为：${opened.fileName}`);
@@ -1470,8 +1516,8 @@ export const App: React.FC = () => {
     const timer = window.setTimeout(async () => {
       pendingLocalMdSaveRef.current = null;
       try {
-        const saved = await saveLocalMarkdownFile(filePath, saveItems, null);
-        setActiveLocalMd((prev) =>
+        const saved = await saveLocalChecked(filePath, saveItems, null);
+        if (saved) setActiveLocalMd((prev) =>
           prev && prev.filePath === filePath
             ? {
                 ...prev,
@@ -1517,8 +1563,8 @@ export const App: React.FC = () => {
       const timer = window.setTimeout(async () => {
         pendingLocalMdSaveRef.current = null;
         try {
-          const saved = await saveLocalMarkdownFile(filePath, null, rawMarkdown);
-          setActiveLocalMd((prev) =>
+          const saved = await saveLocalChecked(filePath, null, rawMarkdown);
+          if (saved) setActiveLocalMd((prev) =>
             prev && prev.filePath === filePath
               ? {
                   ...prev,
@@ -1782,6 +1828,7 @@ export const App: React.FC = () => {
         onRemoveWorkspaceFolder={handleRemoveWorkspaceFolder}
         onFolderEntryRenamed={handleFolderEntryRenamed}
         onBeforeFolderRename={flushPendingBlockSave}
+        onFolderEntryRemoved={handleFolderEntryRemoved}
         notify={showToast}
       />
 
@@ -1885,18 +1932,21 @@ export const App: React.FC = () => {
                     marginBottom: "6px",
                   }}
                 >
-                  📄 {activeLocalMd.filePath}
+                  {activeLocalMd.filePath}
                 </div>
-                <h1
-                  style={{
-                    margin: 0,
-                    fontSize: "32px",
-                    fontWeight: 700,
-                    letterSpacing: "-0.02em",
-                  }}
-                >
-                  {activeLocalMd.title || activeLocalMd.fileName}
-                </h1>
+                {/* 正文第一块已经是一级标题时不再重复显示标题，否则用文件名作标题 */}
+                {activeLocalMd.blocks.find((blk) => blk.blockType !== "divider")?.blockType !== "heading1" && (
+                  <h1
+                    style={{
+                      margin: 0,
+                      fontSize: "32px",
+                      fontWeight: 700,
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    {activeLocalMd.fileName.replace(/\.(md|markdown|mdown|mkd|txt)$/i, "") || activeLocalMd.title}
+                  </h1>
+                )}
               </div>
 
               <EnhancedBlockEditor
@@ -2136,6 +2186,10 @@ export const App: React.FC = () => {
       <CommandPalette
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
+        folderRoots={workspaceFolders.map((f) => [f.path, f.name] as [string, string])}
+        onOpenFile={(fp) => {
+          openLocalMdByPath(fp).catch(() => {});
+        }}
         onSelectResult={(pageId, blockId) => {
           loadPageDetailById(pageId, blockId).catch(() => {});
         }}
@@ -2208,6 +2262,16 @@ export const App: React.FC = () => {
           handleCreatePage(input).catch(() => {});
         }}
       />
+
+      {localConflict && (
+        <FileConflictDialog
+          fileName={localConflict.filePath.split(/[\\/]/).pop() || localConflict.filePath}
+          busy={conflictBusy}
+          onReload={() => void resolveConflict("reload")}
+          onOverwrite={() => void resolveConflict("overwrite")}
+          onSaveCopy={() => void resolveConflict("copy")}
+        />
+      )}
 
       <TrashModal
         open={trashOpen}

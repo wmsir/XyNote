@@ -19,9 +19,38 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
-const CONFIG_FILENAME: &str = "notion-config.json";
-const DB_FILENAME: &str = "notion_desktop.db";
-const SYNC_MANIFEST_FILENAME: &str = ".notion-sync-manifest.json";
+const CONFIG_FILENAME: &str = "xynote-config.json";
+const DB_FILENAME: &str = "xynote.db";
+const SYNC_MANIFEST_FILENAME: &str = ".xynote-sync-manifest.json";
+// 早期版本沿用的文件名：启动时自动改成新名字，老用户无感升级
+const LEGACY_CONFIG_FILENAME: &str = "notion-config.json";
+const LEGACY_DB_FILENAME: &str = "notion_desktop.db";
+const LEGACY_SYNC_MANIFEST_FILENAME: &str = ".notion-sync-manifest.json";
+
+/// 新文件不存在而旧文件存在时，把旧文件改成新名字（失败时保持原样，下次再试）
+fn migrate_legacy_file(dir: &Path, legacy: &str, current: &str) {
+    let old = dir.join(legacy);
+    let new = dir.join(current);
+    if !new.exists() && old.is_file() {
+        let _ = std::fs::rename(&old, &new);
+    }
+}
+
+/// SQLite 数据库连同 WAL / SHM 旁路文件一起改名
+fn migrate_legacy_db(data_dir: &Path) {
+    let new = data_dir.join(DB_FILENAME);
+    if new.exists() || !data_dir.join(LEGACY_DB_FILENAME).is_file() {
+        return;
+    }
+    for suffix in ["-wal", "-shm"] {
+        migrate_legacy_file(
+            data_dir,
+            &format!("{}{}", LEGACY_DB_FILENAME, suffix),
+            &format!("{}{}", DB_FILENAME, suffix),
+        );
+    }
+    migrate_legacy_file(data_dir, LEGACY_DB_FILENAME, DB_FILENAME);
+}
 const LAUNCH_BACKUP_MIN_INTERVAL_SECS: u64 = 600; // 10 minutes
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,10 +340,11 @@ fn create_backup_snapshot_internal(
 }
 
 /* ============================================================================
- * Live `.md` Mirror Sync (`pages/` directory + `.notion-sync-manifest.json`)
+ * Live `.md` Mirror Sync (`pages/` directory + `.xynote-sync-manifest.json`)
  * ========================================================================== */
 
 fn load_sync_manifest(sync_dir: &Path) -> HashMap<String, String> {
+    migrate_legacy_file(sync_dir, LEGACY_SYNC_MANIFEST_FILENAME, SYNC_MANIFEST_FILENAME);
     let manifest_path = sync_dir.join(SYNC_MANIFEST_FILENAME);
     if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
         if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&raw) {
@@ -631,7 +661,8 @@ pub fn open_local_markdown_file_disk(file_path: &str) -> Result<LocalMarkdownDoc
         .unwrap_or_else(now_iso);
 
     let page_key = format!("local:{}", clean_path);
-    let blocks = drafts_to_blocks(&page_key, parse_markdown_to_blocks(&markdown), &updated_at);
+    let mut blocks = drafts_to_blocks(&page_key, parse_markdown_to_blocks(&markdown), &updated_at);
+    inline_local_images(&mut blocks, &clean_path);
     let (file_name, title) = extract_local_file_meta(&clean_path, &markdown);
 
     Ok(LocalMarkdownDocument {
@@ -663,7 +694,7 @@ pub fn save_local_markdown_file_disk(
     let ts = now_iso();
     let page_key = format!("local:{}", clean_path);
 
-    let (final_markdown, final_blocks) = if let Some(raw_md) = raw_markdown {
+    let (final_markdown, mut final_blocks) = if let Some(raw_md) = raw_markdown {
         let parsed = drafts_to_blocks(&page_key, parse_markdown_to_blocks(&raw_md), &ts);
         (raw_md, parsed)
     } else if let Some(items) = blocks {
@@ -675,6 +706,7 @@ pub fn save_local_markdown_file_disk(
     };
 
     std::fs::write(path, final_markdown.as_bytes())?;
+    inline_local_images(&mut final_blocks, &clean_path);
     let updated_at = path
         .metadata()
         .ok()
@@ -693,6 +725,182 @@ pub fn save_local_markdown_file_disk(
     })
 }
 
+/// 磁盘笔记里引用的本地图片（相对路径或绝对路径）读成 data URL 用于显示，
+/// 原始引用记在 props.local_src，保存时写回，Markdown 文件保持干净可移植。
+pub fn inline_local_images(blocks: &mut [Block], note_path: &str) {
+    let clean = normalize_win32_path_str(note_path);
+    let Some(note_dir) = Path::new(&clean).parent().map(|p| p.to_path_buf()) else {
+        return;
+    };
+    for block in blocks.iter_mut() {
+        if block.block_type != "image" {
+            continue;
+        }
+        let raw = block
+            .props
+            .url
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| block.content.trim().to_string());
+        let lower = raw.to_ascii_lowercase();
+        if raw.is_empty()
+            || lower.starts_with("data:")
+            || lower.starts_with("http://")
+            || lower.starts_with("https://")
+        {
+            continue;
+        }
+        let mut rel = raw.trim().trim_start_matches('<').trim_end_matches('>').to_string();
+        if let Some(rest) = rel.strip_prefix("file:///") {
+            rel = rest.to_string();
+        }
+        let decoded = percent_decode_simple(&rel);
+        let candidate = {
+            let p = Path::new(&decoded);
+            if p.is_absolute() { p.to_path_buf() } else { note_dir.join(p) }
+        };
+        let Ok(meta) = candidate.metadata() else { continue };
+        if !meta.is_file() || meta.len() > 15 * 1024 * 1024 {
+            continue;
+        }
+        let ext = candidate
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        let mime = match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "svg" => "image/svg+xml",
+            "bmp" => "image/bmp",
+            "ico" => "image/x-icon",
+            _ => continue,
+        };
+        let Ok(bytes) = std::fs::read(&candidate) else { continue };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        block.props.local_src = Some(raw.clone());
+        block.props.url = Some(format!("data:{};base64,{}", mime, b64));
+    }
+}
+
+/// 只处理 Markdown 链接里常见的 %XX 转义（如空格 %20、中文 UTF-8 字节）
+fn percent_decode_simple(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Some(v) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
+/// 把粘贴到磁盘笔记里的图片保存到「笔记所在目录/assets/」，返回相对路径与用于显示的 data URL
+pub fn save_local_note_image_disk(
+    note_path: &str,
+    filename: &str,
+    data_base64: &str,
+    mime_type: &str,
+) -> Result<LocalNoteImage, AppError> {
+    let clean = normalize_win32_path_str(note_path);
+    let note_dir = Path::new(&clean)
+        .parent()
+        .ok_or_else(|| AppError::Validation("无法确定笔记所在目录".into()))?
+        .to_path_buf();
+    let payload = match data_base64.split_once(',') {
+        Some((prefix, rest)) if prefix.contains("base64") => rest,
+        _ => data_base64,
+    };
+    let compact: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&compact)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&compact))?;
+    if bytes.is_empty() {
+        return Err(AppError::Validation("图片内容为空".into()));
+    }
+    let mime = if mime_type.trim().starts_with("image/") { mime_type.trim() } else { "image/png" };
+    let ext = match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/bmp" => "bmp",
+        _ => "png",
+    };
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(sanitize_windows_segment)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "image".to_string());
+    let assets = note_dir.join("assets");
+    std::fs::create_dir_all(&assets)?;
+    let stamp = Local::now().format("%Y%m%d-%H%M%S");
+    let mut name = format!("{}-{}.{}", stem, stamp, ext);
+    let mut n = 1;
+    while assets.join(&name).exists() {
+        n += 1;
+        name = format!("{}-{}-{}.{}", stem, stamp, n, ext);
+    }
+    std::fs::write(assets.join(&name), &bytes)?;
+    // Markdown 里空格需要转义，否则多数编辑器识别不了链接
+    let relative = format!("assets/{}", name.replace(' ', "%20"));
+    Ok(LocalNoteImage {
+        relative_path: relative,
+        file_path: clean_display_path(&assets.join(&name)),
+        display_url: format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(&bytes)),
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalNoteImage {
+    pub relative_path: String,
+    pub file_path: String,
+    pub display_url: String,
+}
+
+/// 读取磁盘文件当前的修改时间（与 LocalMarkdownDocument.updated_at 同一格式）
+pub fn local_file_updated_at(file_path: &str) -> Option<String> {
+    let clean_path = normalize_win32_path_str(file_path);
+    Path::new(&clean_path)
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(system_time_to_iso)
+}
+
+/// 带冲突检测的保存：传入打开 / 上次保存时的修改时间，若磁盘上的文件之后被其他程序改过，
+/// 返回 AppError::Conflict（携带文件当前的修改时间），不覆盖对方的改动。
+/// expected_updated_at 为 None 时直接写入（用户选择「仍然覆盖」或新文件）。
+pub fn save_local_markdown_file_checked(
+    file_path: &str,
+    blocks: Option<Vec<SaveBlockItem>>,
+    raw_markdown: Option<String>,
+    expected_updated_at: Option<&str>,
+) -> Result<LocalMarkdownDocument, AppError> {
+    if let Some(expected) = expected_updated_at.filter(|s| !s.is_empty()) {
+        if let Some(current) = local_file_updated_at(file_path) {
+            if current != expected {
+                return Err(AppError::Conflict(current));
+            }
+        }
+    }
+    save_local_markdown_file_disk(file_path, blocks, raw_markdown)
+}
+
 pub fn convert_markdown_blocks_pure(
     markdown: Option<String>,
     blocks: Option<Vec<SaveBlockItem>>,
@@ -705,7 +913,11 @@ pub fn convert_markdown_blocks_pure(
     let ts = now_iso();
 
     if let Some(md) = markdown {
-        let parsed_blocks = drafts_to_blocks(&pid, parse_markdown_to_blocks(&md), &ts);
+        let mut parsed_blocks = drafts_to_blocks(&pid, parse_markdown_to_blocks(&md), &ts);
+        // 源码模式切回所见即所得时，磁盘笔记里的相对路径图片同样要能显示
+        if let Some(note_path) = pid.strip_prefix("local:") {
+            inline_local_images(&mut parsed_blocks, note_path);
+        }
         let (file_name, title) = extract_local_file_meta("document.md", &md);
         Ok(LocalMarkdownDocument {
             file_path: String::new(),
@@ -736,7 +948,7 @@ pub fn convert_markdown_blocks_pure(
  * ========================================================================== */
 
 impl Database {
-    /// Open portable storage anchored at `exe_dir` (`<exe_dir>\notion-config.json` and
+    /// Open portable storage anchored at `exe_dir` (`<exe_dir>\xynote-config.json` and
     /// `<exe_dir>\data\`), falling back to `fallback_app_data_dir` only if `exe_dir` is read-only.
     pub fn open_portable(
         exe_dir: &Path,
@@ -744,6 +956,8 @@ impl Database {
         allow_legacy_appdata_migration: bool,
     ) -> Result<Self, AppError> {
         let exe_dir_writable = probe_dir_writable(exe_dir);
+        migrate_legacy_file(exe_dir, LEGACY_CONFIG_FILENAME, CONFIG_FILENAME);
+        migrate_legacy_file(fallback_app_data_dir, LEGACY_CONFIG_FILENAME, CONFIG_FILENAME);
         let (config_file_path, default_data_dir) = if exe_dir_writable {
             (
                 exe_dir.join(CONFIG_FILENAME),
@@ -774,17 +988,18 @@ impl Database {
             )?;
         }
 
-        // Always persist `notion-config.json` so portable config is visible in software folder on first launch
+        // Always persist `xynote-config.json` so portable config is visible in software folder on first launch
         save_storage_config_file(&config_file_path, &config)?;
 
         // Auto-seed portable `plugins/themes/` (5 themes) & `plugins/snippets/` (5 CSS snippets) on cold-start
         let _ = crate::plugins::ensure_plugins_initialized_on_disk(Path::new(&config.active_data_dir));
 
+        migrate_legacy_db(Path::new(&config.active_data_dir));
         let db_file_path = Path::new(&config.active_data_dir).join(DB_FILENAME);
 
         // Seamless v0.1.0 upgrade migration from `%APPDATA%\com.meng.notiondesktop\notion_desktop.db`
         if !db_file_path.exists() && allow_legacy_appdata_migration {
-            let legacy_db = fallback_app_data_dir.join(DB_FILENAME);
+            let legacy_db = fallback_app_data_dir.join(LEGACY_DB_FILENAME);
             if legacy_db.is_file()
                 && normalize_path_key(&legacy_db) != normalize_path_key(&db_file_path)
             {
@@ -1377,9 +1592,9 @@ mod tests {
         let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false)
             .expect("open portable db in exe_dir");
 
-        // 1. Default portable storage lives in `<exe_dir>\notion-config.json` & `<exe_dir>\data\`
-        assert!(exe_root.path().join("notion-config.json").is_file());
-        assert!(exe_root.path().join("data").join("notion_desktop.db").is_file());
+        // 1. Default portable storage lives in `<exe_dir>\xynote-config.json` & `<exe_dir>\data\`
+        assert!(exe_root.path().join("xynote-config.json").is_file());
+        assert!(exe_root.path().join("data").join("xynote.db").is_file());
         assert!(exe_root.path().join("data").join("pages").is_dir());
         assert!(exe_root.path().join("data").join("assets").is_dir());
         assert!(exe_root.path().join("data").join("backups").is_dir());
@@ -1414,7 +1629,7 @@ mod tests {
             normalize_path_key(Path::new(&info_custom.active_data_dir)),
             normalize_path_key(custom_vault.path())
         );
-        assert!(custom_vault.path().join("notion_desktop.db").is_file());
+        assert!(custom_vault.path().join("xynote.db").is_file());
         assert!(db
             .list_pages()
             .unwrap()
@@ -1437,6 +1652,91 @@ mod tests {
         assert!(pages_after_reset.iter().any(|p| p.id == p_in_custom.id));
 
         drop(db);
+    }
+
+    #[test]
+    fn test_local_note_images_saved_beside_note_and_written_relative() {
+        let dir = TempTestDir::new("note-img");
+        let note = dir.path().join("游记.md");
+        let note_str = note.to_string_lossy().into_owned();
+        // 1x1 PNG
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let img = save_local_note_image_disk(&note_str, "截图 1.png", png, "image/png").unwrap();
+        assert!(img.relative_path.starts_with("assets/"));
+        assert!(img.relative_path.contains("%20"), "空格应转义");
+        assert!(Path::new(&img.file_path).is_file());
+
+        let md = format!("# 游记\n\n![海边]({})\n", img.relative_path);
+        std::fs::write(&note, &md).unwrap();
+        let doc = open_local_markdown_file_disk(&note_str).unwrap();
+        let image = doc.blocks.iter().find(|b| b.block_type == "image").unwrap();
+        assert!(image.props.url.as_deref().unwrap().starts_with("data:image/png;base64,"));
+        assert_eq!(image.props.local_src.as_deref(), Some(img.relative_path.as_str()));
+
+        // 所见即所得保存：写回相对路径，而不是 data URL
+        let items: Vec<SaveBlockItem> = doc
+            .blocks
+            .iter()
+            .map(|b| SaveBlockItem {
+                id: b.id.clone(),
+                block_type: b.block_type.clone(),
+                content: b.content.clone(),
+                plain_text: b.plain_text.clone(),
+                props: b.props.clone(),
+                sort_order: b.sort_order,
+            })
+            .collect();
+        save_local_markdown_file_disk(&note_str, Some(items), None).unwrap();
+        let written = std::fs::read_to_string(&note).unwrap();
+        assert!(written.contains(&format!("]({})", img.relative_path)));
+        assert!(!written.contains("data:image"));
+    }
+
+    #[test]
+    fn test_legacy_notion_named_files_are_migrated() {
+        let exe_root = TempTestDir::new("legacy-names");
+        let appdata = TempTestDir::new("legacy-appdata");
+        // 先用新代码建一个工作区，再把文件改回旧名字，模拟老版本留下的数据
+        {
+            let db = Database::open_portable(exe_root.path(), appdata.path(), false).unwrap();
+            db.create_page(CreatePageInput { title: Some("老数据".into()), ..Default::default() }).unwrap();
+        }
+        let data = exe_root.path().join("data");
+        std::fs::rename(exe_root.path().join("xynote-config.json"), exe_root.path().join("notion-config.json")).unwrap();
+        std::fs::rename(data.join("xynote.db"), data.join("notion_desktop.db")).unwrap();
+        for s in ["-wal", "-shm"] {
+            let _ = std::fs::rename(data.join(format!("xynote.db{}", s)), data.join(format!("notion_desktop.db{}", s)));
+        }
+
+        let db = Database::open_portable(exe_root.path(), appdata.path(), false).unwrap();
+        assert!(exe_root.path().join("xynote-config.json").is_file());
+        assert!(!exe_root.path().join("notion-config.json").exists());
+        assert!(data.join("xynote.db").is_file());
+        assert!(db.list_pages().unwrap().iter().any(|p| p.title == "老数据"), "数据应随文件一起迁移");
+    }
+
+    #[test]
+    fn test_local_save_detects_external_modification() {
+        let dir = TempTestDir::new("conflict");
+        let path = dir.path().join("note.md");
+        let path_str = path.to_string_lossy().into_owned();
+        let first = save_local_markdown_file_checked(&path_str, None, Some("# A\n".into()), None).unwrap();
+
+        // 用打开时的时间保存：没有外部改动，正常写入
+        let second =
+            save_local_markdown_file_checked(&path_str, None, Some("# B\n".into()), Some(&first.updated_at)).unwrap();
+
+        // 其他程序改了文件（修改时间变化）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, "# 外部改动\n").unwrap();
+        let err = save_local_markdown_file_checked(&path_str, None, Some("# C\n".into()), Some(&second.updated_at))
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# 外部改动\n", "冲突时不能覆盖");
+
+        // 用户选择「仍然覆盖」
+        save_local_markdown_file_checked(&path_str, None, Some("# C\n".into()), None).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# C\n");
     }
 
     #[test]

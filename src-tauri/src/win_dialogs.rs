@@ -769,12 +769,12 @@ pub fn pick_style_plugin_file_dialog_sync(
                 filters: vec![
                     (
                         "Style Plugins (*.css;*.json)".to_string(),
-                        "*.css;*.json;*.notion-theme.json".to_string(),
+                        "*.css;*.json;*.xynote-theme.json;*.notion-theme.json".to_string(),
                     ),
                     ("CSS 样式片段 (*.css)".to_string(), "*.css".to_string()),
                     (
-                        "Notion 主题包 (*.notion-theme.json;*.json)".to_string(),
-                        "*.notion-theme.json;*.json".to_string(),
+                        "XyNote 主题包 (*.xynote-theme.json;*.json)".to_string(),
+                        "*.xynote-theme.json;*.notion-theme.json;*.json".to_string(),
                     ),
                     ("所有文件 (*.*)".to_string(), "*.*".to_string()),
                 ],
@@ -826,8 +826,8 @@ pub fn save_style_plugin_file_dialog_sync(
         let filters = if is_theme {
             vec![
                 (
-                    "Notion 主题包 (*.notion-theme.json;*.json)".to_string(),
-                    "*.notion-theme.json;*.json".to_string(),
+                    "XyNote 主题包 (*.xynote-theme.json;*.json)".to_string(),
+                    "*.xynote-theme.json;*.notion-theme.json;*.json".to_string(),
                 ),
                 ("所有文件 (*.*)".to_string(), "*.*".to_string()),
             ]

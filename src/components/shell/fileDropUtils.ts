@@ -5,14 +5,14 @@ const NON_IMPORT_SINGLE_EXT_RE =
 
 export function isStylePluginFilePath(path: string): boolean {
   const trimmed = path.trim();
-  return /\.(css|notion-theme\.json)$/i.test(trimmed);
+  return /\.(css|(xynote|notion)-theme\.json)$/i.test(trimmed);
 }
 
 export function filterImportableOsPaths(paths: string[]): string[] {
   return paths.filter((p) => {
     const trimmed = p.trim();
     if (!trimmed) return false;
-    if (/\.(md|markdown|txt|csv|zip|css|notion-theme\.json)$/i.test(trimmed)) {
+    if (/\.(md|markdown|txt|csv|zip|css|(xynote|notion)-theme\.json)$/i.test(trimmed)) {
       return true;
     }
     if (NON_IMPORT_SINGLE_EXT_RE.test(trimmed)) return false;
@@ -125,7 +125,7 @@ async function processNamedFiles(
       continue;
     }
 
-    if (lower.endsWith(".css") || lower.endsWith(".notion-theme.json")) {
+    if (lower.endsWith(".css") || lower.endsWith(".xynote-theme.json") || lower.endsWith(".notion-theme.json")) {
       const content = await readFileAsText(file);
       stylePluginFiles.push({
         filename: file.name || norm.split("/").pop() || "plugin.css",

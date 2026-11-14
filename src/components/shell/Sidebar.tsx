@@ -7,7 +7,6 @@ import {
   FileCode2,
   FilePlus2,
   FileText,
-  FolderOpen,
   FolderPlus,
   MoreHorizontal,
   PanelLeftClose,
@@ -62,6 +61,7 @@ export interface SidebarProps {
   onRemoveWorkspaceFolder: (path: string) => void;
   onFolderEntryRenamed: (oldPath: string, newPath: string) => void;
   onBeforeFolderRename: () => Promise<void>;
+  onFolderEntryRemoved: (path: string) => void;
   notify: (message: string, durationMs?: number) => void;
 }
 
@@ -131,6 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRemoveWorkspaceFolder,
   onFolderEntryRenamed,
   onBeforeFolderRename,
+  onFolderEntryRemoved,
   notify,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({
@@ -319,7 +320,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="nb-workspace-title-wrap">
             <span className="nb-workspace-name">小悦 (XyNote)</span>
             <span className="nb-workspace-sub">
-              {isTauri ? "SQLite + Markdown 引擎" : "本地工作区 v0.3.5"}
+              {`v${__APP_VERSION__}`}{isTauri ? "" : " · 浏览器预览"}
             </span>
           </div>
         </div>
@@ -505,8 +506,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
               <span>文件夹</span>
             </button>
-            {isTauri && (
-              <div className="nb-section-actions">
+            <div className="nb-section-actions nb-folder-section-actions">
+              <button
+                type="button"
+                className="nb-section-action-btn"
+                title="新建单个 .md 文件"
+                aria-label="新建单个 .md 文件"
+                onClick={onCreateLocalMdFile}
+              >
+                <FilePlus2 size={16} strokeWidth={1.6} />
+              </button>
+              <button
+                type="button"
+                className="nb-section-action-btn"
+                title="打开单个 .md 文件 (Ctrl+O)"
+                aria-label="打开单个 .md 文件"
+                onClick={onOpenLocalMdDialog}
+              >
+                <FileCode2 size={16} strokeWidth={1.6} />
+              </button>
+              {isTauri && (
                 <button
                   type="button"
                   className="nb-section-action-btn"
@@ -516,8 +535,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <FolderPlus size={16} strokeWidth={1.6} />
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           {foldersOpen && (
             <FolderTree
@@ -529,121 +548,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onOpenFile={onSelectLocalMdFile}
               onEntryRenamed={onFolderEntryRenamed}
               onBeforeRename={onBeforeFolderRename}
+              onEntryRemoved={onFolderEntryRemoved}
               notify={notify}
             />
           )}
-        </div>
-      </div>
 
-      {/* Fixed Bottom Local Markdown Direct-Edit Panel */}
-      <div className="nb-sidebar-local-panel">
-        <div className="nb-sidebar-section-header">
-          <button
-            type="button"
-            className="nb-sidebar-section-toggle"
-            onClick={() => setLocalMdOpen((v) => !v)}
-            aria-expanded={localMdOpen}
-          >
-            <ChevronRight
-              size={16}
-              strokeWidth={1.6}
-              className={`nb-section-chevron${
-                localMdOpen ? " is-expanded" : ""
-              }`}
-            />
-            <span>本地 .md 直编</span>
-          </button>
-
-          {hasLocalMdFiles && (
-            <div className="nb-section-actions">
+          {/* 最近打开的单个文件（原「本地 .md 直编」），与文件夹放在一起 */}
+          {foldersOpen && hasLocalMdFiles && (
+            <div className="nb-recent-files">
               <button
                 type="button"
-                className="nb-section-action-btn"
-                title="新建外部 .md 文件"
-                aria-label="新建外部 .md 文件"
-                onClick={onCreateLocalMdFile}
+                className="nb-recent-toggle"
+                onClick={() => setLocalMdOpen((v) => !v)}
+                aria-expanded={localMdOpen}
               >
-                <FilePlus2 size={16} strokeWidth={1.6} />
+                <ChevronRight
+                  size={14}
+                  strokeWidth={1.8}
+                  className={`nb-section-chevron${localMdOpen ? " is-expanded" : ""}`}
+                />
+                <span>最近打开</span>
               </button>
-              <button
-                type="button"
-                className="nb-section-action-btn"
-                title="打开本地 .md 文件 (Ctrl+O)"
-                aria-label="打开本地 .md 文件"
-                onClick={onOpenLocalMdDialog}
-              >
-                <FolderOpen size={16} strokeWidth={1.6} />
-              </button>
+              {localMdOpen &&
+                recentLocalMdFiles.slice(0, 8).map((item) => {
+                  const isCurrent = activeLocalMdPath === item.filePath;
+                  return (
+                    <div
+                      key={item.filePath}
+                      className={`nb-tree-row${isCurrent ? " is-active" : ""}`}
+                      style={{ paddingLeft: "8px" }}
+                      onClick={() => onSelectLocalMdFile(item.filePath)}
+                      title={item.filePath}
+                    >
+                      <div className="nb-tree-leading">
+                        <span className="nb-tree-glyph">
+                          <FileCode2 size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />
+                        </span>
+                      </div>
+                      <span className="nb-tree-title">{item.fileName || item.title}</span>
+                      <div className="nb-tree-actions">
+                        <button
+                          type="button"
+                          className="nb-tree-action-btn"
+                          title="从最近列表移除"
+                          aria-label="从最近列表移除"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRemoveRecentLocalMdFile(item.filePath);
+                          }}
+                        >
+                          <X size={16} strokeWidth={1.6} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>
-
-        {localMdOpen && (
-          <div className="nb-sidebar-local-list">
-            {!hasLocalMdFiles ? (
-              <div className="nb-local-empty-actions">
-                <button
-                  type="button"
-                  className="nb-local-empty-ghost-btn"
-                  onClick={onCreateLocalMdFile}
-                  title="选择磁盘目录新建外部 .md 文件并直编"
-                >
-                  <Plus size={15} strokeWidth={1.6} />
-                  <span>新建本地 .md</span>
-                </button>
-                <button
-                  type="button"
-                  className="nb-local-empty-ghost-btn"
-                  onClick={onOpenLocalMdDialog}
-                  title="打开磁盘 .md 文件直编 (Ctrl+O)"
-                >
-                  <FolderOpen size={15} strokeWidth={1.6} />
-                  <span>打开本地文件</span>
-                </button>
-              </div>
-            ) : (
-              recentLocalMdFiles.map((item) => {
-                const isCurrent = activeLocalMdPath === item.filePath;
-                return (
-                  <div
-                    key={item.filePath}
-                    className={`nb-tree-row${isCurrent ? " is-active" : ""}`}
-                    style={{ paddingLeft: "8px" }}
-                    onClick={() => onSelectLocalMdFile(item.filePath)}
-                    title={item.filePath}
-                  >
-                    <div className="nb-tree-leading">
-                      <span className="nb-tree-glyph">
-                        <FileCode2
-                          size={16}
-                          strokeWidth={1.6}
-                          className="nb-tree-glyph-svg"
-                        />
-                      </span>
-                    </div>
-                    <span className="nb-tree-title">
-                      {item.fileName || item.title}
-                    </span>
-                    <div className="nb-tree-actions">
-                      <button
-                        type="button"
-                        className="nb-tree-action-btn"
-                        title="从最近列表移除"
-                        aria-label="从最近列表移除"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveRecentLocalMdFile(item.filePath);
-                        }}
-                      >
-                        <X size={16} strokeWidth={1.6} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
       </div>
 
       {/* Bottom Utility Actions */}

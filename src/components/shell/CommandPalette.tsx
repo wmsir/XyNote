@@ -13,8 +13,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { searchWorkspace } from "../../api/client";
-import type { SearchResult } from "../../types/notion";
+import { searchFolderNotes, searchWorkspace } from "../../api/client";
+import type { FolderSearchHit, SearchResult } from "../../types/notion";
 import type { ThemeMode } from "./Topbar";
 
 export interface CommandPaletteProps {
@@ -30,6 +30,9 @@ export interface CommandPaletteProps {
   onCreateLocalMdFile: () => void;
   onToggleViewMode: () => void;
   onChangeTheme: (theme: ThemeMode) => void;
+  /** 侧栏挂载的文件夹 [路径, 显示名]，一起参与搜索 */
+  folderRoots?: Array<[string, string]>;
+  onOpenFile?: (path: string) => void;
 }
 
 interface QuickActionItem {
@@ -53,9 +56,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onCreateLocalMdFile,
   onToggleViewMode,
   onChangeTheme,
+  folderRoots = [],
+  onOpenFile,
 }) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [fileHits, setFileHits] = useState<FolderSearchHit[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -214,9 +220,35 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     };
   }, [open, query]);
 
+  // 文件夹里的笔记：输入停顿一下再搜，避免每敲一个字就扫一遍磁盘
+  const rootsKey = JSON.stringify(folderRoots);
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    if (!q || folderRoots.length === 0) {
+      setFileHits([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      searchFolderNotes(folderRoots, q)
+        .then((hits) => {
+          if (!cancelled) setFileHits(hits);
+        })
+        .catch(() => {
+          if (!cancelled) setFileHits([]);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query, rootsKey]);
+
   if (!open) return null;
 
-  const totalItems = results.length + filteredActions.length;
+  const totalItems = results.length + fileHits.length + filteredActions.length;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -238,8 +270,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         const chosen = results[activeIndex];
         onSelectResult(chosen.pageId, chosen.blockId);
         onClose();
+      } else if (activeIndex < results.length + fileHits.length) {
+        const hit = fileHits[activeIndex - results.length];
+        onOpenFile?.(hit.path);
+        onClose();
       } else {
-        const action = filteredActions[activeIndex - results.length];
+        const action = filteredActions[activeIndex - results.length - fileHits.length];
         action?.run();
       }
     }
@@ -258,7 +294,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             ref={inputRef}
             type="text"
             className="nb-cmd-input"
-            placeholder="搜索工作区页面、块内容或输入快捷命令..."
+            placeholder="搜索页面、文件夹里的笔记或命令…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -326,11 +362,50 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             </>
           )}
 
+          {fileHits.length > 0 && (
+            <>
+              <div className="nb-cmd-group-label">文件夹中的笔记</div>
+              {fileHits.map((hit, idx) => {
+                const globalIdx = results.length + idx;
+                const isSelected = globalIdx === activeIndex;
+                return (
+                  <button
+                    key={`file-${hit.path}-${hit.line}`}
+                    type="button"
+                    className={`nb-cmd-item${isSelected ? " is-active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(globalIdx)}
+                    onClick={() => {
+                      onOpenFile?.(hit.path);
+                      onClose();
+                    }}
+                    title={hit.path}
+                  >
+                    <span style={{ color: "var(--text-secondary)", display: "inline-flex", flexShrink: 0 }}>
+                      <FileCode2 size={16} />
+                    </span>
+                    <div className="nb-cmd-item-body">
+                      <div className="nb-cmd-item-title">
+                        {hit.name.replace(/\.(md|markdown|mdown|mkd)$/i, "")}
+                        <span className="nb-cmd-item-meta">{hit.rootName}</span>
+                      </div>
+                      <div className="nb-cmd-item-snippet">
+                        {hit.line > 0 ? `第 ${hit.line} 行 · ${hit.snippet}` : "文件名匹配"}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <CornerDownLeft size={14} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          )}
+
           {filteredActions.length > 0 && (
             <>
               <div className="nb-cmd-group-label">快捷操作</div>
               {filteredActions.map((act, idx) => {
-                const globalIdx = results.length + idx;
+                const globalIdx = results.length + fileHits.length + idx;
                 const isSelected = globalIdx === activeIndex;
                 return (
                   <button
@@ -380,7 +455,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
         <div className="nb-cmd-footer">
           <span>↑↓ 选择条目 · Enter 跳转打开 · Esc 关闭</span>
-          <span>SQLite FTS5 全文检索</span>
+          <span>{folderRoots.length > 0 ? "工作区 + 文件夹全文检索" : "工作区全文检索"}</span>
         </div>
       </div>
     </div>

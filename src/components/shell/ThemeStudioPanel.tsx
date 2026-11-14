@@ -387,7 +387,7 @@ export const ThemeStudioPanel: React.FC<ThemeStudioPanelProps> = ({
       <input
         ref={browserPluginInputRef}
         type="file"
-        accept=".css,.json,.notion-theme.json"
+        accept=".css,.json,.xynote-theme.json,.notion-theme.json"
         style={{ display: "none" }}
         onChange={handleBrowserPluginFilePicked}
       />
@@ -398,7 +398,7 @@ export const ThemeStudioPanel: React.FC<ThemeStudioPanelProps> = ({
           <p className="nb-settings-desc">
             支持一键切换精选设计师主题、可视化定制专属配色，或自由叠加多个{" "}
             <code>.css</code> 样式增强插件并导出分享给他人（也可直接将 <code>.css</code> /{" "}
-            <code>.notion-theme.json</code> 拖入窗口安装）。
+            <code>.xynote-theme.json</code> 拖入窗口安装）。
           </p>
         </div>
         <div className="nb-kb-actions-group">
@@ -608,7 +608,7 @@ export const ThemeStudioPanel: React.FC<ThemeStudioPanelProps> = ({
                       <button
                         type="button"
                         className="nb-icon-btn"
-                        title="导出 .notion-theme.json 分享给他人"
+                        title="导出 .xynote-theme.json 分享给他人"
                         onClick={() => handleExportPlugin(tp)}
                       >
                         <Download size={13} />
@@ -642,7 +642,7 @@ export const ThemeStudioPanel: React.FC<ThemeStudioPanelProps> = ({
                 可视化自定义主题工坊 (Visual Theme Builder)
               </div>
               <div className="nb-settings-sub">
-                自由调配主画布、侧边栏、代码块与强调色，支持实时预览并一键保存为独立 <code>.notion-theme.json</code> 插件文件
+                自由调配主画布、侧边栏、代码块与强调色，支持实时预览并一键保存为独立 <code>.xynote-theme.json</code> 插件文件
               </div>
             </div>
             <label className="nb-checkbox-row" style={{ margin: 0 }}>
@@ -812,7 +812,7 @@ export const ThemeStudioPanel: React.FC<ThemeStudioPanelProps> = ({
               className="nb-btn-secondary"
               onClick={() => handleSaveThemeFromBuilder(true)}
             >
-              <Download size={14} /> 保存并导出分享 (.notion-theme.json)
+              <Download size={14} /> 保存并导出分享 (.xynote-theme.json)
             </button>
             <button
               type="button"
