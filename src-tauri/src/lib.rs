@@ -1,0 +1,96 @@
+#[cfg(not(test))]
+pub mod commands;
+pub mod db;
+pub mod importer;
+pub mod markdown;
+pub mod models;
+pub mod plugins;
+pub mod storage;
+pub mod url_meta;
+pub mod win_dialogs;
+
+#[cfg(not(test))]
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    use db::Database;
+    use tauri::Manager;
+
+    tauri::Builder::default()
+        .setup(|app| {
+            let fallback_app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("Failed to resolve app_data_dir: {}", e))?;
+            let raw_exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            let exe_dir = match raw_exe_dir {
+                #[cfg(target_os = "macos")]
+                Some(dir) if dir.to_string_lossy().contains(".app/Contents/MacOS") => {
+                    fallback_app_data_dir.clone()
+                }
+                Some(dir) => dir,
+                None => fallback_app_data_dir.clone(),
+            };
+            let database = Database::open_portable(&exe_dir, &fallback_app_data_dir, true)
+                .map_err(|e| format!("Failed to initialize portable SQLite database: {}", e))?;
+            app.manage(database);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::list_pages,
+            commands::list_trashed_pages,
+            commands::get_page_detail,
+            commands::create_page,
+            commands::update_page,
+            commands::trash_page,
+            commands::restore_page,
+            commands::delete_page_permanently,
+            commands::empty_trash,
+            commands::duplicate_page,
+            commands::upsert_block,
+            commands::save_page_blocks,
+            commands::delete_block,
+            commands::get_database,
+            commands::update_database_view,
+            commands::upsert_db_column,
+            commands::delete_db_column,
+            commands::upsert_db_row,
+            commands::delete_db_row,
+            commands::search_workspace,
+            commands::export_page_markdown,
+            commands::import_markdown_page,
+            commands::import_local_paths,
+            commands::import_markdown_tree,
+            commands::import_notion_zip_bytes,
+            commands::fetch_url_metadata,
+            commands::get_settings,
+            commands::set_setting,
+            commands::get_storage_info,
+            commands::update_storage_config,
+            commands::reset_storage_to_default,
+            commands::sync_all_pages_to_markdown,
+            commands::pick_folder_dialog,
+            commands::pick_markdown_file_dialog,
+            commands::save_markdown_file_dialog,
+            commands::save_svg_file_dialog,
+            commands::open_local_markdown_file,
+            commands::save_local_markdown_file,
+            commands::convert_markdown_blocks,
+            commands::save_asset_image,
+            commands::open_path_in_explorer,
+            commands::list_backups,
+            commands::create_backup_now,
+            commands::restore_backup,
+            commands::export_workspace_zip_dialog,
+            commands::list_style_plugins,
+            commands::save_style_plugin,
+            commands::toggle_style_plugin,
+            commands::delete_style_plugin,
+            commands::import_style_plugin_dialog,
+            commands::import_style_plugin_content,
+            commands::export_style_plugin_dialog,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Notion Desktop Tauri application");
+}

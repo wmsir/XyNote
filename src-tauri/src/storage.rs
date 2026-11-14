@@ -1,0 +1,1638 @@
+use crate::db::{effective_plain_text, new_id, now_iso, Database, DbInner};
+use crate::markdown::{
+    derive_markdown_title, export_database_to_csv, export_database_to_markdown,
+    export_doc_to_markdown, parse_markdown_to_blocks, sanitize_markdown_filename,
+    sanitize_windows_segment, serialize_save_blocks_to_markdown, ParsedBlockDraft,
+};
+use crate::models::{
+    AppError, BackupEntry, Block, LocalMarkdownDocument, Page, SaveBlockItem, SavedAssetResult,
+    StorageConfigInfo, UpdateStorageConfigInput,
+};
+use crate::win_dialogs::normalize_win32_path_str;
+use base64::Engine;
+use chrono::{DateTime, Local, Utc};
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::io::{Cursor, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+use uuid::Uuid;
+
+const CONFIG_FILENAME: &str = "notion-config.json";
+const DB_FILENAME: &str = "notion_desktop.db";
+const SYNC_MANIFEST_FILENAME: &str = ".notion-sync-manifest.json";
+const LAUNCH_BACKUP_MIN_INTERVAL_SECS: u64 = 600; // 10 minutes
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StorageConfig {
+    pub active_data_dir: String,
+    pub markdown_sync_dir: String,
+    pub auto_sync_markdown: bool,
+    pub image_save_mode: String, // "assets" | "base64"
+    pub auto_backup_on_launch: bool,
+    pub max_backups: usize,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            active_data_dir: String::new(),
+            markdown_sync_dir: String::new(),
+            auto_sync_markdown: true,
+            image_save_mode: "assets".to_string(),
+            auto_backup_on_launch: true,
+            max_backups: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ManagedStorage {
+    pub config: StorageConfig,
+    pub config_file_path: PathBuf,
+    pub exe_dir: PathBuf,
+    pub default_data_dir: PathBuf,
+    pub exe_dir_writable: bool,
+}
+
+impl ManagedStorage {
+    pub fn active_data_path(&self) -> PathBuf {
+        PathBuf::from(&self.config.active_data_dir)
+    }
+
+    pub fn db_file_path(&self) -> PathBuf {
+        self.active_data_path().join(DB_FILENAME)
+    }
+
+    pub fn markdown_sync_path(&self) -> PathBuf {
+        PathBuf::from(&self.config.markdown_sync_dir)
+    }
+
+    pub fn assets_path(&self) -> PathBuf {
+        self.active_data_path().join("assets")
+    }
+
+    pub fn backups_path(&self) -> PathBuf {
+        self.active_data_path().join("backups")
+    }
+}
+
+pub fn normalize_path_key(p: &Path) -> String {
+    normalize_win32_path_str(&p.to_string_lossy()).to_lowercase()
+}
+
+fn clean_display_path(p: &Path) -> String {
+    normalize_win32_path_str(&p.to_string_lossy())
+}
+
+pub fn probe_dir_writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".notion-write-probe-{}", Uuid::new_v4().simple()));
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn ensure_data_subdirs(active_data_dir: &Path, markdown_sync_dir: &Path) -> Result<(), AppError> {
+    std::fs::create_dir_all(active_data_dir)?;
+    std::fs::create_dir_all(active_data_dir.join("assets"))?;
+    std::fs::create_dir_all(active_data_dir.join("backups"))?;
+    std::fs::create_dir_all(markdown_sync_dir)?;
+    Ok(())
+}
+
+fn save_storage_config_file(config_file_path: &Path, cfg: &StorageConfig) -> Result<(), AppError> {
+    if let Some(parent) = config_file_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let pretty = serde_json::to_string_pretty(cfg)?;
+    std::fs::write(config_file_path, pretty.as_bytes())?;
+    Ok(())
+}
+
+fn load_or_init_storage_config(
+    config_file_path: &Path,
+    default_data_dir: &Path,
+) -> StorageConfig {
+    let default_active = clean_display_path(default_data_dir);
+    let default_pages = clean_display_path(&default_data_dir.join("pages"));
+
+    if let Ok(raw) = std::fs::read_to_string(config_file_path) {
+        if let Ok(mut parsed) = serde_json::from_str::<StorageConfig>(&raw) {
+            if parsed.active_data_dir.trim().is_empty() {
+                parsed.active_data_dir = default_active;
+            } else {
+                parsed.active_data_dir = normalize_win32_path_str(&parsed.active_data_dir);
+            }
+            if parsed.markdown_sync_dir.trim().is_empty() {
+                parsed.markdown_sync_dir =
+                    clean_display_path(&PathBuf::from(&parsed.active_data_dir).join("pages"));
+            } else {
+                parsed.markdown_sync_dir = normalize_win32_path_str(&parsed.markdown_sync_dir);
+            }
+            if parsed.image_save_mode != "base64" {
+                parsed.image_save_mode = "assets".to_string();
+            }
+            if parsed.max_backups == 0 {
+                parsed.max_backups = 10;
+            }
+            return parsed;
+        }
+    }
+
+    StorageConfig {
+        active_data_dir: default_active,
+        markdown_sync_dir: default_pages,
+        auto_sync_markdown: true,
+        image_save_mode: "assets".to_string(),
+        auto_backup_on_launch: true,
+        max_backups: 10,
+    }
+}
+
+/// Snapshot an open SQLite connection cleanly to `dest_db_path` (merging all WAL frames).
+fn snapshot_conn_to_file(
+    conn: &Connection,
+    src_db_fallback: Option<&Path>,
+    dest_db_path: &Path,
+) -> Result<(), AppError> {
+    if let Some(parent) = dest_db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if dest_db_path.exists() {
+        let _ = std::fs::remove_file(dest_db_path);
+    }
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    let dest_str = clean_display_path(dest_db_path);
+    match conn.execute("VACUUM INTO ?1", params![dest_str]) {
+        Ok(_) => Ok(()),
+        Err(vac_err) => {
+            if let Some(src) = src_db_fallback.filter(|p| p.is_file()) {
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+                std::fs::copy(src, dest_db_path)?;
+                Ok(())
+            } else {
+                Err(AppError::Sqlite(vac_err))
+            }
+        }
+    }
+}
+
+fn snapshot_sqlite_file_on_disk(src_db_path: &Path, dest_db_path: &Path) -> Result<(), AppError> {
+    if let Ok(src_conn) = Connection::open(src_db_path) {
+        if snapshot_conn_to_file(&src_conn, Some(src_db_path), dest_db_path).is_ok() {
+            return Ok(());
+        }
+    }
+    if let Some(parent) = dest_db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src_db_path, dest_db_path)?;
+    Ok(())
+}
+
+fn remove_wal_sidecars(db_path: &Path) {
+    let base = db_path.to_string_lossy();
+    let wal = PathBuf::from(format!("{}-wal", base));
+    let shm = PathBuf::from(format!("{}-shm", base));
+    let _ = std::fs::remove_file(wal);
+    let _ = std::fs::remove_file(shm);
+}
+
+fn copy_dir_merge_non_destructive(src_dir: &Path, dst_dir: &Path) -> Result<(), AppError> {
+    if !src_dir.is_dir() || normalize_path_key(src_dir) == normalize_path_key(dst_dir) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dst_dir)?;
+    for entry in std::fs::read_dir(src_dir)?.flatten() {
+        let src_path = entry.path();
+        let Some(name) = src_path.file_name() else {
+            continue;
+        };
+        let dst_path = dst_dir.join(name);
+        if src_path.is_dir() {
+            copy_dir_merge_non_destructive(&src_path, &dst_path)?;
+        } else if src_path.is_file() && !dst_path.exists() {
+            let _ = std::fs::copy(&src_path, &dst_path);
+        }
+    }
+    Ok(())
+}
+
+fn system_time_to_iso(st: SystemTime) -> String {
+    let dt: DateTime<Utc> = st.into();
+    dt.to_rfc3339()
+}
+
+fn collect_backup_files(backups_dir: &Path) -> Vec<(PathBuf, String, u64, SystemTime)> {
+    let mut entries = Vec::new();
+    let Ok(rd) = std::fs::read_dir(backups_dir) else {
+        return entries;
+    };
+    for item in rd.flatten() {
+        let p = item.path();
+        if !p.is_file() {
+            continue;
+        }
+        let Some(fname_os) = p.file_name() else {
+            continue;
+        };
+        let fname = fname_os.to_string_lossy().into_owned();
+        if !fname.to_ascii_lowercase().ends_with(".db") {
+            continue;
+        }
+        if let Ok(meta) = p.metadata() {
+            let mtime = meta
+                .modified()
+                .or_else(|_| meta.created())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            entries.push((p, fname, meta.len(), mtime));
+        }
+    }
+    // Sort newest first
+    entries.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| b.1.cmp(&a.1)));
+    entries
+}
+
+fn prune_backups_dir(backups_dir: &Path, max_backups: usize) {
+    let keep = max_backups.max(1);
+    let all = collect_backup_files(backups_dir);
+    if all.len() > keep {
+        for (old_path, _, _, _) in &all[keep..] {
+            let _ = std::fs::remove_file(old_path);
+        }
+    }
+}
+
+fn create_backup_snapshot_internal(
+    conn: &Connection,
+    src_db_path: &Path,
+    backups_dir: &Path,
+    max_backups: usize,
+    prefix_tag: Option<&str>,
+) -> Result<BackupEntry, AppError> {
+    std::fs::create_dir_all(backups_dir)?;
+    let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let base_stem = match prefix_tag {
+        Some(tag) if !tag.is_empty() => format!("backup-{}-{}", tag, stamp),
+        _ => format!("backup-{}", stamp),
+    };
+
+    let mut filename = format!("{}.db", base_stem);
+    let mut full_path = backups_dir.join(&filename);
+    let mut seq = 2usize;
+    while full_path.exists() {
+        filename = format!("{}-{}.db", base_stem, seq);
+        full_path = backups_dir.join(&filename);
+        seq += 1;
+    }
+
+    snapshot_conn_to_file(conn, Some(src_db_path), &full_path)?;
+    prune_backups_dir(backups_dir, max_backups);
+
+    let meta = std::fs::metadata(&full_path)?;
+    let mtime = meta.modified().unwrap_or_else(|_| SystemTime::now());
+    Ok(BackupEntry {
+        filename,
+        full_path: clean_display_path(&full_path),
+        size_bytes: meta.len(),
+        created_at: system_time_to_iso(mtime),
+    })
+}
+
+/* ============================================================================
+ * Live `.md` Mirror Sync (`pages/` directory + `.notion-sync-manifest.json`)
+ * ========================================================================== */
+
+fn load_sync_manifest(sync_dir: &Path) -> HashMap<String, String> {
+    let manifest_path = sync_dir.join(SYNC_MANIFEST_FILENAME);
+    if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&raw) {
+            return map;
+        }
+    }
+    HashMap::new()
+}
+
+fn save_sync_manifest(sync_dir: &Path, map: &HashMap<String, String>) {
+    let manifest_path = sync_dir.join(SYNC_MANIFEST_FILENAME);
+    if let Ok(raw) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(manifest_path, raw.as_bytes());
+    }
+}
+
+fn remove_synced_rel_file_and_empty_parents(sync_dir: &Path, rel_posix: &str) {
+    let target = sync_dir.join(rel_posix.replace('/', std::path::MAIN_SEPARATOR_STR));
+    if target.is_file() {
+        let _ = std::fs::remove_file(&target);
+    }
+    let mut parent_opt = target.parent();
+    let sync_key = normalize_path_key(sync_dir);
+    while let Some(parent) = parent_opt {
+        if normalize_path_key(parent) == sync_key || !parent.starts_with(sync_dir) {
+            break;
+        }
+        match std::fs::read_dir(parent) {
+            Ok(mut rd) => {
+                if rd.next().is_none() {
+                    let _ = std::fs::remove_dir(parent);
+                } else {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+        parent_opt = parent.parent();
+    }
+}
+
+fn query_active_pages_conn(conn: &Connection) -> Result<Vec<Page>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, parent_id, title, icon, cover, page_type, is_favorite, is_trashed, sort_order, created_at, updated_at
+         FROM pages
+         WHERE is_trashed = 0
+         ORDER BY sort_order ASC, created_at ASC",
+    )?;
+    let rows = stmt.query_map([], Database::row_to_page)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+fn compute_page_rel_md_paths(active_pages: &[Page]) -> HashMap<String, String> {
+    let page_map: HashMap<&str, &Page> = active_pages.iter().map(|p| (p.id.as_str(), p)).collect();
+    let mut used_lower: HashSet<String> = HashSet::new();
+    let mut result: HashMap<String, String> = HashMap::with_capacity(active_pages.len());
+
+    for page in active_pages {
+        let mut ancestor_segs: Vec<String> = Vec::new();
+        let mut visited: HashSet<&str> = HashSet::new();
+        visited.insert(page.id.as_str());
+
+        let mut cur_parent = page.parent_id.as_deref().and_then(|pid| page_map.get(pid));
+        while let Some(anc) = cur_parent {
+            if !visited.insert(anc.id.as_str()) {
+                break;
+            }
+            ancestor_segs.push(sanitize_windows_segment(&anc.title));
+            cur_parent = anc.parent_id.as_deref().and_then(|pid| page_map.get(pid));
+        }
+        ancestor_segs.reverse();
+
+        let dir_prefix = ancestor_segs.join("/");
+        let stem = sanitize_windows_segment(&page.title);
+
+        let mut candidate = if dir_prefix.is_empty() {
+            format!("{}.md", stem)
+        } else {
+            format!("{}/{}.md", dir_prefix, stem)
+        };
+        let mut dup = 2usize;
+        while used_lower.contains(&candidate.to_lowercase()) {
+            candidate = if dir_prefix.is_empty() {
+                format!("{} ({}).md", stem, dup)
+            } else {
+                format!("{}/{} ({}).md", dir_prefix, stem, dup)
+            };
+            dup += 1;
+        }
+        used_lower.insert(candidate.to_lowercase());
+        result.insert(page.id.clone(), candidate);
+    }
+
+    result
+}
+
+fn export_single_page_markdown_conn(conn: &Connection, page: &Page) -> Result<String, AppError> {
+    if page.page_type == "database" {
+        let db_full = Database::ensure_database_initialized_conn(conn, &page.id)?;
+        Ok(export_database_to_markdown(page, &db_full).markdown)
+    } else {
+        let blocks = Database::get_blocks_for_page_conn(conn, &page.id)?;
+        Ok(export_doc_to_markdown(page, &blocks).markdown)
+    }
+}
+
+pub(crate) fn sync_all_pages_conn(conn: &Connection, sync_dir: &Path) -> Result<usize, AppError> {
+    std::fs::create_dir_all(sync_dir)?;
+    let prev_manifest = load_sync_manifest(sync_dir);
+    let active_pages = query_active_pages_conn(conn)?;
+    let rel_map = compute_page_rel_md_paths(&active_pages);
+
+    let mut new_manifest: HashMap<String, String> = HashMap::with_capacity(active_pages.len());
+    let mut new_rel_lower_set: HashSet<String> = HashSet::with_capacity(active_pages.len());
+
+    for page in &active_pages {
+        if let Some(rel_posix) = rel_map.get(&page.id) {
+            let markdown = export_single_page_markdown_conn(conn, page)?;
+            let disk_path = sync_dir.join(rel_posix.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if let Some(parent) = disk_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&disk_path, markdown.as_bytes())?;
+            new_rel_lower_set.insert(rel_posix.to_lowercase());
+            new_manifest.insert(page.id.clone(), rel_posix.clone());
+        }
+    }
+
+    // Remove stale `.md` files from renamed, trashed, or deleted pages
+    for old_rel in prev_manifest.values() {
+        if !new_rel_lower_set.contains(&old_rel.to_lowercase()) {
+            remove_synced_rel_file_and_empty_parents(sync_dir, old_rel);
+        }
+    }
+
+    save_sync_manifest(sync_dir, &new_manifest);
+    Ok(active_pages.len())
+}
+
+pub(crate) fn sync_single_page_conn(
+    conn: &Connection,
+    sync_dir: &Path,
+    page_id: &str,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(sync_dir)?;
+    let active_pages = query_active_pages_conn(conn)?;
+    let Some(target_page) = active_pages.iter().find(|p| p.id == page_id) else {
+        // Page is trashed or deleted -> full manifest sync cleans it up
+        let _ = sync_all_pages_conn(conn, sync_dir)?;
+        return Ok(());
+    };
+
+    let rel_map = compute_page_rel_md_paths(&active_pages);
+    let Some(new_rel) = rel_map.get(page_id) else {
+        return Ok(());
+    };
+
+    let mut manifest = load_sync_manifest(sync_dir);
+    if let Some(old_rel) = manifest.get(page_id) {
+        if !old_rel.eq_ignore_ascii_case(new_rel) {
+            remove_synced_rel_file_and_empty_parents(sync_dir, old_rel);
+        }
+    }
+
+    let markdown = export_single_page_markdown_conn(conn, target_page)?;
+    let disk_path = sync_dir.join(new_rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+    if let Some(parent) = disk_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&disk_path, markdown.as_bytes())?;
+
+    manifest.insert(page_id.to_string(), new_rel.clone());
+    save_sync_manifest(sync_dir, &manifest);
+    Ok(())
+}
+
+pub(crate) fn after_page_mutated(inner: &DbInner, page_id: &str) {
+    if let Some(ref st) = inner.storage {
+        if st.config.auto_sync_markdown {
+            let _ = sync_single_page_conn(&inner.conn, &st.markdown_sync_path(), page_id);
+        }
+    }
+}
+
+pub(crate) fn after_tree_mutated(inner: &DbInner) {
+    if let Some(ref st) = inner.storage {
+        if st.config.auto_sync_markdown {
+            let _ = sync_all_pages_conn(&inner.conn, &st.markdown_sync_path());
+        }
+    }
+}
+
+/* ============================================================================
+ * Standalone Typora Local `.md` File Open / Save / Bidirectional Convert
+ * ========================================================================== */
+
+fn drafts_to_blocks(page_id: &str, drafts: Vec<ParsedBlockDraft>, ts: &str) -> Vec<Block> {
+    drafts
+        .into_iter()
+        .enumerate()
+        .map(|(idx, d)| Block {
+            id: new_id(),
+            page_id: page_id.to_string(),
+            block_type: d.block_type,
+            content: d.content,
+            plain_text: d.plain_text,
+            props: d.props,
+            sort_order: idx as i64,
+            created_at: ts.to_string(),
+            updated_at: ts.to_string(),
+        })
+        .collect()
+}
+
+fn save_items_to_blocks(page_id: &str, items: Vec<SaveBlockItem>, ts: &str) -> Vec<Block> {
+    if items.is_empty() {
+        return vec![Block {
+            id: new_id(),
+            page_id: page_id.to_string(),
+            block_type: "paragraph".to_string(),
+            content: String::new(),
+            plain_text: String::new(),
+            props: Default::default(),
+            sort_order: 0,
+            created_at: ts.to_string(),
+            updated_at: ts.to_string(),
+        }];
+    }
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let id = if item.id.trim().is_empty() {
+                new_id()
+            } else {
+                item.id
+            };
+            let plain = effective_plain_text(
+                &item.block_type,
+                &item.content,
+                &item.plain_text,
+                &item.props,
+            );
+            let sort_order = if item.sort_order == 0 && idx > 0 {
+                idx as i64
+            } else {
+                item.sort_order
+            };
+            Block {
+                id,
+                page_id: page_id.to_string(),
+                block_type: item.block_type,
+                content: item.content,
+                plain_text: plain,
+                props: item.props,
+                sort_order,
+                created_at: ts.to_string(),
+                updated_at: ts.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn extract_local_file_meta(file_path: &str, markdown: &str) -> (String, String) {
+    let norm = normalize_win32_path_str(file_path);
+    let p = Path::new(&norm);
+    let file_name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "untitled.md".to_string());
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "无标题".to_string());
+
+    // Prefer leading `# H1` inside markdown if present, else fallback to filename stem
+    let derived = derive_markdown_title("", markdown);
+    let title = if derived != "导入的 Markdown 页面" {
+        derived
+    } else {
+        stem
+    };
+    (file_name, title)
+}
+
+pub fn open_local_markdown_file_disk(file_path: &str) -> Result<LocalMarkdownDocument, AppError> {
+    let clean_path = normalize_win32_path_str(file_path);
+    if clean_path.is_empty() {
+        return Err(AppError::Validation("File path is empty".into()));
+    }
+    let path = Path::new(&clean_path);
+    if !path.is_file() {
+        return Err(AppError::NotFound(format!(
+            "Markdown file not found: {}",
+            clean_path
+        )));
+    }
+
+    let raw_bytes = std::fs::read(path)?;
+    let decoded = String::from_utf8(raw_bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    let markdown = decoded
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&decoded)
+        .to_string();
+
+    let updated_at = path
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(system_time_to_iso)
+        .unwrap_or_else(now_iso);
+
+    let page_key = format!("local:{}", clean_path);
+    let blocks = drafts_to_blocks(&page_key, parse_markdown_to_blocks(&markdown), &updated_at);
+    let (file_name, title) = extract_local_file_meta(&clean_path, &markdown);
+
+    Ok(LocalMarkdownDocument {
+        file_path: clean_path,
+        file_name,
+        title,
+        markdown,
+        blocks,
+        updated_at,
+    })
+}
+
+pub fn save_local_markdown_file_disk(
+    file_path: &str,
+    blocks: Option<Vec<SaveBlockItem>>,
+    raw_markdown: Option<String>,
+) -> Result<LocalMarkdownDocument, AppError> {
+    let clean_path = normalize_win32_path_str(file_path);
+    if clean_path.is_empty() {
+        return Err(AppError::Validation("File path is empty".into()));
+    }
+    let path = Path::new(&clean_path);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let ts = now_iso();
+    let page_key = format!("local:{}", clean_path);
+
+    let (final_markdown, final_blocks) = if let Some(raw_md) = raw_markdown {
+        let parsed = drafts_to_blocks(&page_key, parse_markdown_to_blocks(&raw_md), &ts);
+        (raw_md, parsed)
+    } else if let Some(items) = blocks {
+        let serialized = serialize_save_blocks_to_markdown(&items);
+        let mapped = save_items_to_blocks(&page_key, items, &ts);
+        (serialized, mapped)
+    } else {
+        (String::new(), save_items_to_blocks(&page_key, Vec::new(), &ts))
+    };
+
+    std::fs::write(path, final_markdown.as_bytes())?;
+    let updated_at = path
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(system_time_to_iso)
+        .unwrap_or(ts);
+
+    let (file_name, title) = extract_local_file_meta(&clean_path, &final_markdown);
+    Ok(LocalMarkdownDocument {
+        file_path: clean_path,
+        file_name,
+        title,
+        markdown: final_markdown,
+        blocks: final_blocks,
+        updated_at,
+    })
+}
+
+pub fn convert_markdown_blocks_pure(
+    markdown: Option<String>,
+    blocks: Option<Vec<SaveBlockItem>>,
+    page_id: Option<String>,
+) -> Result<LocalMarkdownDocument, AppError> {
+    let pid = page_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "preview".to_string());
+    let ts = now_iso();
+
+    if let Some(md) = markdown {
+        let parsed_blocks = drafts_to_blocks(&pid, parse_markdown_to_blocks(&md), &ts);
+        let (file_name, title) = extract_local_file_meta("document.md", &md);
+        Ok(LocalMarkdownDocument {
+            file_path: String::new(),
+            file_name,
+            title,
+            markdown: md,
+            blocks: parsed_blocks,
+            updated_at: ts,
+        })
+    } else {
+        let items = blocks.unwrap_or_default();
+        let serialized = serialize_save_blocks_to_markdown(&items);
+        let (file_name, title) = extract_local_file_meta("document.md", &serialized);
+        let mapped = save_items_to_blocks(&pid, items, &ts);
+        Ok(LocalMarkdownDocument {
+            file_path: String::new(),
+            file_name,
+            title,
+            markdown: serialized,
+            blocks: mapped,
+            updated_at: ts,
+        })
+    }
+}
+
+/* ============================================================================
+ * Portable Storage, Hot-Swap Migration, Backups, Assets & ZIP Export on Database
+ * ========================================================================== */
+
+impl Database {
+    /// Open portable storage anchored at `exe_dir` (`<exe_dir>\notion-config.json` and
+    /// `<exe_dir>\data\`), falling back to `fallback_app_data_dir` only if `exe_dir` is read-only.
+    pub fn open_portable(
+        exe_dir: &Path,
+        fallback_app_data_dir: &Path,
+        allow_legacy_appdata_migration: bool,
+    ) -> Result<Self, AppError> {
+        let exe_dir_writable = probe_dir_writable(exe_dir);
+        let (config_file_path, default_data_dir) = if exe_dir_writable {
+            (
+                exe_dir.join(CONFIG_FILENAME),
+                exe_dir.join("data"),
+            )
+        } else {
+            std::fs::create_dir_all(fallback_app_data_dir)?;
+            (
+                fallback_app_data_dir.join(CONFIG_FILENAME),
+                fallback_app_data_dir.join("data"),
+            )
+        };
+
+        let mut config = load_or_init_storage_config(&config_file_path, &default_data_dir);
+
+        // Ensure configured activeDataDir & markdownSyncDir exist; fall back safely if custom drive unavailable
+        if ensure_data_subdirs(
+            Path::new(&config.active_data_dir),
+            Path::new(&config.markdown_sync_dir),
+        )
+        .is_err()
+        {
+            config.active_data_dir = clean_display_path(&default_data_dir);
+            config.markdown_sync_dir = clean_display_path(&default_data_dir.join("pages"));
+            ensure_data_subdirs(
+                Path::new(&config.active_data_dir),
+                Path::new(&config.markdown_sync_dir),
+            )?;
+        }
+
+        // Always persist `notion-config.json` so portable config is visible in software folder on first launch
+        save_storage_config_file(&config_file_path, &config)?;
+
+        // Auto-seed portable `plugins/themes/` (5 themes) & `plugins/snippets/` (5 CSS snippets) on cold-start
+        let _ = crate::plugins::ensure_plugins_initialized_on_disk(Path::new(&config.active_data_dir));
+
+        let db_file_path = Path::new(&config.active_data_dir).join(DB_FILENAME);
+
+        // Seamless v0.1.0 upgrade migration from `%APPDATA%\com.meng.notiondesktop\notion_desktop.db`
+        if !db_file_path.exists() && allow_legacy_appdata_migration {
+            let legacy_db = fallback_app_data_dir.join(DB_FILENAME);
+            if legacy_db.is_file()
+                && normalize_path_key(&legacy_db) != normalize_path_key(&db_file_path)
+            {
+                let _ = snapshot_sqlite_file_on_disk(&legacy_db, &db_file_path);
+            }
+        }
+
+        let conn = Connection::open(&db_file_path)?;
+        Self::initialize_conn(&conn, true)?;
+
+        // Auto-backup on launch (if enabled and no backup exists within the last 10 minutes)
+        if config.auto_backup_on_launch {
+            let backups_dir = Path::new(&config.active_data_dir).join("backups");
+            let existing_backups = collect_backup_files(&backups_dir);
+            let recent_exists = existing_backups.first().is_some_and(|(_, _, _, mtime)| {
+                SystemTime::now()
+                    .duration_since(*mtime)
+                    .map(|elapsed| elapsed < Duration::from_secs(LAUNCH_BACKUP_MIN_INTERVAL_SECS))
+                    .unwrap_or(true)
+            });
+            if !recent_exists {
+                let _ = create_backup_snapshot_internal(
+                    &conn,
+                    &db_file_path,
+                    &backups_dir,
+                    config.max_backups,
+                    None,
+                );
+            } else {
+                prune_backups_dir(&backups_dir, config.max_backups);
+            }
+        }
+
+        // Initial `.md` mirror sync if enabled
+        if config.auto_sync_markdown {
+            let _ = sync_all_pages_conn(&conn, Path::new(&config.markdown_sync_dir));
+        }
+
+        let managed = ManagedStorage {
+            config,
+            config_file_path,
+            exe_dir: exe_dir.to_path_buf(),
+            default_data_dir,
+            exe_dir_writable,
+        };
+
+        Ok(Self {
+            inner: std::sync::Mutex::new(DbInner {
+                conn,
+                storage: Some(managed),
+                ephemeral_plugins_dir: None,
+            }),
+        })
+    }
+
+    pub fn active_plugins_dir_opt(&self) -> Option<String> {
+        let inner = self.lock().ok()?;
+        inner
+            .storage
+            .as_ref()
+            .map(|st| clean_display_path(&st.active_data_path().join("plugins")))
+    }
+
+    fn compute_storage_info_inner(inner: &DbInner) -> Result<StorageConfigInfo, AppError> {
+        let page_count: i64 = inner.conn.query_row(
+            "SELECT COUNT(*) FROM pages WHERE is_trashed = 0",
+            [],
+            |r| r.get(0),
+        )?;
+        let block_count: i64 = inner.conn.query_row(
+            "SELECT COUNT(*) FROM blocks b JOIN pages p ON p.id = b.page_id WHERE p.is_trashed = 0",
+            [],
+            |r| r.get(0),
+        )?;
+
+        if let Some(ref st) = inner.storage {
+            let db_path = st.db_file_path();
+            let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
+            let main_sz = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+            let wal_sz = std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
+
+            let is_default = normalize_path_key(&st.active_data_path())
+                == normalize_path_key(&st.default_data_dir);
+
+            Ok(StorageConfigInfo {
+                exe_dir: clean_display_path(&st.exe_dir),
+                default_data_dir: clean_display_path(&st.default_data_dir),
+                active_data_dir: clean_display_path(&st.active_data_path()),
+                db_file_path: clean_display_path(&db_path),
+                markdown_sync_dir: clean_display_path(&st.markdown_sync_path()),
+                assets_dir: clean_display_path(&st.assets_path()),
+                backups_dir: clean_display_path(&st.backups_path()),
+                is_default_portable_dir: is_default,
+                exe_dir_writable: st.exe_dir_writable,
+                auto_sync_markdown: st.config.auto_sync_markdown,
+                image_save_mode: st.config.image_save_mode.clone(),
+                auto_backup_on_launch: st.config.auto_backup_on_launch,
+                max_backups: st.config.max_backups,
+                db_size_bytes: main_sz + wal_sz,
+                page_count: page_count.max(0) as usize,
+                block_count: block_count.max(0) as usize,
+            })
+        } else {
+            Ok(StorageConfigInfo {
+                exe_dir: String::new(),
+                default_data_dir: ":memory:".into(),
+                active_data_dir: ":memory:".into(),
+                db_file_path: ":memory:".into(),
+                markdown_sync_dir: String::new(),
+                assets_dir: String::new(),
+                backups_dir: String::new(),
+                is_default_portable_dir: true,
+                exe_dir_writable: true,
+                auto_sync_markdown: false,
+                image_save_mode: "base64".into(),
+                auto_backup_on_launch: false,
+                max_backups: 10,
+                db_size_bytes: 0,
+                page_count: page_count.max(0) as usize,
+                block_count: block_count.max(0) as usize,
+            })
+        }
+    }
+
+    pub fn get_storage_info(&self) -> Result<StorageConfigInfo, AppError> {
+        let inner = self.lock()?;
+        Self::compute_storage_info_inner(&inner)
+    }
+
+    pub fn update_storage_config(
+        &self,
+        input: UpdateStorageConfigInput,
+    ) -> Result<StorageConfigInfo, AppError> {
+        let mut inner = self.lock()?;
+        let Some(current_st) = inner.storage.clone() else {
+            return Err(AppError::Validation(
+                "In-memory database does not support disk path updates".into(),
+            ));
+        };
+
+        let old_active_path = current_st.active_data_path();
+        let old_sync_path = current_st.markdown_sync_path();
+        let old_default_pages = old_active_path.join("pages");
+        let was_using_default_pages_sub =
+            normalize_path_key(&old_sync_path) == normalize_path_key(&old_default_pages);
+
+        let next_active_str = match input
+            .active_data_dir
+            .as_deref()
+            .map(normalize_win32_path_str)
+            .filter(|s| !s.is_empty())
+        {
+            Some(custom) => custom,
+            None => current_st.config.active_data_dir.clone(),
+        };
+        let next_active_path = PathBuf::from(&next_active_str);
+        let active_dir_changed =
+            normalize_path_key(&next_active_path) != normalize_path_key(&old_active_path);
+
+        let next_sync_str = if let Some(explicit_sync) = input
+            .markdown_sync_dir
+            .as_deref()
+            .map(normalize_win32_path_str)
+            .filter(|s| !s.is_empty())
+        {
+            explicit_sync
+        } else if active_dir_changed && was_using_default_pages_sub {
+            clean_display_path(&next_active_path.join("pages"))
+        } else {
+            current_st.config.markdown_sync_dir.clone()
+        };
+        let next_sync_path = PathBuf::from(&next_sync_str);
+        let sync_dir_changed =
+            normalize_path_key(&next_sync_path) != normalize_path_key(&old_sync_path);
+
+        // Validate target folders are creatable/writable before mutating active DB state
+        ensure_data_subdirs(&next_active_path, &next_sync_path)?;
+
+        let next_auto_sync = input
+            .auto_sync_markdown
+            .unwrap_or(current_st.config.auto_sync_markdown);
+        let next_img_mode = match input.image_save_mode.as_deref() {
+            Some("base64") => "base64".to_string(),
+            Some("assets") => "assets".to_string(),
+            _ => current_st.config.image_save_mode.clone(),
+        };
+        let next_auto_backup = input
+            .auto_backup_on_launch
+            .unwrap_or(current_st.config.auto_backup_on_launch);
+        let next_max_backups = input
+            .max_backups
+            .filter(|&n| n > 0)
+            .unwrap_or(current_st.config.max_backups);
+        let migrate = input.migrate_existing_data.unwrap_or(true);
+
+        if active_dir_changed {
+            let old_db_path = current_st.db_file_path();
+            let new_db_path = next_active_path.join(DB_FILENAME);
+            let new_backups_dir = next_active_path.join("backups");
+
+            let _ = inner.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+            if migrate {
+                // Stage clean snapshot of current live DB into a temporary file first
+                let staged_db = next_active_path.join(format!(
+                    ".notion-migrate-{}.db",
+                    Uuid::new_v4().simple()
+                ));
+                snapshot_conn_to_file(&inner.conn, Some(&old_db_path), &staged_db)?;
+
+                // Release Windows file locks on old connection before swapping
+                let prev_conn = std::mem::replace(&mut inner.conn, Connection::open_in_memory()?);
+                drop(prev_conn);
+
+                // If destination already had a DB, preserve a safety snapshot in backups/
+                if new_db_path.is_file() {
+                    let _ = create_pre_overwrite_backup(&new_db_path, &new_backups_dir);
+                }
+                remove_wal_sidecars(&new_db_path);
+                if new_db_path.exists() {
+                    let _ = std::fs::remove_file(&new_db_path);
+                }
+                std::fs::rename(&staged_db, &new_db_path).or_else(|_| {
+                    let res = std::fs::copy(&staged_db, &new_db_path).map(|_| ());
+                    let _ = std::fs::remove_file(&staged_db);
+                    res
+                })?;
+
+                // Merge-copy assets/, backups/, plugins/, and pages/ into new storage location
+                let _ = copy_dir_merge_non_destructive(
+                    &current_st.assets_path(),
+                    &next_active_path.join("assets"),
+                );
+                let _ = copy_dir_merge_non_destructive(&current_st.backups_path(), &new_backups_dir);
+                let _ = copy_dir_merge_non_destructive(
+                    &current_st.active_data_path().join("plugins"),
+                    &next_active_path.join("plugins"),
+                );
+                let _ = crate::plugins::ensure_plugins_initialized_on_disk(&next_active_path);
+                if sync_dir_changed {
+                    let _ = copy_dir_merge_non_destructive(&old_sync_path, &next_sync_path);
+                }
+
+                let new_conn = Connection::open(&new_db_path)?;
+                Self::initialize_conn(&new_conn, false)?;
+                inner.conn = new_conn;
+            } else {
+                // Switch directly to existing DB in target folder (or initialize fresh workspace if empty)
+                let prev_conn = std::mem::replace(&mut inner.conn, Connection::open_in_memory()?);
+                drop(prev_conn);
+
+                let _ = crate::plugins::ensure_plugins_initialized_on_disk(&next_active_path);
+
+                let new_conn = Connection::open(&new_db_path)?;
+                Self::initialize_conn(&new_conn, true)?;
+                inner.conn = new_conn;
+            }
+        }
+
+        let updated_cfg = StorageConfig {
+            active_data_dir: next_active_str,
+            markdown_sync_dir: next_sync_str,
+            auto_sync_markdown: next_auto_sync,
+            image_save_mode: next_img_mode,
+            auto_backup_on_launch: next_auto_backup,
+            max_backups: next_max_backups,
+        };
+
+        save_storage_config_file(&current_st.config_file_path, &updated_cfg)?;
+        prune_backups_dir(&next_active_path.join("backups"), next_max_backups);
+
+        if let Some(ref mut st) = inner.storage {
+            st.config = updated_cfg;
+        }
+
+        if next_auto_sync
+            && (active_dir_changed
+                || sync_dir_changed
+                || !current_st.config.auto_sync_markdown)
+        {
+            let _ = sync_all_pages_conn(&inner.conn, &next_sync_path);
+        }
+
+        Self::compute_storage_info_inner(&inner)
+    }
+
+    pub fn reset_storage_to_default(
+        &self,
+        migrate_existing_data: bool,
+    ) -> Result<StorageConfigInfo, AppError> {
+        let default_dir_str = {
+            let inner = self.lock()?;
+            let Some(ref st) = inner.storage else {
+                return Err(AppError::Validation(
+                    "In-memory database does not support disk path reset".into(),
+                ));
+            };
+            clean_display_path(&st.default_data_dir)
+        };
+        let default_pages_str =
+            clean_display_path(&PathBuf::from(&default_dir_str).join("pages"));
+
+        self.update_storage_config(UpdateStorageConfigInput {
+            active_data_dir: Some(default_dir_str),
+            markdown_sync_dir: Some(default_pages_str),
+            migrate_existing_data: Some(migrate_existing_data),
+            ..Default::default()
+        })
+    }
+
+    pub fn sync_all_pages_to_markdown(&self) -> Result<usize, AppError> {
+        let inner = self.lock()?;
+        let Some(ref st) = inner.storage else {
+            return Ok(0);
+        };
+        sync_all_pages_conn(&inner.conn, &st.markdown_sync_path())
+    }
+
+    pub fn list_backups(&self) -> Result<Vec<BackupEntry>, AppError> {
+        let inner = self.lock()?;
+        let Some(ref st) = inner.storage else {
+            return Ok(Vec::new());
+        };
+        let raw_list = collect_backup_files(&st.backups_path());
+        Ok(raw_list
+            .into_iter()
+            .map(|(full, fname, sz, mtime)| BackupEntry {
+                filename: fname,
+                full_path: clean_display_path(&full),
+                size_bytes: sz,
+                created_at: system_time_to_iso(mtime),
+            })
+            .collect())
+    }
+
+    pub fn create_backup_now(&self) -> Result<BackupEntry, AppError> {
+        let inner = self.lock()?;
+        let Some(ref st) = inner.storage else {
+            return Err(AppError::Validation(
+                "In-memory database does not support disk backups".into(),
+            ));
+        };
+        create_backup_snapshot_internal(
+            &inner.conn,
+            &st.db_file_path(),
+            &st.backups_path(),
+            st.config.max_backups,
+            None,
+        )
+    }
+
+    pub fn restore_backup(&self, backup_path: &str) -> Result<StorageConfigInfo, AppError> {
+        let mut inner = self.lock()?;
+        let Some(st) = inner.storage.clone() else {
+            return Err(AppError::Validation(
+                "In-memory database does not support backup restore".into(),
+            ));
+        };
+
+        let norm_input = normalize_win32_path_str(backup_path);
+        let candidate = PathBuf::from(&norm_input);
+        let resolved_backup = if candidate.is_file() {
+            candidate
+        } else {
+            let in_backups = st.backups_path().join(&norm_input);
+            if in_backups.is_file() {
+                in_backups
+            } else {
+                return Err(AppError::NotFound(format!(
+                    "Backup snapshot not found: {}",
+                    backup_path
+                )));
+            }
+        };
+
+        // Verify candidate is a readable SQLite database containing `pages`
+        {
+            let check_conn = Connection::open(&resolved_backup)?;
+            let _: i64 = check_conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))?;
+        }
+
+        let db_path = st.db_file_path();
+        if normalize_path_key(&resolved_backup) == normalize_path_key(&db_path) {
+            return Self::compute_storage_info_inner(&inner);
+        }
+
+        // Release open file locks on current DB before overwriting on Windows
+        let _ = inner.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let prev_conn = std::mem::replace(&mut inner.conn, Connection::open_in_memory()?);
+        drop(prev_conn);
+
+        remove_wal_sidecars(&db_path);
+        std::fs::copy(&resolved_backup, &db_path)?;
+
+        let restored_conn = Connection::open(&db_path)?;
+        Self::initialize_conn(&restored_conn, false)?;
+        inner.conn = restored_conn;
+
+        if st.config.auto_sync_markdown {
+            let _ = sync_all_pages_conn(&inner.conn, &st.markdown_sync_path());
+        }
+
+        Self::compute_storage_info_inner(&inner)
+    }
+
+    pub fn save_asset_image(
+        &self,
+        filename: &str,
+        data_base64: &str,
+        mime_type: &str,
+    ) -> Result<SavedAssetResult, AppError> {
+        let payload = match data_base64.split_once(',') {
+            Some((prefix, rest)) if prefix.contains("base64") => rest,
+            _ => data_base64,
+        };
+        let compact: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.is_empty() {
+            return Err(AppError::Validation("Empty image base64 payload".into()));
+        }
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&compact)
+            .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&compact))?;
+
+        let safe_mime = {
+            let m = mime_type.trim();
+            if m.starts_with("image/") {
+                m.to_string()
+            } else {
+                "image/png".to_string()
+            }
+        };
+
+        let ext_from_name = Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| {
+                matches!(
+                    e.as_str(),
+                    "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico"
+                )
+            });
+        let ext = ext_from_name.unwrap_or_else(|| match safe_mime.as_str() {
+            "image/jpeg" | "image/jpg" => "jpg".to_string(),
+            "image/gif" => "gif".to_string(),
+            "image/webp" => "webp".to_string(),
+            "image/svg+xml" => "svg".to_string(),
+            "image/bmp" => "bmp".to_string(),
+            _ => "png".to_string(),
+        });
+
+        let raw_stem = Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("pasted-image");
+        let safe_stem = sanitize_windows_segment(raw_stem);
+        let stamp = Local::now().format("%Y%m%d-%H%M%S");
+        let short_id = &Uuid::new_v4().simple().to_string()[..6];
+        let unique_name = format!("{}-{}-{}.{}", safe_stem, stamp, short_id, ext);
+
+        let canonical_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let asset_url = format!("data:{};base64,{}", safe_mime, canonical_b64);
+
+        let assets_dir_opt = {
+            let inner = self.lock()?;
+            inner.storage.as_ref().map(|st| st.assets_path())
+        };
+
+        if let Some(assets_dir) = assets_dir_opt {
+            std::fs::create_dir_all(&assets_dir)?;
+            let full_path = assets_dir.join(&unique_name);
+            std::fs::write(&full_path, &bytes)?;
+            Ok(SavedAssetResult {
+                file_path: clean_display_path(&full_path),
+                asset_url,
+            })
+        } else {
+            Ok(SavedAssetResult {
+                file_path: unique_name,
+                asset_url,
+            })
+        }
+    }
+
+    /// Build a complete Workspace Markdown + Database CSV + `assets/` `.zip` archive in memory.
+    pub fn build_workspace_zip_bytes(&self) -> Result<Vec<u8>, AppError> {
+        let inner = self.lock()?;
+        let active_pages = query_active_pages_conn(&inner.conn)?;
+        let rel_map = compute_page_rel_md_paths(&active_pages);
+        let assets_dir_opt = inner.storage.as_ref().map(|st| st.assets_path());
+
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zip_writer = zip::ZipWriter::new(&mut cursor);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            for page in &active_pages {
+                if let Some(rel_md) = rel_map.get(&page.id) {
+                    let md_content = export_single_page_markdown_conn(&inner.conn, page)?;
+                    zip_writer.start_file(rel_md, opts)?;
+                    zip_writer.write_all(md_content.as_bytes())?;
+
+                    if page.page_type == "database" {
+                        let db_full =
+                            Self::ensure_database_initialized_conn(&inner.conn, &page.id)?;
+                        let csv_content = export_database_to_csv(&db_full);
+                        if !csv_content.is_empty() {
+                            let rel_csv = format!(
+                                "{}.csv",
+                                rel_md.strip_suffix(".md").unwrap_or(rel_md)
+                            );
+                            zip_writer.start_file(rel_csv, opts)?;
+                            zip_writer.write_all(csv_content.as_bytes())?;
+                        }
+                    }
+                }
+            }
+
+            if let Some(assets_dir) = assets_dir_opt.filter(|d| d.is_dir()) {
+                if let Ok(rd) = std::fs::read_dir(&assets_dir) {
+                    for item in rd.flatten() {
+                        let p = item.path();
+                        if p.is_file() {
+                            if let Some(fname) = p.file_name().map(|n| n.to_string_lossy()) {
+                                if let Ok(bytes) = std::fs::read(&p) {
+                                    let zip_entry =
+                                        format!("assets/{}", sanitize_markdown_filename(&fname).trim_end_matches(".md"));
+                                    let clean_entry = format!("assets/{}", fname.replace('\\', "_").replace('/', "_"));
+                                    let _ = zip_entry;
+                                    zip_writer.start_file(clean_entry, opts)?;
+                                    zip_writer.write_all(&bytes)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            zip_writer.finish()?;
+        }
+
+        Ok(cursor.into_inner())
+    }
+}
+
+fn create_pre_overwrite_backup(existing_db: &Path, backups_dir: &Path) -> Result<(), AppError> {
+    std::fs::create_dir_all(backups_dir)?;
+    let stamp = Local::now().format("%Y%m%d-%H%M%S");
+    let dest = backups_dir.join(format!("backup-pre-migrate-{}.db", stamp));
+    snapshot_sqlite_file_on_disk(existing_db, &dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{BlockProps, CreatePageInput};
+
+    struct TempTestDir(PathBuf);
+
+    impl TempTestDir {
+        fn new(label: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "notion-v020-test-{}-{}",
+                label,
+                Uuid::new_v4().simple()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempTestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn test_portable_storage_hot_swap_migration_and_reset() {
+        let exe_root = TempTestDir::new("exe");
+        let appdata_fallback = TempTestDir::new("appdata");
+        let custom_vault = TempTestDir::new("custom-vault");
+
+        let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false)
+            .expect("open portable db in exe_dir");
+
+        // 1. Default portable storage lives in `<exe_dir>\notion-config.json` & `<exe_dir>\data\`
+        assert!(exe_root.path().join("notion-config.json").is_file());
+        assert!(exe_root.path().join("data").join("notion_desktop.db").is_file());
+        assert!(exe_root.path().join("data").join("pages").is_dir());
+        assert!(exe_root.path().join("data").join("assets").is_dir());
+        assert!(exe_root.path().join("data").join("backups").is_dir());
+
+        let info0 = db.get_storage_info().unwrap();
+        assert!(info0.is_default_portable_dir);
+        assert!(info0.exe_dir_writable);
+        assert!(info0.page_count >= 4);
+        assert!(info0.db_size_bytes > 0);
+        assert_eq!(db.list_backups().unwrap().len(), 1); // Launch auto-backup created!
+
+        // 2. Create a page before migrating to custom directory
+        let p_before = db
+            .create_page(CreatePageInput {
+                title: Some("便携迁移前笔记".into()),
+                icon: Some("🚀".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // 3. Hot-swap to custom storage folder with `migrate_existing_data: true` (ZERO restart!)
+        let custom_dir_str = clean_display_path(custom_vault.path());
+        let info_custom = db
+            .update_storage_config(UpdateStorageConfigInput {
+                active_data_dir: Some(custom_dir_str.clone()),
+                migrate_existing_data: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!info_custom.is_default_portable_dir);
+        assert_eq!(
+            normalize_path_key(Path::new(&info_custom.active_data_dir)),
+            normalize_path_key(custom_vault.path())
+        );
+        assert!(custom_vault.path().join("notion_desktop.db").is_file());
+        assert!(db
+            .list_pages()
+            .unwrap()
+            .iter()
+            .any(|p| p.id == p_before.id));
+
+        // 4. Create another page while running in `custom_vault`, then reset back to `<exe_dir>\data`
+        let p_in_custom = db
+            .create_page(CreatePageInput {
+                title: Some("自定义目录新增页面".into()),
+                icon: Some("📦".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let info_reset = db.reset_storage_to_default(true).unwrap();
+        assert!(info_reset.is_default_portable_dir);
+        let pages_after_reset = db.list_pages().unwrap();
+        assert!(pages_after_reset.iter().any(|p| p.id == p_before.id));
+        assert!(pages_after_reset.iter().any(|p| p.id == p_in_custom.id));
+
+        drop(db);
+    }
+
+    #[test]
+    fn test_live_markdown_mirror_sync_nested_rename_and_trash() {
+        let exe_root = TempTestDir::new("md-sync");
+        let appdata_fallback = TempTestDir::new("md-appdata");
+
+        let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
+        let pages_dir = exe_root.path().join("data").join("pages");
+
+        // Seeded nested child page `page-arch` under `page-welcome` should exist on disk
+        let seeded_nested = pages_dir
+            .join("欢迎使用 小悦 (XyNote)")
+            .join("工程架构设计 Engineering Architecture.md");
+        assert!(seeded_nested.is_file());
+
+        // Create parent + child page and verify live `.md` creation
+        let parent = db
+            .create_page(CreatePageInput {
+                title: Some("研发知识库".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let child = db
+            .create_page(CreatePageInput {
+                parent_id: Some(parent.id.clone()),
+                title: Some("Rust 存储设计: v0.2".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        db.save_page_blocks(
+            &child.id,
+            vec![SaveBlockItem {
+                id: "b1".into(),
+                block_type: "paragraph".into(),
+                content: "实时镜像同步 <mark>关键段落</mark>".into(),
+                plain_text: String::new(),
+                props: BlockProps::default(),
+                sort_order: 0,
+            }],
+        )
+        .unwrap();
+
+        let expected_child_md = pages_dir
+            .join("研发知识库")
+            .join("Rust 存储设计_ v0.2.md");
+        assert!(expected_child_md.is_file());
+        let disk_md = std::fs::read_to_string(&expected_child_md).unwrap();
+        assert!(disk_md.contains("==关键段落=="));
+
+        // Trash parent -> both parent and child `.md` files must be cleaned from `pages/`!
+        db.trash_page(&parent.id).unwrap();
+        assert!(!expected_child_md.exists());
+        assert!(!pages_dir.join("研发知识库.md").exists());
+
+        // Restore parent -> `.md` files reappear cleanly!
+        db.restore_page(&parent.id).unwrap();
+        assert!(expected_child_md.is_file());
+
+        // Explicit full sync returns active page count
+        let synced_count = db.sync_all_pages_to_markdown().unwrap();
+        assert!(synced_count >= 6);
+
+        drop(db);
+    }
+
+    #[test]
+    fn test_backup_creation_pruning_hot_restore_and_workspace_zip() {
+        let exe_root = TempTestDir::new("backups");
+        let appdata_fallback = TempTestDir::new("bkp-appdata");
+
+        let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
+
+        let p_keep = db
+            .create_page(CreatePageInput {
+                title: Some("快照保存页面 Snapshot Keep".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let snap = db.create_backup_now().unwrap();
+        assert!(Path::new(&snap.full_path).is_file());
+        assert!(snap.size_bytes > 0);
+
+        // Mutate workspace after snapshot (add temporary page + delete `p_keep`)
+        let p_temp = db
+            .create_page(CreatePageInput {
+                title: Some("快照后误操作页面".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        db.delete_page_permanently(&p_keep.id).unwrap();
+        assert!(!db.list_pages().unwrap().iter().any(|p| p.id == p_keep.id));
+
+        // Hot-restore snapshot with zero restart!
+        let restored_info = db.restore_backup(&snap.full_path).unwrap();
+        assert!(restored_info.page_count >= 5);
+        let pages_now = db.list_pages().unwrap();
+        assert!(pages_now.iter().any(|p| p.id == p_keep.id));
+        assert!(!pages_now.iter().any(|p| p.id == p_temp.id));
+
+        // Verify workspace `.zip` export contains `.md` and `.csv` entries
+        let zip_bytes = db.build_workspace_zip_bytes().unwrap();
+        assert!(zip_bytes.len() > 200);
+        let archive = zip::ZipArchive::new(Cursor::new(zip_bytes)).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.name_for_index(i).unwrap().to_string())
+            .collect();
+        assert!(names.iter().any(|n| n.ends_with(".md")));
+        assert!(names.iter().any(|n| n.ends_with(".csv")));
+
+        drop(db);
+    }
+
+    #[test]
+    fn test_local_markdown_open_save_roundtrip_and_asset_image_save() {
+        let exe_root = TempTestDir::new("typora-local");
+        let appdata_fallback = TempTestDir::new("typora-appdata");
+        let notes_dir = TempTestDir::new("standalone-notes");
+
+        let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
+
+        // 1. `save_asset_image` writes binary PNG to `<exe_dir>\data\assets\` AND returns `data:image/png;base64,...`
+        let tiny_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+        let saved_asset = db
+            .save_asset_image("截图: 架构图.png", tiny_png_b64, "image/png")
+            .unwrap();
+        assert!(Path::new(&saved_asset.file_path).is_file());
+        assert!(saved_asset.file_path.contains("assets"));
+        assert!(saved_asset.asset_url.starts_with("data:image/png;base64,"));
+
+        // 2. Write standalone `.md` via `save_local_markdown_file_disk` with GFM table & highlight, then re-open!
+        let md_path = notes_dir.path().join("typora-spec.md");
+        let md_path_str = clean_display_path(&md_path);
+
+        let saved_doc = save_local_markdown_file_disk(
+            &md_path_str,
+            Some(vec![
+                SaveBlockItem {
+                    id: "h1".into(),
+                    block_type: "heading1".into(),
+                    content: "Typora 本地直编规范".into(),
+                    plain_text: "Typora 本地直编规范".into(),
+                    props: BlockProps::default(),
+                    sort_order: 0,
+                },
+                SaveBlockItem {
+                    id: "p1".into(),
+                    block_type: "paragraph".into(),
+                    content: "这里包含 <mark>双等号高亮</mark> 与 <b>粗体</b>。".into(),
+                    plain_text: String::new(),
+                    props: BlockProps::default(),
+                    sort_order: 1,
+                },
+                SaveBlockItem {
+                    id: "t1".into(),
+                    block_type: "table".into(),
+                    content: String::new(),
+                    plain_text: String::new(),
+                    props: BlockProps {
+                        headers: Some(vec!["快捷键".into(), "功能 | Action".into()]),
+                        rows: Some(vec![
+                            vec!["Ctrl + /".into(), "切换源码 / 所见即所得".into()],
+                            vec!["Ctrl + S".into(), "直接保存本地 .md".into()],
+                        ]),
+                        ..Default::default()
+                    },
+                    sort_order: 2,
+                },
+            ]),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(saved_doc.title, "Typora 本地直编规范");
+        assert!(saved_doc.markdown.contains("==双等号高亮=="));
+        assert!(saved_doc.markdown.contains("| 快捷键 | 功能 \\| Action |"));
+
+        let reopened = open_local_markdown_file_disk(&md_path_str).unwrap();
+        assert_eq!(reopened.file_name, "typora-spec.md");
+        assert_eq!(reopened.title, "Typora 本地直编规范");
+        assert_eq!(reopened.blocks.len(), 3);
+        assert!(reopened.blocks[1].content.contains("<mark>双等号高亮</mark>"));
+        assert_eq!(reopened.blocks[2].block_type, "table");
+        assert_eq!(
+            reopened.blocks[2].props.headers.as_ref().unwrap(),
+            &vec!["快捷键".to_string(), "功能 | Action".to_string()]
+        );
+
+        // 3. Bidirectional `convert_markdown_blocks_pure`
+        let converted =
+            convert_markdown_blocks_pure(Some(reopened.markdown.clone()), None, Some("p1".into()))
+                .unwrap();
+        assert_eq!(converted.blocks.len(), 3);
+        assert_eq!(converted.blocks[0].page_id, "p1");
+
+        drop(db);
+    }
+}

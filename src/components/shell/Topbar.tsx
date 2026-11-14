@@ -1,0 +1,569 @@
+import React, { useEffect, useRef, useState } from "react";
+import {
+  AlignCenter,
+  BookOpen,
+  Columns2,
+  Copy,
+  Download,
+  Eye,
+  FileCode2,
+  FileInput,
+  FolderOpen,
+  ListTree,
+  Maximize2,
+  Minimize2,
+  Moon,
+  MoreHorizontal,
+  PanelLeftOpen,
+  Save,
+  Search,
+  Settings,
+  Star,
+  Sun,
+  Target,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import type {
+  BreadcrumbItem,
+  EditorViewMode,
+  LocalMarkdownDocument,
+  Page,
+} from "../../types/notion";
+
+export type ThemeMode = "light" | "dark" | "sepia";
+export type FontStyleMode = "sans" | "serif" | "mono";
+
+export interface TopbarProps {
+  page: Page | null;
+  activeLocalMd: LocalMarkdownDocument | null;
+  breadcrumbs: BreadcrumbItem[];
+  sidebarCollapsed: boolean;
+  isSaving: boolean;
+  theme: ThemeMode;
+  fontStyle: FontStyleMode;
+  fullWidth: boolean;
+  viewMode: EditorViewMode;
+  focusMode: boolean;
+  typewriterMode: boolean;
+  showOutline: boolean;
+  zenMode: boolean;
+  onToggleSidebar: () => void;
+  onNavigatePage: (pageId: string) => void;
+  onToggleFavorite: () => void;
+  onChangeTheme: (theme: ThemeMode) => void;
+  onChangeFontStyle: (font: FontStyleMode) => void;
+  onToggleFullWidth: () => void;
+  onSetFullWidth?: (adaptive: boolean) => void;
+  onChangeViewMode: (mode: EditorViewMode) => void;
+  onToggleFocusMode: () => void;
+  onToggleTypewriterMode: () => void;
+  onToggleOutline: () => void;
+  onToggleZenMode: () => void;
+  onOpenSettings: () => void;
+  onOpenLocalMdDialog: () => void;
+  onSaveImmediate: () => void;
+  onSaveAsMarkdown: () => void;
+  onImportLocalMdToWorkspace: () => void;
+  onDuplicatePage: () => void;
+  onExportMarkdown: () => void;
+  onOpenImportMarkdown: () => void;
+  onTrashPage: () => void;
+  onOpenSearch: () => void;
+}
+
+export const Topbar: React.FC<TopbarProps> = ({
+  page,
+  activeLocalMd,
+  breadcrumbs,
+  sidebarCollapsed,
+  isSaving,
+  theme,
+  fontStyle,
+  fullWidth,
+  viewMode,
+  focusMode,
+  typewriterMode,
+  showOutline,
+  zenMode,
+  onToggleSidebar,
+  onNavigatePage,
+  onToggleFavorite,
+  onChangeTheme,
+  onChangeFontStyle,
+  onToggleFullWidth,
+  onSetFullWidth,
+  onChangeViewMode,
+  onToggleFocusMode,
+  onToggleTypewriterMode,
+  onToggleOutline,
+  onToggleZenMode,
+  onOpenSettings,
+  onOpenLocalMdDialog,
+  onSaveImmediate,
+  onSaveAsMarkdown,
+  onImportLocalMdToWorkspace,
+  onDuplicatePage,
+  onExportMarkdown,
+  onOpenImportMarkdown,
+  onTrashPage,
+  onOpenSearch,
+}) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onOutside = (e: MouseEvent) => {
+      if (menuWrapRef.current && !menuWrapRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onOutside);
+    return () => window.removeEventListener("mousedown", onOutside);
+  }, [menuOpen]);
+
+  const cycleTheme = () => {
+    const next: ThemeMode =
+      theme === "light" ? "dark" : theme === "dark" ? "sepia" : "light";
+    onChangeTheme(next);
+  };
+
+  const themeLabel =
+    theme === "light" ? "浅色模式" : theme === "dark" ? "深色模式" : "护眼暖色";
+
+  const isDocMode = Boolean(activeLocalMd || (page && page.pageType === "doc"));
+
+  return (
+    <header className="nb-topbar">
+      <div className="nb-topbar-left">
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            className="nb-icon-btn"
+            onClick={onToggleSidebar}
+            title="展开侧边栏 (Ctrl+Shift+L)"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
+
+        {activeLocalMd ? (
+          <div className="nb-local-md-bar">
+            <span className="nb-local-md-badge">本地直编</span>
+            <span
+              className="nb-local-md-filename"
+              title={activeLocalMd.filePath}
+            >
+              📝 {activeLocalMd.fileName}
+            </span>
+            <div className="nb-local-md-actions">
+              <button
+                type="button"
+                className="nb-topbar-mini-btn"
+                onClick={onSaveImmediate}
+                title="立即保存至磁盘 (Ctrl+S)"
+              >
+                <Save size={12} /> 保存
+              </button>
+              <button
+                type="button"
+                className="nb-topbar-mini-btn"
+                onClick={onSaveAsMarkdown}
+                title="另存为本地 Markdown 文件 (Ctrl+Shift+S)"
+              >
+                <Download size={12} /> 另存为
+              </button>
+              <button
+                type="button"
+                className="nb-topbar-mini-btn is-accent"
+                onClick={onImportLocalMdToWorkspace}
+                title="将此本地 .md 文件同时收录进 SQLite 工作区页面"
+              >
+                <FileInput size={12} /> 收入知识库
+              </button>
+            </div>
+          </div>
+        ) : (
+          page && (
+            <nav className="nb-breadcrumbs" aria-label="页面路径">
+              {breadcrumbs.map((crumb, index) => {
+                const isLast = index === breadcrumbs.length - 1;
+                return (
+                  <React.Fragment key={crumb.id}>
+                    {index > 0 && <span className="nb-breadcrumb-sep">/</span>}
+                    <button
+                      type="button"
+                      className={`nb-breadcrumb-item${isLast ? " is-current" : ""}`}
+                      onClick={() => onNavigatePage(crumb.id)}
+                      title={crumb.title || "无标题"}
+                    >
+                      <span>{isLast ? page.icon : crumb.icon || "📄"}</span>
+                      <span>
+                        {(isLast ? page.title : crumb.title) || "无标题"}
+                      </span>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </nav>
+          )
+        )}
+      </div>
+
+      <div className="nb-topbar-right">
+        {isDocMode && (
+          <>
+            {/* Segmented Typora View Mode Switcher */}
+            <div
+              className="nb-typora-switcher"
+              role="group"
+              aria-label="编辑视图切换"
+            >
+              <button
+                type="button"
+                className={`nb-typora-seg${
+                  viewMode === "wysiwyg" ? " is-active" : ""
+                }`}
+                onClick={() => onChangeViewMode("wysiwyg")}
+                title="所见即所得富文本视图 (Ctrl+/)"
+              >
+                <Eye size={12} />
+                <span>所见即所得</span>
+              </button>
+              <button
+                type="button"
+                className={`nb-typora-seg${
+                  viewMode === "source" ? " is-active" : ""
+                }`}
+                onClick={() => onChangeViewMode("source")}
+                title="Markdown 纯源码视图 (Ctrl+/)"
+              >
+                <FileCode2 size={12} />
+                <span>源码</span>
+              </button>
+              <button
+                type="button"
+                className={`nb-typora-seg${
+                  viewMode === "split" ? " is-active" : ""
+                }`}
+                onClick={() => onChangeViewMode("split")}
+                title="左右分屏实时预览"
+              >
+                <Columns2 size={12} />
+                <span>分屏</span>
+              </button>
+            </div>
+
+            {/* Quick Immersion Toggles */}
+            <button
+              type="button"
+              className={`nb-icon-btn${showOutline ? " is-mode-on" : ""}`}
+              onClick={onToggleOutline}
+              title="大纲目录 TOC (Ctrl+Shift+1)"
+            >
+              <ListTree size={15} />
+            </button>
+
+            <button
+              type="button"
+              className={`nb-icon-btn${focusMode ? " is-mode-on" : ""}`}
+              onClick={onToggleFocusMode}
+              title="专注模式 Focus Mode (F8)"
+            >
+              <Target size={15} />
+            </button>
+
+            <button
+              type="button"
+              className={`nb-icon-btn${typewriterMode ? " is-mode-on" : ""}`}
+              onClick={onToggleTypewriterMode}
+              title="打字机居中模式 Typewriter (F9)"
+            >
+              <AlignCenter size={15} />
+            </button>
+
+            <button
+              type="button"
+              className={`nb-icon-btn${zenMode ? " is-mode-on" : ""}`}
+              onClick={onToggleZenMode}
+              title={zenMode ? "退出禅模式 (Zen)" : "进入禅模式沉浸写作 (Zen)"}
+            >
+              {zenMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+
+            <span className="nb-topbar-divider" />
+          </>
+        )}
+
+        {(page || activeLocalMd) && (
+          <span className="nb-save-pill" title="实时本地持久化">
+            <span className={`nb-save-dot${isSaving ? " is-saving" : ""}`} />
+            {isSaving ? "保存中..." : "已保存"}
+          </span>
+        )}
+
+        <button
+          type="button"
+          className="nb-icon-btn"
+          onClick={onOpenSearch}
+          title="全局搜索 (Ctrl+K)"
+        >
+          <Search size={16} />
+        </button>
+
+        <button
+          type="button"
+          className="nb-icon-btn"
+          onClick={cycleTheme}
+          title={`当前：${themeLabel}（点击切换）`}
+        >
+          {theme === "light" && <Sun size={16} />}
+          {theme === "dark" && <Moon size={16} />}
+          {theme === "sepia" && <BookOpen size={16} />}
+        </button>
+
+        <button
+          type="button"
+          className="nb-icon-btn"
+          onClick={onOpenSettings}
+          title="偏好设置中心 (Ctrl+,)"
+        >
+          <Settings size={16} />
+        </button>
+
+        {page && !activeLocalMd && (
+          <button
+            type="button"
+            className={`nb-icon-btn${page.isFavorite ? " is-active" : ""}`}
+            onClick={onToggleFavorite}
+            title={page.isFavorite ? "取消收藏" : "加入收藏夹"}
+          >
+            <Star size={16} fill={page.isFavorite ? "currentColor" : "none"} />
+          </button>
+        )}
+
+        {(page || activeLocalMd) && (
+          <div ref={menuWrapRef} style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="nb-icon-btn"
+              onClick={() => setMenuOpen((v) => !v)}
+              title="页面排版与更多操作"
+            >
+              <MoreHorizontal size={17} />
+            </button>
+
+            {menuOpen && (
+              <div
+                className="nb-popover"
+                style={{ right: 0, top: "32px", width: "256px" }}
+              >
+                <div className="nb-menu-label">字体风格</div>
+                <div className="nb-font-switcher">
+                  <button
+                    type="button"
+                    className={`nb-font-option nb-font-sans${
+                      fontStyle === "sans" ? " is-active" : ""
+                    }`}
+                    onClick={() => onChangeFontStyle("sans")}
+                  >
+                    <span className="nb-font-option-sample">Ag</span>
+                    <span className="nb-font-option-name">默认</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`nb-font-option nb-font-serif${
+                      fontStyle === "serif" ? " is-active" : ""
+                    }`}
+                    onClick={() => onChangeFontStyle("serif")}
+                  >
+                    <span className="nb-font-option-sample">Ag</span>
+                    <span className="nb-font-option-name">衬线体</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`nb-font-option nb-font-mono${
+                      fontStyle === "mono" ? " is-active" : ""
+                    }`}
+                    onClick={() => onChangeFontStyle("mono")}
+                  >
+                    <span className="nb-font-option-sample">Ag</span>
+                    <span className="nb-font-option-name">等宽</span>
+                  </button>
+                </div>
+
+                <div className="nb-menu-divider" />
+
+                <div className="nb-menu-label">外观主题</div>
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => onChangeTheme("light")}
+                >
+                  <span className="nb-menu-item-left">
+                    <Sun size={14} /> 浅色纸面 (#FFFFFF)
+                  </span>
+                  {theme === "light" && <span>✓</span>}
+                </button>
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => onChangeTheme("dark")}
+                >
+                  <span className="nb-menu-item-left">
+                    <Moon size={14} /> 深色夜间 (#191919)
+                  </span>
+                  {theme === "dark" && <span>✓</span>}
+                </button>
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => onChangeTheme("sepia")}
+                >
+                  <span className="nb-menu-item-left">
+                    <BookOpen size={14} /> 护眼暖色 (#FBF7EE)
+                  </span>
+                  {theme === "sepia" && <span>✓</span>}
+                </button>
+
+                {isDocMode && (
+                  <>
+                    <div className="nb-menu-divider" />
+                    <div className="nb-menu-label">页面版心布局</div>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        if (onSetFullWidth) onSetFullWidth(true);
+                        else if (!fullWidth) onToggleFullWidth();
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        自适应窗口宽度
+                        <span className="nb-rec-tag">默认开启</span>
+                      </span>
+                      {fullWidth && <span>✓</span>}
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        if (onSetFullWidth) onSetFullWidth(false);
+                        else if (fullWidth) onToggleFullWidth();
+                      }}
+                    >
+                      <span className="nb-menu-item-left">居中阅读版心 (960px)</span>
+                      {!fullWidth && <span>✓</span>}
+                    </button>
+                  </>
+                )}
+
+                <div className="nb-menu-divider" />
+
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => {
+                    onOpenLocalMdDialog();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="nb-menu-item-left">
+                    <FolderOpen size={14} /> 打开本地 .md 直编 (Ctrl+O)
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => {
+                    onSaveAsMarkdown();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="nb-menu-item-left">
+                    <Save size={14} /> 另存为本地 .md
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className="nb-menu-item"
+                  onClick={() => {
+                    onOpenSettings();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="nb-menu-item-left">
+                    <Settings size={14} /> 偏好设置中心 (Ctrl+,)
+                  </span>
+                </button>
+
+                {page && !activeLocalMd && (
+                  <>
+                    <div className="nb-menu-divider" />
+
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onDuplicatePage();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Copy size={14} /> 复制页面副本
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onExportMarkdown();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Download size={14} /> 导出 Markdown
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onOpenImportMarkdown();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Upload size={14} /> 导入 Markdown
+                      </span>
+                    </button>
+
+                    <div className="nb-menu-divider" />
+
+                    <button
+                      type="button"
+                      className="nb-menu-item is-danger"
+                      onClick={() => {
+                        onTrashPage();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Trash2 size={14} /> 移至回收站
+                      </span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </header>
+  );
+};
