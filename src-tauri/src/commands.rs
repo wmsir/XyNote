@@ -341,6 +341,31 @@ pub fn open_path_in_explorer(path: String) -> Result<(), String> {
     crate::win_dialogs::open_path_in_explorer_sync(&path).map_err(Into::into)
 }
 
+/// 侧栏「文件夹」：列出一层子文件夹与笔记文件
+#[tauri::command]
+pub fn list_folder_entries(path: String) -> Result<crate::folders::FolderListing, String> {
+    crate::folders::list_folder(&path).map_err(Into::into)
+}
+
+/// 在文件夹里新建笔记（is_dir = false）或子文件夹
+#[tauri::command]
+pub fn create_folder_entry(
+    parent: String,
+    name: String,
+    is_dir: bool,
+) -> Result<crate::folders::FolderEntry, String> {
+    crate::folders::create_entry(&parent, &name, is_dir).map_err(Into::into)
+}
+
+/// 在原目录内重命名文件或文件夹
+#[tauri::command]
+pub fn rename_folder_entry(
+    path: String,
+    new_name: String,
+) -> Result<crate::folders::FolderEntry, String> {
+    crate::folders::rename_entry(&path, &new_name).map_err(Into::into)
+}
+
 #[tauri::command]
 pub fn list_backups(db: State<'_, Database>) -> Result<Vec<BackupEntry>, String> {
     db.list_backups().map_err(Into::into)

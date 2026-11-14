@@ -1,3 +1,4 @@
+pub mod folders;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
@@ -79,6 +80,9 @@ pub fn run() {
             commands::convert_markdown_blocks,
             commands::save_asset_image,
             commands::open_path_in_explorer,
+            commands::list_folder_entries,
+            commands::create_folder_entry,
+            commands::rename_folder_entry,
             commands::list_backups,
             commands::create_backup_now,
             commands::restore_backup,

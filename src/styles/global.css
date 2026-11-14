@@ -1076,6 +1076,130 @@ a {
   margin: 5px 4px;
 }
 
+.nb-menu-kbd {
+  margin-left: auto;
+  padding-left: 16px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* ===== 侧栏「文件夹」：磁盘文件夹树 ===== */
+.nb-folders-section {
+  margin-top: 6px;
+}
+
+.nb-folder-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.nb-folder-root + .nb-folder-root {
+  margin-top: 2px;
+}
+
+.nb-folder-root-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.nb-folder-row:focus-visible,
+.nb-folder-root-row:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.nb-folder-caret {
+  transition: transform 0.14s ease, color 0.12s ease;
+}
+
+.nb-folder-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.nb-folder-edit-row,
+.nb-folder-edit-row:hover {
+  background: transparent;
+  cursor: default;
+}
+
+.nb-folder-input {
+  flex: 1;
+  min-width: 0;
+  height: 23px;
+  padding: 0 6px;
+  border: 1px solid var(--accent-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.nb-folder-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding-right: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.nb-folder-hint.is-error {
+  color: var(--danger-color);
+  flex-wrap: wrap;
+}
+
+.nb-folder-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-color);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nb-folder-link:hover {
+  text-decoration: underline;
+}
+
+.nb-folder-add-ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  margin: 2px 2px 4px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+
+.nb-folder-add-ghost:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: var(--accent-bg);
+}
+
+.nb-folder-empty {
+  padding: 2px 8px 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.nb-folder-empty p {
+  margin: 0;
+}
+
 .nb-font-switcher {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

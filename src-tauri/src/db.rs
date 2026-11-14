@@ -379,66 +379,17 @@ impl Database {
         Ok(())
     }
 
+    /// 新工作区只带一篇使用说明，其余内容由用户自己创建
     fn seed_starter_workspace(conn: &Connection) -> Result<(), AppError> {
         let ts = now_iso();
         let welcome_id = "page-welcome";
-        let roadmap_id = "page-roadmap";
-        let arch_id = "page-arch";
-        let journal_id = "page-journal";
 
-        // 1. Insert starter pages
-        let starter_pages = [
-            (
-                welcome_id,
-                None::<&str>,
-                "欢迎使用 小悦 (XyNote)",
-                "🏠",
-                Some("linear-gradient(120deg, #f6efe2 0%, #e9dfd0 52%, #dce5ea 100%)"),
-                "doc",
-                1i64,
-                0i64,
-            ),
-            (
-                roadmap_id,
-                None::<&str>,
-                "产品路线图 Product Roadmap",
-                "🗺️",
-                None::<&str>,
-                "database",
-                1i64,
-                1i64,
-            ),
-            (
-                arch_id,
-                Some(welcome_id),
-                "工程架构设计 Engineering Architecture",
-                "🏗️",
-                None::<&str>,
-                "doc",
-                0i64,
-                0i64,
-            ),
-            (
-                journal_id,
-                None::<&str>,
-                "每周工作复盘与思考",
-                "📓",
-                None::<&str>,
-                "doc",
-                0i64,
-                2i64,
-            ),
-        ];
+        conn.execute(
+            "INSERT INTO pages (id, parent_id, title, icon, cover, page_type, is_favorite, is_trashed, sort_order, created_at, updated_at)
+             VALUES (?1, NULL, ?2, ?3, NULL, 'doc', 0, 0, 0, ?4, ?4)",
+            params![welcome_id, "欢迎使用 小悦 (XyNote)", "🏠", ts],
+        )?;
 
-        for (id, parent_id, title, icon, cover, page_type, is_fav, sort_order) in starter_pages {
-            conn.execute(
-                "INSERT INTO pages (id, parent_id, title, icon, cover, page_type, is_favorite, is_trashed, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?9)",
-                params![id, parent_id, title, icon, cover, page_type, is_fav, sort_order, ts],
-            )?;
-        }
-
-        // Helper closure to insert a starter block
         let insert_block = |page_id: &str,
                             sort: i64,
                             block_type: &str,
@@ -455,362 +406,112 @@ impl Database {
             Ok(())
         };
 
-        // 2. Welcome / Getting Started blocks (headings, callout, todos, code, toggle, quote, table, [[Product Roadmap]] wiki-link)
         insert_block(
             welcome_id,
             0,
             "callout",
-            "欢迎来到本地优先的桌面端 <strong>小悦 (XyNote)</strong> 工作区！所有笔记、块结构、双向链接与多维数据库均实时保存在本地 SQLite 数据库中。",
+            "小悦是本地优先的桌面笔记：工作区页面保存在本机数据库里，侧栏「文件夹」可以直接打开并编辑磁盘上的 Markdown 文件。",
             BlockProps {
                 callout_icon: Some("💡".into()),
-                color: Some("amber".into()),
+                color: Some("gray".into()),
                 ..Default::default()
             },
         )?;
-        insert_block(welcome_id, 1, "heading2", "快速上手指南", BlockProps::default())?;
+        insert_block(
+            welcome_id,
+            1,
+            "heading2",
+            "开始使用",
+            BlockProps::default(),
+        )?;
         insert_block(
             welcome_id,
             2,
-            "todo",
-            "输入 <code>/</code> 唤出斜杠命令菜单，插入标题、代码块、表格、折叠列表或子页面",
-            BlockProps {
-                checked: Some(true),
-                ..Default::default()
-            },
+            "bullet",
+            "<strong>新建页面</strong>：点侧栏「工作区页面」右侧的 +，或按 <code>Ctrl + N</code>。",
+            BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             3,
-            "todo",
-            "输入 <code>[[</code> 建立双向页面引用（如 [[Product Roadmap]]），前往 <a href=\"#\" data-page-id=\"page-roadmap\" class=\"nb-wiki-link\">🗺️ 产品路线图 Product Roadmap</a>",
-            BlockProps {
-                checked: Some(false),
-                ..Default::default()
-            },
+            "bullet",
+            "<strong>打开文件夹</strong>：点侧栏「文件夹」右侧的按钮选择目录，可以同时打开多个；点击笔记即可编辑，改动直接保存回原文件。",
+            BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             4,
-            "todo",
-            "按下 <code>Ctrl + K</code> 打开全局命令面板，毫秒级全文检索中英文笔记",
-            BlockProps {
-                checked: Some(false),
-                ..Default::default()
-            },
+            "bullet",
+            "<strong>插入内容</strong>：在空行输入 <code>/</code>，选择标题、待办、表格、代码、公式或 Mermaid 图表。",
+            BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             5,
-            "toggle",
-            "常用键盘快捷键速查",
-            BlockProps {
-                collapsed: Some(false),
-                children_text: Some(
-                    "• Ctrl + K：全局搜索与快速跳转\n• Ctrl + N：快速新建文档页面\n• Ctrl + \\：折叠或展开左侧边栏\n• Markdown 实时转换：行首输入 # 、- 、1. 、[] 、> 加空格自动转换为对应块".into(),
-                ),
-                ..Default::default()
-            },
+            "bullet",
+            "<strong>关联页面</strong>：输入 <code>[[</code> 引用其他页面，被引用的页面底部会显示反向链接。",
+            BlockProps::default(),
         )?;
-        let sample_code = "fn open_workspace() -> rusqlite::Result<()> {\n    println!(\"Powered by Rust + Tauri v2 + SQLite WAL + FTS5\");\n    Ok(())\n}";
-        conn.execute(
-            "INSERT INTO blocks (id, page_id, block_type, content, plain_text, props_json, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, 'code', ?3, ?4, ?5, 6, ?6, ?6)",
-            params![
-                new_id(),
-                welcome_id,
-                sample_code,
-                sample_code,
-                serde_json::to_string(&BlockProps {
-                    language: Some("rust".into()),
-                    ..Default::default()
-                })?,
-                ts
-            ],
+        insert_block(
+            welcome_id,
+            6,
+            "bullet",
+            "<strong>搜索</strong>：按 <code>Ctrl + K</code> 全文搜索，并快速跳转到页面或命令。",
+            BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             7,
-            "table",
-            "",
-            BlockProps {
-                headers: Some(vec!["核心模块".into(), "技术实现".into(), "当前状态".into()]),
-                rows: Some(vec![
-                    vec![
-                        "块级富文本编辑器".into(),
-                        "13 种块类型 + 斜杠菜单 + 拖拽排序".into(),
-                        "✅ 已就绪".into(),
-                    ],
-                    vec![
-                        "多视图数据库".into(),
-                        "表格 / 看板 / 画廊 + 筛选与排序".into(),
-                        "✅ 已就绪".into(),
-                    ],
-                    vec![
-                        "本地存储引擎".into(),
-                        "Rust + Tauri v2 + SQLite WAL / FTS5".into(),
-                        "✅ 已就绪".into(),
-                    ],
-                ]),
-                ..Default::default()
-            },
+            "heading2",
+            "侧栏文件夹",
+            BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             8,
-            "quote",
-            "保持工具安静、克制与迅捷，让注意力回到思考与创作本身。",
+            "bullet",
+            "右键文件夹：新建笔记、新建文件夹、刷新、在文件管理器中显示、复制路径。",
             BlockProps::default(),
         )?;
         insert_block(
             welcome_id,
             9,
-            "paragraph",
-            "深入了解底层实现请参阅子页面：<a href=\"#\" data-page-id=\"page-arch\" class=\"nb-wiki-link\">🏗️ 工程架构设计 Engineering Architecture</a>。",
+            "bullet",
+            "右键笔记：重命名（也可以按 <code>F2</code>）、在文件管理器中显示、复制路径。",
             BlockProps::default(),
         )?;
-
-        // 3. Engineering Architecture child page blocks
         insert_block(
-            arch_id,
-            0,
-            "callout",
-            "本文档梳理小悦 (XyNote) 的前后端分层架构，并与 <a href=\"#\" data-page-id=\"page-welcome\" class=\"nb-wiki-link\">🏠 欢迎使用 小悦 (XyNote)</a> 及 <a href=\"#\" data-page-id=\"page-roadmap\" class=\"nb-wiki-link\">🗺️ 产品路线图 Product Roadmap</a> 自动建立反向链接。",
+            welcome_id,
+            10,
+            "bullet",
+            "只显示子文件夹和 .md / .markdown / .txt 笔记；隐藏文件、node_modules 等目录不会出现。",
+            BlockProps::default(),
+        )?;
+        insert_block(
+            welcome_id,
+            11,
+            "bullet",
+            "从侧栏移除文件夹只是不再显示，不会删除磁盘上的任何文件。",
+            BlockProps::default(),
+        )?;
+        insert_block(
+            welcome_id,
+            12,
+            "toggle",
+            "常用快捷键",
             BlockProps {
-                callout_icon: Some("🧭".into()),
-                color: Some("blue".into()),
+                collapsed: Some(true),
+                children_text: Some("Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）".into()),
                 ..Default::default()
             },
         )?;
         insert_block(
-            arch_id,
-            1,
-            "heading2",
-            "存储层与全文检索设计",
-            BlockProps::default(),
-        )?;
-        insert_block(
-            arch_id,
-            2,
-            "bullet",
-            "启用 <code>PRAGMA journal_mode = WAL</code> 与外键级联删除，保障高并发读写安全。",
-            BlockProps::default(),
-        )?;
-        insert_block(
-            arch_id,
-            3,
-            "bullet",
-            "结合 SQLite FTS5 倒排索引与中文子串匹配，实现毫秒级中英双语搜索。",
-            BlockProps::default(),
-        )?;
-        let sql_code = "SELECT p.id, p.title, b.plain_text\nFROM blocks_fts\nJOIN blocks b ON b.id = blocks_fts.block_id\nJOIN pages p ON p.id = b.page_id\nWHERE blocks_fts MATCH ?1 AND p.is_trashed = 0;";
-        conn.execute(
-            "INSERT INTO blocks (id, page_id, block_type, content, plain_text, props_json, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, 'code', ?3, ?4, ?5, 4, ?6, ?6)",
-            params![
-                new_id(),
-                arch_id,
-                sql_code,
-                sql_code,
-                serde_json::to_string(&BlockProps {
-                    language: Some("sql".into()),
-                    ..Default::default()
-                })?,
-                ts
-            ],
-        )?;
-
-        // 4. Weekly Journal blocks
-        insert_block(journal_id, 0, "heading2", "本周核心目标 Focus", BlockProps::default())?;
-        insert_block(
-            journal_id,
-            1,
-            "numbered",
-            "完成桌面端块级编辑器与数据库三视图打磨",
-            BlockProps::default(),
-        )?;
-        insert_block(
-            journal_id,
-            2,
-            "numbered",
-            "整理 Markdown 导入导出与模板中心工作流",
-            BlockProps::default(),
-        )?;
-        insert_block(journal_id, 3, "divider", "", BlockProps::default())?;
-        insert_block(
-            journal_id,
-            4,
+            welcome_id,
+            13,
             "paragraph",
-            "随时记录灵感与会议要点，使用 <code>[[</code> 关联项目页面。",
+            "这篇文档可以随意修改或删除。",
             BlockProps::default(),
         )?;
-
-        // 5. Product Roadmap database (title, status, select Priority, multi_select Tags, date Target Date, checkbox Shipped + 5 rows)
-        let col_title = "col-roadmap-title";
-        let col_status = "col-roadmap-status";
-        let col_priority = "col-roadmap-priority";
-        let col_tags = "col-roadmap-tags";
-        let col_date = "col-roadmap-date";
-        let col_shipped = "col-roadmap-shipped";
-
-        conn.execute(
-            "INSERT INTO db_meta (page_id, active_view, group_by_col_id) VALUES (?1, 'table', ?2)",
-            params![roadmap_id, col_status],
-        )?;
-
-        let status_opts = vec![
-            SelectOption {
-                id: "opt-todo".into(),
-                label: "待规划 Todo".into(),
-                color: "gray".into(),
-            },
-            SelectOption {
-                id: "opt-doing".into(),
-                label: "进行中 In Progress".into(),
-                color: "blue".into(),
-            },
-            SelectOption {
-                id: "opt-done".into(),
-                label: "已完成 Done".into(),
-                color: "green".into(),
-            },
-        ];
-        let priority_opts = vec![
-            SelectOption {
-                id: "opt-p0".into(),
-                label: "P0 核心".into(),
-                color: "red".into(),
-            },
-            SelectOption {
-                id: "opt-p1".into(),
-                label: "P1 重要".into(),
-                color: "amber".into(),
-            },
-            SelectOption {
-                id: "opt-p2".into(),
-                label: "P2 常规".into(),
-                color: "blue".into(),
-            },
-        ];
-        let tag_opts = vec![
-            SelectOption {
-                id: "tag-rust".into(),
-                label: "Rust".into(),
-                color: "amber".into(),
-            },
-            SelectOption {
-                id: "tag-sqlite".into(),
-                label: "SQLite".into(),
-                color: "green".into(),
-            },
-            SelectOption {
-                id: "tag-editor".into(),
-                label: "Editor".into(),
-                color: "purple".into(),
-            },
-            SelectOption {
-                id: "tag-ui".into(),
-                label: "Design".into(),
-                color: "blue".into(),
-            },
-        ];
-
-        let cols = [
-            (col_title, "功能事项", "title", Vec::<SelectOption>::new(), 260i64, 0i64),
-            (col_status, "状态", "status", status_opts, 165, 1),
-            (col_priority, "优先级", "select", priority_opts, 130, 2),
-            (col_tags, "模块标签", "multi_select", tag_opts, 200, 3),
-            (col_date, "目标日期", "date", Vec::new(), 145, 4),
-            (col_shipped, "已上线", "checkbox", Vec::new(), 100, 5),
-        ];
-
-        for (cid, name, ctype, opts, width, sort) in cols {
-            conn.execute(
-                "INSERT INTO db_columns (id, page_id, name, col_type, options_json, width, sort_order)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![cid, roadmap_id, name, ctype, serde_json::to_string(&opts)?, width, sort],
-            )?;
-        }
-
-        let roadmap_rows = [
-            (
-                "row-rm-1",
-                json!({
-                    col_title: "SQLite WAL 存储引擎与 FTS5 全文检索",
-                    col_status: "opt-done",
-                    col_priority: "opt-p0",
-                    col_tags: ["tag-rust", "tag-sqlite"],
-                    col_date: "2026-11-10",
-                    col_shipped: true
-                }),
-                Some(arch_id),
-                0i64,
-            ),
-            (
-                "row-rm-2",
-                json!({
-                    col_title: "块级富文本编辑器（斜杠菜单 + 拖拽排序）",
-                    col_status: "opt-done",
-                    col_priority: "opt-p0",
-                    col_tags: ["tag-editor", "tag-ui"],
-                    col_date: "2026-11-12",
-                    col_shipped: true
-                }),
-                None,
-                1,
-            ),
-            (
-                "row-rm-3",
-                json!({
-                    col_title: "多维数据库（表格 / 看板拖拽 / 画廊卡片）",
-                    col_status: "opt-doing",
-                    col_priority: "opt-p0",
-                    col_tags: ["tag-ui", "tag-sqlite"],
-                    col_date: "2026-11-16",
-                    col_shipped: false
-                }),
-                None,
-                2,
-            ),
-            (
-                "row-rm-4",
-                json!({
-                    col_title: "双向页面链接 [[WikiLink]] 与反向链接面板",
-                    col_status: "opt-doing",
-                    col_priority: "opt-p1",
-                    col_tags: ["tag-editor"],
-                    col_date: "2026-11-18",
-                    col_shipped: false
-                }),
-                None,
-                3,
-            ),
-            (
-                "row-rm-5",
-                json!({
-                    col_title: "Markdown 批量导入导出与模板中心",
-                    col_status: "opt-todo",
-                    col_priority: "opt-p2",
-                    col_tags: ["tag-rust", "tag-ui"],
-                    col_date: "2026-11-24",
-                    col_shipped: false
-                }),
-                None,
-                4,
-            ),
-        ];
-
-        for (rid, cells_val, linked_id, sort) in roadmap_rows {
-            conn.execute(
-                "INSERT INTO db_rows (id, page_id, cells_json, linked_page_id, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-                params![rid, roadmap_id, serde_json::to_string(&cells_val)?, linked_id, sort, ts],
-            )?;
-        }
-
-        // Extract initial page links
-        Self::rebuild_page_links_internal(conn, welcome_id)?;
-        Self::rebuild_page_links_internal(conn, arch_id)?;
-        Self::rebuild_page_links_internal(conn, journal_id)?;
 
         Ok(())
     }
@@ -2930,51 +2631,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_seeded_workspace_and_backlinks() {
+    fn test_seeded_workspace_has_only_the_guide() {
         let db = Database::open_in_memory().expect("open seeded in-memory db");
         let pages = db.list_pages().unwrap();
-        assert!(pages.len() >= 3, "should seed welcome, roadmap, arch");
+        assert_eq!(pages.len(), 1, "new workspace should only contain the built-in guide");
+        assert_eq!(pages[0].id, "page-welcome");
+        assert_eq!(pages[0].page_type, "doc");
 
-        let roadmap_detail = db.get_page_detail("page-roadmap").unwrap();
-        assert_eq!(roadmap_detail.page.page_type, "database");
-        assert!(
-            roadmap_detail.backlinks.len() >= 2,
-            "Welcome and Engineering Architecture should backlink to Product Roadmap"
-        );
-
-        let arch_detail = db.get_page_detail("page-arch").unwrap();
-        assert_eq!(arch_detail.breadcrumbs.len(), 2);
-        assert_eq!(arch_detail.breadcrumbs[0].id, "page-welcome");
-        assert_eq!(arch_detail.breadcrumbs[1].id, "page-arch");
-
-        let roadmap_db = db.get_database("page-roadmap").unwrap();
-        assert_eq!(roadmap_db.columns.len(), 6);
-        assert_eq!(roadmap_db.rows.len(), 5);
+        let welcome = db.get_page_detail("page-welcome").unwrap();
+        assert!(welcome.blocks.len() >= 10);
+        assert!(welcome
+            .blocks
+            .iter()
+            .any(|b| b.plain_text.contains("打开文件夹")));
+        assert!(welcome.backlinks.is_empty());
     }
 
     #[test]
     fn test_fts5_and_chinese_cjk_substring_search() {
         let db = Database::open_in_memory().expect("open seeded db");
 
+        // Seeded guide is searchable by a Chinese mid-sentence substring
+        let guide_hits = db.search_workspace("反向链接").unwrap();
+        assert!(guide_hits.iter().any(|h| h.page_id == "page-welcome"));
+
+        let page = db
+            .create_page(CreatePageInput {
+                title: Some("产品路线图".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        db.save_page_blocks(
+            &page.id,
+            vec![SaveBlockItem {
+                id: "fts-1".into(),
+                block_type: "paragraph".into(),
+                content: "结合 SQLite FTS5 倒排索引实现毫秒级中英双语搜索".into(),
+                plain_text: String::new(),
+                props: BlockProps::default(),
+                sort_order: 0,
+            }],
+        )
+        .unwrap();
+
         // 1. English multi-token FTS5 query
         let fts_hits = db.search_workspace("SQLite FTS5").unwrap();
-        assert!(
-            !fts_hits.is_empty(),
-            "FTS5 token search should find SQLite FTS5 blocks"
-        );
+        assert!(fts_hits.iter().any(|h| h.page_id == page.id));
 
-        // 2. Mid-phrase Chinese substring query ("路线图" inside "产品路线图" / "多维数据库")
+        // 2. Mid-phrase Chinese substring query
         let cjk_hits = db.search_workspace("路线图").unwrap();
-        assert!(
-            cjk_hits.iter().any(|h| h.page_id == "page-roadmap"),
-            "Chinese substring search must find 产品路线图"
-        );
-
-        let mid_cjk_hits = db.search_workspace("反向链接").unwrap();
-        assert!(
-            !mid_cjk_hits.is_empty(),
-            "Chinese mid-sentence substring search must match blocks and database rows"
-        );
+        assert!(cjk_hits.iter().any(|h| h.page_id == page.id));
+        let mid_hits = db.search_workspace("倒排索引").unwrap();
+        assert!(mid_hits.iter().any(|h| h.page_id == page.id));
     }
 
     #[test]
@@ -3116,24 +2824,19 @@ mod tests {
 
     #[test]
     fn test_raw_code_blocks_and_dangling_linked_page_cleanup() {
-        let db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory_unseeded().unwrap();
+        let host = db
+            .create_page(CreatePageInput {
+                title: Some("代码片段".into()),
+                ..Default::default()
+            })
+            .unwrap();
 
-        // 1. Seeded welcome code block must contain raw unescaped `-> rusqlite::Result<()>`
-        let welcome = db.get_page_detail("page-welcome").unwrap();
-        let code_blk = welcome
-            .blocks
-            .iter()
-            .find(|b| b.block_type == "code")
-            .expect("seeded code block");
-        assert!(code_blk.content.contains("-> rusqlite::Result<()>"));
-        assert!(!code_blk.content.contains("&gt;"));
-        assert!(!code_blk.content.contains("&lt;"));
-
-        // 2. Saving a code block with `<T>` generics and empty plain_text preserves `<T>`
+        // 1. Saving a code block with `<T>` generics and empty plain_text preserves raw text
         let saved_blk = db
             .upsert_block(UpsertBlockInput {
                 id: None,
-                page_id: "page-welcome".into(),
+                page_id: host.id.clone(),
                 block_type: "code".into(),
                 content: "fn map<T, U>(v: Vec<T>) -> Vec<U> { todo!() }".into(),
                 plain_text: String::new(),
@@ -3141,53 +2844,72 @@ mod tests {
                     language: Some("rust".into()),
                     ..Default::default()
                 },
-                sort_order: 99,
+                sort_order: 0,
             })
             .unwrap();
         assert_eq!(
             saved_blk.plain_text,
             "fn map<T, U>(v: Vec<T>) -> Vec<U> { todo!() }"
         );
+        let detail = db.get_page_detail(&host.id).unwrap();
+        let code = detail
+            .blocks
+            .iter()
+            .find(|b| b.block_type == "code")
+            .expect("saved code block");
+        assert_eq!(code.plain_text, "fn map<T, U>(v: Vec<T>) -> Vec<U> { todo!() }");
 
-        // 3. Deleting a linked page clears db_rows.linked_page_id (both permanent delete & empty_trash)
-        let roadmap_before = db.get_database("page-roadmap").unwrap();
+        // 2. Deleting a linked page clears db_rows.linked_page_id (both permanent delete & empty_trash)
+        let tasks = db
+            .create_page(CreatePageInput {
+                template_id: Some("task-hub".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let before = db.get_database(&tasks.id).unwrap();
+        assert!(before.rows.len() >= 2);
+
+        let link_row = |row_idx: usize, target: &str| {
+            let full = db.get_database(&tasks.id).unwrap();
+            let row = &full.rows[row_idx];
+            db.upsert_db_row(UpsertDbRowInput {
+                id: Some(row.id.clone()),
+                page_id: tasks.id.clone(),
+                cells: row.cells.clone(),
+                linked_page_id: Some(Some(target.to_string())),
+                sort_order: Some(row.sort_order),
+            })
+            .unwrap();
+        };
+
+        let spec = db
+            .create_page(CreatePageInput {
+                title: Some("Spec".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        link_row(0, &spec.id);
         assert_eq!(
-            roadmap_before.rows[0].linked_page_id.as_deref(),
-            Some("page-arch")
+            db.get_database(&tasks.id).unwrap().rows[0].linked_page_id.as_deref(),
+            Some(spec.id.as_str())
         );
+        db.delete_page_permanently(&spec.id).unwrap();
+        assert_eq!(db.get_database(&tasks.id).unwrap().rows[0].linked_page_id, None);
 
-        db.delete_page_permanently("page-arch").unwrap();
-        let roadmap_after = db.get_database("page-roadmap").unwrap();
-        assert_eq!(roadmap_after.rows[0].linked_page_id, None);
-
-        // Also test via trash_page + empty_trash
         let doc2 = db
             .create_page(CreatePageInput {
                 title: Some("Row Spec".into()),
                 ..Default::default()
             })
             .unwrap();
-        db.upsert_db_row(UpsertDbRowInput {
-            id: Some(roadmap_after.rows[1].id.clone()),
-            page_id: "page-roadmap".into(),
-            cells: roadmap_after.rows[1].cells.clone(),
-            linked_page_id: Some(Some(doc2.id.clone())),
-            sort_order: Some(roadmap_after.rows[1].sort_order),
-        })
-        .unwrap();
+        link_row(1, &doc2.id);
         assert_eq!(
-            db.get_database("page-roadmap").unwrap().rows[1]
-                .linked_page_id
-                .as_deref(),
+            db.get_database(&tasks.id).unwrap().rows[1].linked_page_id.as_deref(),
             Some(doc2.id.as_str())
         );
-
         db.trash_page(&doc2.id).unwrap();
         db.empty_trash().unwrap();
-        assert_eq!(
-            db.get_database("page-roadmap").unwrap().rows[1].linked_page_id,
-            None
-        );
+        assert_eq!(db.get_database(&tasks.id).unwrap().rows[1].linked_page_id, None);
     }
 
     #[test]

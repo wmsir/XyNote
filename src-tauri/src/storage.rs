@@ -1387,7 +1387,7 @@ mod tests {
         let info0 = db.get_storage_info().unwrap();
         assert!(info0.is_default_portable_dir);
         assert!(info0.exe_dir_writable);
-        assert!(info0.page_count >= 4);
+        assert!(info0.page_count >= 1); // 新工作区只带一篇使用说明
         assert!(info0.db_size_bytes > 0);
         assert_eq!(db.list_backups().unwrap().len(), 1); // Launch auto-backup created!
 
@@ -1447,11 +1447,12 @@ mod tests {
         let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
         let pages_dir = exe_root.path().join("data").join("pages");
 
-        // Seeded nested child page `page-arch` under `page-welcome` should exist on disk
-        let seeded_nested = pages_dir
-            .join("欢迎使用 小悦 (XyNote)")
-            .join("工程架构设计 Engineering Architecture.md");
-        assert!(seeded_nested.is_file());
+        // 新工作区只有一篇使用说明，它的 .md 镜像应已写到磁盘
+        let seeded_welcome = pages_dir.join("欢迎使用 小悦 (XyNote).md");
+        assert!(
+            seeded_welcome.is_file() || pages_dir.join("欢迎使用 小悦 (XyNote)").is_dir(),
+            "seeded welcome page should be mirrored to disk"
+        );
 
         // Create parent + child page and verify live `.md` creation
         let parent = db
@@ -1498,7 +1499,7 @@ mod tests {
 
         // Explicit full sync returns active page count
         let synced_count = db.sync_all_pages_to_markdown().unwrap();
-        assert!(synced_count >= 6);
+        assert!(synced_count >= 3); // 使用说明 + 新建的父子两页
 
         drop(db);
     }
@@ -1516,6 +1517,12 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+        // 新工作区不再自带数据库页面，这里建一个，用于校验导出包里的 .csv
+        db.create_page(CreatePageInput {
+            template_id: Some("task-hub".into()),
+            ..Default::default()
+        })
+        .unwrap();
 
         let snap = db.create_backup_now().unwrap();
         assert!(Path::new(&snap.full_path).is_file());
@@ -1533,7 +1540,7 @@ mod tests {
 
         // Hot-restore snapshot with zero restart!
         let restored_info = db.restore_backup(&snap.full_path).unwrap();
-        assert!(restored_info.page_count >= 5);
+        assert!(restored_info.page_count >= 3); // 使用说明 + p_keep + 任务库
         let pages_now = db.list_pages().unwrap();
         assert!(pages_now.iter().any(|p| p.id == p_keep.id));
         assert!(!pages_now.iter().any(|p| p.id == p_temp.id));
