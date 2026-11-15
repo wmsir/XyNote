@@ -24,6 +24,12 @@ base64 = "0.22"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
 trash = "5"
+# 同步：内容哈希、端到端加密（AES-256-GCM，密钥由 Argon2id 从同步密码派生）
+sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 rfd = "0.15"

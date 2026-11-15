@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlignCenter,
   Archive,
+  Cloud,
   BookOpen,
   CheckCircle2,
   Columns2,
@@ -51,9 +52,12 @@ import type { FontStyleMode, ThemeMode } from "./Topbar";
 import { KeybindingSettingsPanel } from "./KeybindingSettingsPanel";
 import { ThemeStudioPanel } from "./ThemeStudioPanel";
 import { XyLogoIcon } from "./XyLogoIcon";
+import { SyncSettingsPanel } from "./SyncSettingsPanel";
+import type { SyncConfig } from "../../api/sync";
 
 export type SettingsTabId =
   | "storage"
+  | "sync"
   | "themes"
   | "appearance"
   | "shortcuts"
@@ -100,6 +104,9 @@ export interface SettingsModalProps {
   onSetFullWidth?: (adaptive: boolean) => void;
   onToggleShowStatusBar: () => void;
   onNotify: (msg: string) => void;
+  syncing: boolean;
+  onRunSync: () => Promise<void>;
+  onSyncConfigChanged: (cfg: SyncConfig) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -154,6 +161,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSetFullWidth,
   onToggleShowStatusBar,
   onNotify,
+  syncing,
+  onRunSync,
+  onSyncConfigChanged,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
   const [localInfo, setLocalInfo] = useState<StorageConfigInfo | null>(storageInfo);
@@ -495,6 +505,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     icon: React.ReactNode;
   }> = [
     { id: "storage", label: "存储与路径", icon: <HardDrive size={15} /> },
+    { id: "sync", label: "同步", icon: <Cloud size={15} /> },
     { id: "themes", label: "主题与样式插件", icon: <Sparkles size={15} /> },
     { id: "shortcuts", label: "快捷键配置", icon: <Keyboard size={15} /> },
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
@@ -1441,6 +1452,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
 
             {/* TAB: 主题与样式插件 */}
+            {activeTab === "sync" && (
+              <SyncSettingsPanel
+                syncing={syncing}
+                onRunSync={onRunSync}
+                onConfigChanged={onSyncConfigChanged}
+                onNotify={onNotify}
+              />
+            )}
+
             {activeTab === "themes" && (
               <ThemeStudioPanel
                 styleState={styleState}

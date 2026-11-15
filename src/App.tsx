@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useSyncController } from "./hooks/useSyncController";
 import {
   convertMarkdownBlocks,
   createPage,
@@ -411,6 +412,37 @@ export const App: React.FC = () => {
     },
     [flushPendingBlockSave]
   );
+
+  /** 同步下载了远端变更：刷新列表；当前页在别处被改过或被删除时重新载入 */
+  const handleRemoteSyncChanges = useCallback(async () => {
+    const { activeList } = await refreshSidebarLists();
+    const cur = detailRef.current;
+    if (!cur || activeLocalMdRef.current) return;
+    const stamp = (d: PageDetail) =>
+      [d.page.updatedAt, ...d.blocks.map((b) => b.updatedAt)].sort().pop() ?? "";
+    try {
+      const fresh = await getPageDetail(cur.page.id);
+      if (stamp(fresh) > stamp(cur) || fresh.page.title !== cur.page.title) {
+        setDetail(fresh);
+      }
+    } catch {
+      const next = activeList[0];
+      if (next) {
+        await loadPageDetailById(next.id);
+      } else {
+        setActivePageId(null);
+        setDetail(null);
+      }
+    }
+  }, [refreshSidebarLists, loadPageDetailById]);
+
+  const { syncConfig, setSyncConfig, syncing, syncNow } = useSyncController({
+    ready: !isLoading,
+    isSaving,
+    flushPendingSaves: flushPendingBlockSave,
+    onRemoteChanges: handleRemoteSyncChanges,
+    showToast,
+  });
 
   const pushRecentLocalMd = useCallback((doc: LocalMarkdownDocument) => {
     setRecentLocalMdFiles((prev) => {
@@ -2136,6 +2168,17 @@ export const App: React.FC = () => {
             stats={docStats}
             editorPrefs={editorPrefs}
             onOpenStorageSettings={() => handleOpenSettingsAtTab("storage")}
+            sync={
+              syncConfig
+                ? {
+                    mode: syncConfig.mode,
+                    syncing,
+                    lastAt: syncConfig.lastAt,
+                    lastError: syncConfig.lastError,
+                  }
+                : null
+            }
+            onOpenSyncSettings={() => handleOpenSettingsAtTab("sync")}
             onRevealActiveLocalMd={(fp) => {
               if (isTauriRuntime()) {
                 openPathInExplorer(fp).catch(() => {});
@@ -2253,6 +2296,9 @@ export const App: React.FC = () => {
         onSetFullWidth={handleSetAdaptiveWidth}
         onToggleShowStatusBar={handleToggleShowStatusBar}
         onNotify={showToast}
+        syncing={syncing}
+        onRunSync={syncNow}
+        onSyncConfigChanged={setSyncConfig}
       />
 
       <TemplatesModal

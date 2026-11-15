@@ -1,5 +1,8 @@
 pub mod folders;
 pub mod watch;
+pub mod sync;
+pub mod sync_remote;
+pub mod sync_config;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
@@ -90,6 +93,13 @@ pub fn run() {
             commands::search_folder_notes,
             commands::set_watched_paths,
             commands::save_local_note_image,
+            commands::sync_get_config,
+            commands::sync_save_config,
+            commands::sync_run,
+            commands::sync_auth,
+            commands::sync_account,
+            commands::sync_logout,
+            commands::open_external_url,
             commands::list_backups,
             commands::create_backup_now,
             commands::restore_backup,

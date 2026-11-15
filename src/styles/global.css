@@ -3275,3 +3275,133 @@ a {
 .nb-menu-check .nb-menu-kbd {
   padding-left: 0;
 }
+
+/* ---------------- 同步设置 ---------------- */
+.nb-sync-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+.nb-sync-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.nb-sync-mode:hover {
+  border-color: var(--accent-color);
+}
+.nb-sync-mode:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+.nb-sync-mode.is-active {
+  border-color: var(--accent-color);
+  background: var(--accent-bg);
+}
+.nb-sync-mode-icon {
+  display: inline-flex;
+  margin-top: 1px;
+  color: var(--text-secondary);
+}
+.nb-sync-mode.is-active .nb-sync-mode-icon {
+  color: var(--accent-color);
+}
+.nb-sync-mode-text {
+  display: flex;
+  flex-direction: column;
+}
+.nb-sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.nb-sync-field-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.nb-sync-official,
+.nb-sync-account,
+.nb-sync-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.nb-sync-account,
+.nb-sync-login {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.nb-sync-account {
+  flex-direction: row;
+}
+.nb-sync-status {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.nb-sync-quota {
+  margin-top: 8px;
+  width: 220px;
+  max-width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.nb-sync-quota > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-color);
+}
+.nb-sync-select {
+  width: auto;
+  padding: 4px 8px;
+}
+.nb-sync-inline-icon {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+.nb-sync-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger-color);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.nb-sync-error-text,
+.nb-statusbar-item.is-sync-error {
+  color: var(--danger-color);
+}
+.nb-spin {
+  animation: nbSpin 1s linear infinite;
+}
+@keyframes nbSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nb-spin {
+    animation: none;
+  }
+}
+.nb-path-input-group > button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}

@@ -7,6 +7,9 @@ import {
   FileText,
   FolderOpen,
   ListTree,
+  RefreshCw,
+  CloudOff,
+  Cloud,
   Target,
 } from "lucide-react";
 import type {
@@ -16,6 +19,14 @@ import type {
   LocalMarkdownDocument,
   StorageConfigInfo,
 } from "../../types/notion";
+import { relativeTime, type SyncMode } from "../../api/sync";
+
+export interface StatusBarSync {
+  mode: SyncMode;
+  syncing: boolean;
+  lastAt: string | null;
+  lastError: string | null;
+}
 
 export interface StatusBarProps {
   storageInfo: StorageConfigInfo | null;
@@ -30,6 +41,8 @@ export interface StatusBarProps {
   onToggleTypewriterMode: () => void;
   onToggleOutline: () => void;
   onCycleViewMode: () => void;
+  sync?: StatusBarSync | null;
+  onOpenSyncSettings?: () => void;
 }
 
 const VIEW_MODE_LABELS: Record<EditorViewMode, string> = {
@@ -58,6 +71,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   onOpenStorageSettings,
   onRevealActiveLocalMd,
   onToggleFocusMode,
+  sync,
+  onOpenSyncSettings,
   onToggleTypewriterMode,
   onToggleOutline,
   onCycleViewMode,
@@ -109,6 +124,33 @@ export const StatusBar: React.FC<StatusBarProps> = ({
               : "SQLite 已保存"}
           </span>
         </span>
+
+        {sync && sync.mode !== "local" && (
+          <>
+            <span className="nb-statusbar-sep">·</span>
+            <button
+              type="button"
+              className={`nb-statusbar-item is-clickable${sync.lastError ? " is-sync-error" : ""}`}
+              onClick={onOpenSyncSettings}
+              title={sync.lastError ? `同步失败：${sync.lastError}` : "打开同步设置"}
+            >
+              {sync.syncing ? (
+                <RefreshCw size={12} className="nb-spin" />
+              ) : sync.lastError ? (
+                <CloudOff size={12} />
+              ) : (
+                <Cloud size={12} />
+              )}
+              <span>
+                {sync.syncing
+                  ? "正在同步…"
+                  : sync.lastError
+                  ? "同步失败"
+                  : `已同步 · ${relativeTime(sync.lastAt)}`}
+              </span>
+            </button>
+          </>
+        )}
       </div>
 
       <div className="nb-statusbar-right">
