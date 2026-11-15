@@ -774,6 +774,7 @@ pub fn run_sync(db: &Database, remote: &dyn SyncRemote, opts: &SyncOptions) -> R
     // 3. 落地到本地：一次事务；期间被用户改过的页面跳过，下次同步再处理
     {
         let mut conn = db.lock()?;
+        let pro = crate::license::is_pro_conn(&conn);
         let tx = conn.transaction()?;
         let mut applied_ids = Vec::new();
         for op in ops {
@@ -785,6 +786,10 @@ pub fn run_sync(db: &Database, remote: &dyn SyncRemote, opts: &SyncOptions) -> R
                         if &now_hash != expected {
                             continue;
                         }
+                    }
+                    // 永久版：被其他设备的版本覆盖前，先保存一份本地历史
+                    if pro {
+                        crate::versions::checkpoint(&tx, &id, "sync", 0)?;
                     }
                     apply_snapshot(&tx, &snap)?;
                     set_base(&tx, &id, Some(&hash))?;

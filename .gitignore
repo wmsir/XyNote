@@ -36,3 +36,5 @@ notion-config.json
 *.db-shm
 /server/target
 /server/data
+/tools/license/target
+*.key

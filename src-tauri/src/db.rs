@@ -352,6 +352,7 @@ impl Database {
         )?;
         // 同步基线与删除墓碑（见 sync.rs）
         conn.execute_batch(crate::sync::SCHEMA_SQL)?;
+        conn.execute_batch(crate::versions::SCHEMA_SQL)?;
 
         // Seed default settings if absent
         let default_settings = [

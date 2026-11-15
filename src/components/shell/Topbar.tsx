@@ -9,6 +9,7 @@ import {
   FileCode2,
   FileInput,
   FolderOpen,
+  History,
   ListTree,
   Maximize2,
   Minimize2,
@@ -67,6 +68,7 @@ export interface TopbarProps {
   onImportLocalMdToWorkspace: () => void;
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
+  onOpenHistory: () => void;
   onOpenImportMarkdown: () => void;
   onTrashPage: () => void;
   onOpenSearch: () => void;
@@ -105,6 +107,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onImportLocalMdToWorkspace,
   onDuplicatePage,
   onExportMarkdown,
+  onOpenHistory,
   onOpenImportMarkdown,
   onTrashPage,
   onOpenSearch,
@@ -496,6 +499,19 @@ export const Topbar: React.FC<TopbarProps> = ({
                     >
                       <span className="nb-menu-item-left">
                         <Copy size={14} /> 复制页面副本
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onOpenHistory();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <History size={14} /> 历史版本
                       </span>
                     </button>
 

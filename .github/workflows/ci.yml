@@ -48,7 +48,7 @@ jobs:
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
   server:
-    name: 同步服务器测试与端到端同步
+    name: 同步服务器、授权码工具与端到端同步
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +62,14 @@ jobs:
           workspaces: |
             server -> target
             src-tauri -> target
+            tools/license -> target
       - run: mkdir -p dist && echo '<html></html>' > dist/index.html
       - run: cargo test --locked --manifest-path server/Cargo.toml
+      - name: 永久版授权码工具
+        run: |
+          cargo test --locked --manifest-path tools/license/Cargo.toml
+          cargo build --locked --manifest-path tools/license/Cargo.toml
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/tools/license/target/debug/xynote-license" keygen --out t.key && "$GITHUB_WORKSPACE/tools/license/target/debug/xynote-license" issue --key t.key --name ci
       - name: 启动同步服务器
         run: |
           cargo build --locked --manifest-path server/Cargo.toml
