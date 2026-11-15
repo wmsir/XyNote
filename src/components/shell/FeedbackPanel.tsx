@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Mail, Send } from "lucide-react";
 import { openExternalUrl, syncErrorText } from "../../api/sync";
-import { getLicenseStatus, PRO_SUPPORT_EMAIL, submitFeedback, type FeedbackCategory, type LicenseStatus } from "../../api/pro";
+import { PRO_SUPPORT_EMAIL, submitFeedback, type FeedbackCategory } from "../../api/pro";
 
 export interface FeedbackPanelProps {
   onNotify: (msg: string) => void;
@@ -10,7 +10,7 @@ export interface FeedbackPanelProps {
 const CATEGORIES: { id: FeedbackCategory; label: string; hint: string }[] = [
   { id: "idea", label: "建议", hint: "想要的功能、可以做得更好的地方" },
   { id: "bug", label: "问题", hint: "哪里出错了、怎么操作会出现" },
-  { id: "other", label: "其他", hint: "购买、授权或其他想说的" },
+  { id: "other", label: "其他", hint: "其他想说的" },
 ];
 
 export function FeedbackPanel({ onNotify }: FeedbackPanelProps) {
@@ -20,11 +20,6 @@ export function FeedbackPanel({ onNotify }: FeedbackPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-  const [status, setStatus] = useState<LicenseStatus | null>(null);
-
-  useEffect(() => {
-    getLicenseStatus().then(setStatus).catch(() => {});
-  }, []);
 
   const submit = async () => {
     setBusy(true);
@@ -107,9 +102,7 @@ export function FeedbackPanel({ onNotify }: FeedbackPanelProps) {
             placeholder="邮箱或微信，方便我们回复你"
           />
           <div className="nb-settings-sub">
-            {status?.loggedIn
-              ? `会关联通行证 ${status.account ?? ""}，处理后的回复可在用户中心查看。`
-              : "登录通行证后提交，可以在用户中心查看回复。"}
+            选填。留下联系方式，处理后我们会回复你。
           </div>
         </div>
 
@@ -128,11 +121,6 @@ export function FeedbackPanel({ onNotify }: FeedbackPanelProps) {
             <Mail size={14} /> 用邮件发送
           </button>
           {sent && <span className="nb-settings-sub">已收到，谢谢！</span>}
-          {status?.loggedIn && (
-            <button type="button" className="nb-link-btn" onClick={() => openExternalUrl(status.userCenterUrl)}>
-              查看我的反馈与回复
-            </button>
-          )}
         </div>
       </div>
     </div>

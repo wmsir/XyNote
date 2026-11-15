@@ -1,4 +1,5 @@
 pub mod folders;
+pub mod textfile;
 pub mod watch;
 pub mod sync;
 pub mod sync_remote;
@@ -90,6 +91,9 @@ pub fn run() {
             commands::save_asset_image,
             commands::open_path_in_explorer,
             commands::list_folder_entries,
+            commands::open_text_file,
+            commands::save_text_file,
+            commands::open_with_system_app,
             commands::create_folder_entry,
             commands::rename_folder_entry,
             commands::move_folder_entry,

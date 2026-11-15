@@ -1,6 +1,7 @@
 //! 侧栏「文件夹」：把磁盘上的文件夹以树形结构挂到侧栏，按需逐层读取。
 //!
-//! - 只列出子文件夹与笔记文件（.md / .markdown / .mdown / .mkd / .txt），隐藏以「.」开头的条目和常见的依赖 / 构建目录；
+//! - 列出子文件夹和全部文件（隐藏以「.」开头的条目和依赖 / 系统目录）；每个文件标明种类：
+//!   笔记（Markdown，用块编辑器打开）、文本（用文本编辑器打开）、其他（交给系统程序打开）；
 //! - 新建、重命名都限定在同一个父目录里，名称不允许带路径分隔符，避免越界写入；
 //! - 删除交给系统文件管理器完成（可进回收站），这里不做不可恢复的删除。
 
@@ -13,16 +14,23 @@ use std::time::UNIX_EPOCH;
 /// 侧栏里会显示、点击后可直接编辑的文件扩展名
 pub const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdown", "mkd", "txt"];
 
-/// 不展示的目录：依赖、构建产物、版本库等，打开代码仓库时不会被它们淹没
-const SKIPPED_DIRS: [&str; 8] = [
+/// 用文本编辑器打开的常见扩展名（其余文件点开时也会先尝试按文本打开）
+pub const TEXT_EXTENSIONS: [&str; 74] = [
+    "txt", "text", "log", "csv", "tsv", "json", "jsonc", "json5", "xml", "yaml", "yml", "toml", "ini", "cfg",
+    "conf", "config", "properties", "env", "html", "htm", "css", "scss", "sass", "less", "js", "mjs", "cjs",
+    "jsx", "ts", "tsx", "vue", "svelte", "py", "pyw", "java", "kt", "kts", "go", "rs", "c", "h", "cpp", "cc",
+    "hpp", "cs", "php", "rb", "swift", "dart", "lua", "pl", "r", "m", "scala", "sql", "sh", "bash", "zsh",
+    "bat", "cmd", "ps1", "psm1", "gradle", "groovy", "dockerfile", "makefile", "cmake", "nfo", "srt", "vtt",
+    "gitignore", "editorconfig", "rst", "tex",
+];
+
+/// 不展示的目录：依赖包和系统目录（数量巨大或不该动）
+const SKIPPED_DIRS: [&str; 5] = [
     "node_modules",
-    "target",
-    "dist",
-    "build",
     "__pycache__",
     "$RECYCLE.BIN",
     "System Volume Information",
-    "venv",
+    ".git",
 ];
 
 /// 单层目录最多返回的条目数，防止误开超大目录卡住界面
@@ -39,6 +47,8 @@ pub struct FolderEntry {
     pub size: u64,
     /// 最后修改时间（毫秒时间戳）
     pub modified_ms: u64,
+    /// "dir" | "note"（Markdown）| "text" | "other"
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,6 +71,38 @@ pub fn is_note_file(path: &Path) -> bool {
     NOTE_EXTENSIONS.contains(&ext_of(path).as_str())
 }
 
+/// Markdown 笔记（不含 .txt：.txt 用文本编辑器打开）
+pub fn is_markdown_file(path: &Path) -> bool {
+    matches!(ext_of(path).as_str(), "md" | "markdown" | "mdown" | "mkd")
+}
+
+pub fn is_text_file(path: &Path) -> bool {
+    let ext = ext_of(path);
+    if ext.is_empty() {
+        // README、LICENSE、Makefile 这类没有扩展名的文件
+        return true;
+    }
+    TEXT_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// 名称里明确写了扩展名（1–10 位字母数字，例如 config.json）时返回它
+fn explicit_ext(name: &str) -> Option<String> {
+    let ext = Path::new(name).extension()?.to_str()?;
+    (!ext.is_empty() && ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric())).then(|| ext.to_ascii_lowercase())
+}
+
+fn kind_of(path: &Path, is_dir: bool) -> &'static str {
+    if is_dir {
+        "dir"
+    } else if is_markdown_file(path) {
+        "note"
+    } else if is_text_file(path) {
+        "text"
+    } else {
+        "other"
+    }
+}
+
 fn is_hidden_name(name: &str) -> bool {
     name.starts_with('.') || name.starts_with('~') || name.eq_ignore_ascii_case("desktop.ini")
 }
@@ -81,6 +123,7 @@ fn to_entry(path: &Path) -> Option<FolderEntry> {
         ext: if meta.is_dir() { String::new() } else { ext_of(path) },
         size: if meta.is_dir() { 0 } else { meta.len() },
         modified_ms,
+        kind: kind_of(path, meta.is_dir()).to_string(),
     })
 }
 
@@ -125,7 +168,7 @@ fn clean_dir(raw: &str) -> Result<PathBuf, AppError> {
     Ok(path)
 }
 
-/// 列出一个文件夹下的一层内容：子文件夹在前，笔记文件在后，各自按名称自然排序
+/// 列出一个文件夹下的一层内容：子文件夹在前，文件在后，各自按名称自然排序
 pub fn list_folder(raw: &str) -> Result<FolderListing, AppError> {
     let dir = clean_dir(raw)?;
     let mut entries = Vec::new();
@@ -140,11 +183,7 @@ pub fn list_folder(raw: &str) -> Result<FolderListing, AppError> {
         let Ok(file_type) = item.file_type() else { continue };
         // 符号链接按它指向的目标判断；指向不存在的目标时跳过
         let is_dir = if file_type.is_symlink() { path.is_dir() } else { file_type.is_dir() };
-        if is_dir {
-            if SKIPPED_DIRS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
-                continue;
-            }
-        } else if !is_note_file(&path) {
+        if is_dir && SKIPPED_DIRS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
             continue;
         }
         if entries.len() >= MAX_ENTRIES {
@@ -195,9 +234,9 @@ pub fn create_entry(parent: &str, name: &str, is_dir: bool) -> Result<FolderEntr
         (base.clone(), String::new())
     } else {
         let p = Path::new(&base);
-        if is_note_file(p) {
+        if let Some(ext) = explicit_ext(&base) {
             let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(base.clone());
-            (stem, ext_of(p))
+            (stem, ext)
         } else {
             (base.clone(), "md".to_string())
         }
@@ -223,7 +262,7 @@ pub fn create_entry(parent: &str, name: &str, is_dir: bool) -> Result<FolderEntr
         std::fs::create_dir(&target)?;
     } else {
         let title = if n == 0 { stem.clone() } else { format!("{} {}", stem, n + 1) };
-        let body = if ext == "txt" { String::new() } else { format!("# {}\n\n", title) };
+        let body = if is_markdown_file(&target) { format!("# {}\n\n", title) } else { String::new() };
         std::fs::write(&target, body)?;
     }
     to_entry(&target).ok_or_else(|| AppError::NotFound("新建后无法读取".into()))
@@ -241,7 +280,7 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<FolderEntry, AppError>
         .ok_or_else(|| AppError::Validation("不能重命名磁盘根目录".into()))?
         .to_path_buf();
     let mut name = validate_name(new_name)?;
-    if src.is_file() && !is_note_file(Path::new(&name)) {
+    if src.is_file() && explicit_ext(&name).is_none() {
         let old_ext = ext_of(&src);
         if !old_ext.is_empty() {
             name = format!("{}.{}", name, old_ext);
@@ -431,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_dirs_first_notes_only_natural_order() {
+    fn lists_dirs_first_all_files_natural_order() {
         let dir = temp_dir("list");
         for f in ["第10章.md", "第2章.md", "readme.MD", "image.png", ".secret.md", "notes.txt"] {
             std::fs::write(dir.join(f), "x").unwrap();
@@ -441,8 +480,10 @@ mod tests {
         }
         let listing = list_folder(dir.to_str().unwrap()).unwrap();
         let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["A-dir", "b-dir", "notes.txt", "readme.MD", "第2章.md", "第10章.md"]);
-        assert_eq!(listing.entries[3].ext, "md");
+        assert_eq!(names, vec!["A-dir", "b-dir", "image.png", "notes.txt", "readme.MD", "第2章.md", "第10章.md"]);
+        assert_eq!(listing.entries[4].ext, "md");
+        let kinds: Vec<_> = listing.entries.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["dir", "dir", "other", "text", "note", "note", "note"]);
         assert!(!listing.truncated);
         std::fs::remove_dir_all(dir).ok();
     }
@@ -455,6 +496,11 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a.path).unwrap(), "# 会议纪要\n\n");
         let b = create_entry(dir.to_str().unwrap(), "会议纪要", false).unwrap();
         assert_eq!(b.name, "会议纪要 2.md");
+        let cfg = create_entry(dir.to_str().unwrap(), "config.json", false).unwrap();
+        assert_eq!(cfg.name, "config.json");
+        assert_eq!(cfg.kind, "text");
+        assert_eq!(std::fs::read_to_string(&cfg.path).unwrap(), "");
+        assert_eq!(rename_entry(&cfg.path, "settings.yaml").unwrap().name, "settings.yaml");
         let sub = create_entry(dir.to_str().unwrap(), "项目", true).unwrap();
         assert!(sub.is_dir);
 

@@ -379,6 +379,8 @@ export interface FolderEntry {
   ext: string;
   size: number;
   modifiedMs: number;
+  /** dir | note（Markdown，块编辑器）| text（文本编辑器）| other（系统程序打开） */
+  kind: "dir" | "note" | "text" | "other";
 }
 
 export interface FolderListing {

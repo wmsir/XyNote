@@ -511,7 +511,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 className="nb-section-action-btn is-lg"
-                title="新建页面 (Ctrl+N)"
+                title="新建页面 (Ctrl+N)：保存在小悦笔记里，可同步"
                 aria-label="新建页面"
                 onClick={() => onCreateDoc(null)}
               >
@@ -519,8 +519,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
               <button
                 type="button"
-                className="nb-section-action-btn is-lg nb-ws-db-btn"
-                title="新建多维数据库"
+                className="nb-section-action-btn is-lg"
+                title="新建多维数据库：表格、看板、画廊"
                 aria-label="新建多维数据库"
                 onClick={() => onCreateDatabase(null)}
               >
@@ -529,8 +529,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 className="nb-section-action-btn is-lg"
-                title="新建 .md 文件"
-                aria-label="新建 .md 文件"
+                title={
+                  isTauri && workspaceFolders.length > 0
+                    ? "新建 Markdown 文件：直接建在打开的文件夹里"
+                    : "新建 Markdown 文件：保存在电脑上的 .md 文件，需要选择存放位置（先打开一个文件夹就不用每次选）"
+                }
+                aria-label="新建 Markdown 文件"
                 onClick={onCreateLocalMdFile}
               >
                 <FilePlus2 size={18} strokeWidth={1.7} />
@@ -594,7 +598,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       role="button"
                       tabIndex={0}
                       className="nb-recent-open"
-                      title="打开 .md 文件 (Ctrl+O)"
+                      title="打开文件 (Ctrl+O)"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenLocalMdDialog();

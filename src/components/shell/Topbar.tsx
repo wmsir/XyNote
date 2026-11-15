@@ -38,6 +38,8 @@ export type FontStyleMode = "sans" | "serif" | "mono";
 export interface TopbarProps {
   page: Page | null;
   activeLocalMd: LocalMarkdownDocument | null;
+  /** 文本编辑器里打开的文件；有值时顶栏只显示文件名 */
+  textFile?: { filePath: string; fileName: string } | null;
   breadcrumbs: BreadcrumbItem[];
   sidebarCollapsed: boolean;
   isSaving: boolean;
@@ -68,9 +70,8 @@ export interface TopbarProps {
   onImportLocalMdToWorkspace: () => void;
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
-  /** 永久版导出：html / pdf / docx */
+  /** 导出：html / pdf / docx */
   onExportAs: (format: "html" | "pdf" | "docx") => void;
-  proActive: boolean;
   onOpenHistory: () => void;
   onOpenImportMarkdown: () => void;
   onTrashPage: () => void;
@@ -80,6 +81,7 @@ export interface TopbarProps {
 export const Topbar: React.FC<TopbarProps> = ({
   page,
   activeLocalMd,
+  textFile = null,
   breadcrumbs,
   sidebarCollapsed,
   isSaving,
@@ -111,7 +113,6 @@ export const Topbar: React.FC<TopbarProps> = ({
   onDuplicatePage,
   onExportMarkdown,
   onExportAs,
-  proActive,
   onOpenHistory,
   onOpenImportMarkdown,
   onTrashPage,
@@ -131,7 +132,7 @@ export const Topbar: React.FC<TopbarProps> = ({
     return () => window.removeEventListener("mousedown", onOutside);
   }, [menuOpen]);
 
-  const isDocMode = Boolean(activeLocalMd || (page && page.pageType === "doc"));
+  const isDocMode = !textFile && Boolean(activeLocalMd || (page && page.pageType === "doc"));
 
   return (
     <header className="nb-topbar">
@@ -147,7 +148,14 @@ export const Topbar: React.FC<TopbarProps> = ({
           </button>
         )}
 
-        {activeLocalMd ? (
+        {textFile ? (
+          <div className="nb-local-md-bar">
+            <span className="nb-local-md-badge" title="直接编辑磁盘上的文件">文本文件</span>
+            <span className="nb-local-md-filename" title={textFile.filePath}>
+              {textFile.fileName}
+            </span>
+          </div>
+        ) : activeLocalMd ? (
           <div className="nb-local-md-bar">
             <span className="nb-local-md-badge" title="直接编辑磁盘上的文件，保存即写回">磁盘文件</span>
             <span
@@ -242,7 +250,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </>
         )}
 
-        {(page || activeLocalMd) && (
+        {!textFile && (page || activeLocalMd) && (
           <span className="nb-save-pill" title="实时本地持久化">
             <span className={`nb-save-dot${isSaving ? " is-saving" : ""}`} />
             {isSaving ? "保存中..." : "已保存"}
@@ -258,7 +266,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           <Search size={16} />
         </button>
 
-        {page && !activeLocalMd && (
+        {page && !activeLocalMd && !textFile && (
           <button
             type="button"
             className={`nb-icon-btn${page.isFavorite ? " is-active" : ""}`}
@@ -269,7 +277,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </button>
         )}
 
-        {(page || activeLocalMd) && (
+        {!textFile && (page || activeLocalMd) && (
           <div ref={menuWrapRef} style={{ position: "relative" }}>
             <button
               type="button"
@@ -552,7 +560,6 @@ export const Topbar: React.FC<TopbarProps> = ({
                         <span className="nb-menu-item-left">
                           <Download size={14} /> {label}
                         </span>
-                        {!proActive && <span className="nb-pro-tag">永久版</span>}
                       </button>
                     ))}
 
