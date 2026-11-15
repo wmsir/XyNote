@@ -35,7 +35,7 @@ const BROWSER_STATUS: LicenseStatus = {
   id: null,
   issuedAt: null,
   configured: false,
-  purchaseUrl: "https://fwpt.cn",
+  purchaseUrl: "https://fwpt.cn/xynote.html",
 };
 
 export async function getLicenseStatus(): Promise<LicenseStatus> {

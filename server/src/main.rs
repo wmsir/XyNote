@@ -13,6 +13,11 @@
 //! | `XYNOTE_ADMIN_TOKEN`        | 空（关闭）      | 管理接口令牌：批量生成激活码、手动设置套餐 |
 
 mod app;
+mod oneid;
+mod store;
+#[path = "../../src-tauri/src/license_format.rs"]
+#[allow(dead_code)]
+mod license_format;
 
 use app::OpenState;
 

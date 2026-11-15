@@ -30,7 +30,7 @@ const MODES: { id: SyncMode; label: string; desc: string; icon: React.ReactNode 
   { id: "folder", label: "网盘文件夹", desc: "坚果云、OneDrive、iCloud 等同步盘里的文件夹", icon: <FolderOpen size={16} /> },
   { id: "webdav", label: "WebDAV", desc: "坚果云、Nextcloud、群晖等 WebDAV 服务", icon: <Globe size={16} /> },
   { id: "server", label: "自建服务器", desc: "部署 XyNote 同步服务器，数据完全自己掌握", icon: <Server size={16} /> },
-  { id: "official", label: "官方云同步", desc: "开箱即用，官网购买激活码开通", icon: <Cloud size={16} /> },
+  { id: "official", label: "官方云同步", desc: "开箱即用，¥9.9 / 年", icon: <Cloud size={16} /> },
 ];
 
 export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotify }: SyncSettingsPanelProps) {
@@ -123,6 +123,8 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
       setAccount(acct);
       apply(await saveSyncConfig({ mode }));
       onNotify(action === "register" ? "注册成功，已登录" : "已登录");
+      // 官网用同一账号买过永久版时，登录后已自动激活
+      window.dispatchEvent(new Event("xynote:license-changed"));
     });
 
   const redeem = () =>
@@ -284,11 +286,11 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
             <div className="nb-sync-official">
               <div>
                 <div className="nb-settings-label">小悦笔记云同步</div>
-                <div className="nb-settings-sub">无需自己准备网盘或服务器。在官网 fwpt.cn 购买激活码，登录后在下方输入即可开通；到期后仍可下载已有数据。</div>
+                <div className="nb-settings-sub">无需自己准备网盘或服务器。用 FWPT 通行证登录；在官网购买云同步后，登录同一账号即自动生效，到期后仍可下载已有数据。</div>
               </div>
               {cfg?.pricingUrl && (
                 <button type="button" className="nb-btn-secondary" onClick={() => openExternalUrl(cfg.pricingUrl)}>
-                  去官网购买激活码
+                  去官网购买
                 </button>
               )}
             </div>
@@ -362,8 +364,18 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
               <div className="nb-sync-login">
                 <div className="nb-sync-field-row">
                   <div className="nb-sync-field">
-                    <label className="nb-settings-label" htmlFor="sync-email">邮箱</label>
-                    <input id="sync-email" type="email" className="nb-input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+                    <label className="nb-settings-label" htmlFor="sync-email">
+                      {official ? "FWPT 通行证" : "邮箱"}
+                    </label>
+                    <input
+                      id="sync-email"
+                      type={official ? "text" : "email"}
+                      className="nb-input"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      autoComplete="username"
+                      placeholder={official ? "手机号 / 邮箱 / 用户名" : undefined}
+                    />
                   </div>
                   <div className="nb-sync-field">
                     <label className="nb-settings-label" htmlFor="sync-password">密码</label>
@@ -382,9 +394,15 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
                   <button type="button" className="nb-btn-primary" disabled={busy !== null || !email || !password} onClick={() => auth("login")}>
                     {busy === "login" ? "正在登录…" : "登录"}
                   </button>
-                  <button type="button" className="nb-btn-secondary" disabled={busy !== null || !email || password.length < 8} onClick={() => auth("register")}>
-                    {busy === "register" ? "正在注册…" : "注册新账号"}
-                  </button>
+                  {official ? (
+                    <button type="button" className="nb-btn-secondary" onClick={() => openExternalUrl("https://fwpt.cn/")}>
+                      注册通行证
+                    </button>
+                  ) : (
+                    <button type="button" className="nb-btn-secondary" disabled={busy !== null || !email || password.length < 8} onClick={() => auth("register")}>
+                      {busy === "register" ? "正在注册…" : "注册新账号"}
+                    </button>
+                  )}
                 </div>
               </div>
             )}

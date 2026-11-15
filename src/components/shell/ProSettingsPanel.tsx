@@ -55,7 +55,7 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
     onNotify("已移除本机的永久版授权");
   };
 
-  const purchaseUrl = status?.purchaseUrl || "https://fwpt.cn";
+  const purchaseUrl = status?.purchaseUrl || "https://fwpt.cn/xynote.html";
 
   return (
     <div className="nb-settings-section-stack">
@@ -113,7 +113,10 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
             <button type="button" className="nb-btn-secondary" onClick={() => openExternalUrl(purchaseUrl)}>
               去官网购买
             </button>
-            <span className="nb-settings-sub">激活不需要联网，换电脑后用同一授权码再次激活即可。</span>
+            <span className="nb-settings-sub">¥99 终生。激活不需要联网，换电脑后用同一授权码再次激活即可。</span>
+          </div>
+          <div className="nb-settings-sub">
+            在官网用 FWPT 通行证购买后，到「同步 → 官方云同步」登录同一账号会自动激活，也可以在官网「我的订单」复制授权码粘贴到这里。
           </div>
           {status && !status.configured && (
             <div className="nb-settings-sub">当前是开发版本，无法激活永久版，请从官网下载正式版。</div>

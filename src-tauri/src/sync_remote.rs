@@ -370,6 +370,22 @@ impl ServerRemote {
         serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
     }
 
+    /// 账号在官网购买的永久版授权码
+    pub fn licenses(&self) -> Result<Vec<String>, AppError> {
+        #[derive(Deserialize)]
+        struct Res {
+            #[serde(default)]
+            licenses: Vec<String>,
+        }
+        let res = self.agent.get(&format!("{}/api/v1/licenses", self.base)).set("Authorization", &self.bearer()).call();
+        let resp = match server_error(res, true)? {
+            Some(r) => r,
+            None => return Ok(Vec::new()), // 自建的旧版本服务器没有这个接口
+        };
+        let parsed: Res = serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))?;
+        Ok(parsed.licenses)
+    }
+
     /// 兑换激活码（在官网购买），返回兑换后的账号信息
     pub fn redeem(&self, code: &str) -> Result<AccountInfo, AppError> {
         let res = self

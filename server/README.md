@@ -29,11 +29,42 @@ cargo run --release
 | `XYNOTE_ALLOW_REGISTRATION` | `true` | 是否开放注册。自建时建好自己的账号后可设为 `false` |
 | `XYNOTE_REQUIRE_SUBSCRIPTION` | `false` | 官方服务设为 `true` |
 | `XYNOTE_DEFAULT_QUOTA_MB` | `2048` | 新用户的空间配额（MB） |
+| `XYNOTE_ONEID_BASE` | 空 | FWPT 通行证后端（官方部署，如 `http://127.0.0.1:8088`）。设置后网站和软件都用通行证登录，本服务不再开放注册 |
+| `XYNOTE_CORS_ORIGINS` | 空 | 允许调用接口的网站，逗号分隔，官方填 `https://fwpt.cn` |
+| `XYNOTE_LICENSE_KEY_FILE` | 空 | 永久版签名私钥文件（`tools/license keygen` 生成）；未设置时永久版不开放购买 |
+| `XYNOTE_PRICE_SYNC_YEAR_CENTS` | `990` | 官方云同步一年的价格（分） |
+| `XYNOTE_PRICE_LIFETIME_CENTS` | `9900` | 永久版价格（分） |
+| `XYNOTE_SYNC_QUOTA_MB` | `10240` | 购买云同步后的空间 |
 | `XYNOTE_ADMIN_TOKEN` | 空 | 管理接口令牌（至少 16 位），为空时管理接口关闭；命令行 `gen-codes` 不需要 |
 
-## 激活码（官方服务的收费方式）
+## 官网购买（fwpt.cn）
 
-软件内不做支付。用户在官网 [fwpt.cn](https://fwpt.cn) 购买激活码，在客户端「设置 → 同步 → 官方云同步」登录后输入激活码即可开通；续期时天数接在当前有效期之后。激活码形如 `XYN-7K2M-Q9TP-4HXW-RC3D`，每个只能使用一次，数据库只保存其哈希。
+官方部署时，购买在网站完成，软件内不做支付：
+
+1. 用户在 `fwpt.cn/xynote.html` 登录 FWPT 通行证，选择「官方云同步 · 一年 ¥9.9」或「永久版 · 终生 ¥99」下单。
+2. 页面显示金额、收款码和 4 位**付款码**，用户付款时把付款码写在备注里。
+3. 管理员打开 `fwpt.cn/xynote-admin.html`（通行证角色为 ADMIN，或输入 `XYNOTE_ADMIN_TOKEN`），核对到账后点「确认到账」：
+   - 云同步：该账号有效期顺延 365 天（未过期时接在原有效期之后），空间提升到 `XYNOTE_SYNC_QUOTA_MB`；
+   - 永久版：用 `XYNOTE_LICENSE_KEY_FILE` 签发授权码，显示在用户的「我的订单」里。
+4. 用户在软件「设置 → 同步 → 官方云同步」用同一个通行证登录，云同步生效，永久版自动激活。
+
+官方部署示例（同步服务放在 `sync.fwpt.cn`，通行证后端在本机 8088）：
+
+```bash
+docker run -d --name xynote-sync -p 127.0.0.1:8787:8787 \
+  -v xynote-data:/data -v /etc/xynote/license.key:/keys/license.key:ro \
+  -e XYNOTE_REQUIRE_SUBSCRIPTION=true \
+  -e XYNOTE_ONEID_BASE=http://host.docker.internal:8088 --add-host=host.docker.internal:host-gateway \
+  -e XYNOTE_CORS_ORIGINS=https://fwpt.cn \
+  -e XYNOTE_LICENSE_KEY_FILE=/keys/license.key \
+  xynote-sync-server
+```
+
+接口：`GET /api/v1/store/products`、`GET|POST /api/v1/store/orders`、`POST /api/v1/store/orders/{id}/cancel`、`GET /api/v1/licenses`；管理：`GET /api/v1/admin/orders?status=pending`、`POST /api/v1/admin/orders/{id}/confirm|reject`。
+
+## 激活码（批量发放、活动赠送）
+
+除了官网下单，也可以生成激活码用于赠送或批量发放：用户在客户端「设置 → 同步 → 官方云同步」登录后输入激活码即可开通；续期时天数接在当前有效期之后。激活码形如 `XYN-7K2M-Q9TP-4HXW-RC3D`，每个只能使用一次，数据库只保存其哈希。
 
 批量生成（每行一个，可直接导入官网的发卡系统）：
 
