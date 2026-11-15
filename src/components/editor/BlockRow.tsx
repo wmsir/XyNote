@@ -2129,7 +2129,9 @@ export const BlockRow: React.FC<BlockRowProps> = ({
         </button>
       </div>
 
-      {renderBlockBody()}
+      {/* 按块类型加 key：类型变化时整体重建。否则 React 会复用旧的可编辑 div 当外层容器，
+          里面用 innerHTML 写入的旧文字残留，出现「我擦 1. 我擦」这种同一行两份内容的问题 */}
+      <React.Fragment key={block.blockType}>{renderBlockBody()}</React.Fragment>
 
       {dropIndicator === "bottom" && (
         <div className="nb-editor-drop-line is-bottom" />

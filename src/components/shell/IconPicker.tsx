@@ -177,7 +177,6 @@ export function IconPicker({ value, onChange, onClose, allowRemove = true, style
           </div>
         )}
       </div>
-      <div className="nb-iconpick-foot">图标来自 Lucide 开源图标库（ISC 协议）</div>
     </div>
   );
 }
