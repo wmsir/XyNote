@@ -119,6 +119,12 @@ export async function getSyncAccount(official: boolean): Promise<SyncAccount> {
   return invoke<SyncAccount>("sync_account", { official });
 }
 
+/** 兑换在官网购买的激活码 */
+export async function syncRedeem(official: boolean, code: string): Promise<SyncAccount> {
+  if (!isTauriRuntime()) throw new Error("同步仅支持桌面客户端");
+  return invoke<SyncAccount>("sync_redeem", { official, code });
+}
+
 export async function syncLogout(official: boolean): Promise<void> {
   if (!isTauriRuntime()) return;
   return invoke<void>("sync_logout", { official });

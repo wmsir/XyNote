@@ -369,6 +369,18 @@ impl ServerRemote {
         let resp = server_error(res, false)?.expect("non-404");
         serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
     }
+
+    /// 兑换激活码（在官网购买），返回兑换后的账号信息
+    pub fn redeem(&self, code: &str) -> Result<AccountInfo, AppError> {
+        let res = self
+            .agent
+            .post(&format!("{}/api/v1/redeem", self.base))
+            .set("Authorization", &self.bearer())
+            .set("Content-Type", "application/json")
+            .send_string(&serde_json::json!({ "code": code.trim() }).to_string());
+        let resp = server_error(res, false)?.expect("non-404");
+        serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
+    }
 }
 
 /// 注册或登录（action = "register" | "login"）

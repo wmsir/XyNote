@@ -11,6 +11,7 @@ import {
   syncAuth,
   syncErrorText,
   syncLogout,
+  syncRedeem,
   type SyncAccount,
   type SyncConfig,
   type SyncMode,
@@ -29,7 +30,7 @@ const MODES: { id: SyncMode; label: string; desc: string; icon: React.ReactNode 
   { id: "folder", label: "网盘文件夹", desc: "坚果云、OneDrive、iCloud 等同步盘里的文件夹", icon: <FolderOpen size={16} /> },
   { id: "webdav", label: "WebDAV", desc: "坚果云、Nextcloud、群晖等 WebDAV 服务", icon: <Globe size={16} /> },
   { id: "server", label: "自建服务器", desc: "部署 XyNote 同步服务器，数据完全自己掌握", icon: <Server size={16} /> },
-  { id: "official", label: "官方云同步", desc: "开箱即用，订阅后可用", icon: <Cloud size={16} /> },
+  { id: "official", label: "官方云同步", desc: "开箱即用，官网购买激活码开通", icon: <Cloud size={16} /> },
 ];
 
 export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotify }: SyncSettingsPanelProps) {
@@ -43,6 +44,7 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [code, setCode] = useState("");
   const [account, setAccount] = useState<SyncAccount | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +123,18 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
       setAccount(acct);
       apply(await saveSyncConfig({ mode }));
       onNotify(action === "register" ? "注册成功，已登录" : "已登录");
+    });
+
+  const redeem = () =>
+    run("redeem", async () => {
+      const acct = await syncRedeem(official, code);
+      setCode("");
+      setAccount(acct);
+      onNotify(
+        acct.planExpiresAt
+          ? `激活成功，有效期至 ${new Date(acct.planExpiresAt).toLocaleDateString("zh-CN")}`
+          : "激活成功"
+      );
     });
 
   const logout = () =>
@@ -270,11 +284,11 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
             <div className="nb-sync-official">
               <div>
                 <div className="nb-settings-label">小悦笔记云同步</div>
-                <div className="nb-settings-sub">无需自己准备网盘或服务器，登录即可在多台设备间同步。订阅期满后仍可下载已有数据。</div>
+                <div className="nb-settings-sub">无需自己准备网盘或服务器。在官网 fwpt.cn 购买激活码，登录后在下方输入即可开通；到期后仍可下载已有数据。</div>
               </div>
               {cfg?.pricingUrl && (
                 <button type="button" className="nb-btn-secondary" onClick={() => openExternalUrl(cfg.pricingUrl)}>
-                  查看套餐与价格
+                  去官网购买激活码
                 </button>
               )}
             </div>
@@ -290,7 +304,7 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
                       {account.requiresSubscription
                         ? account.subscriptionActive
                           ? `订阅有效${account.planExpiresAt ? `，${new Date(account.planExpiresAt).toLocaleDateString("zh-CN")} 到期` : ""}`
-                          : "未订阅：可以下载已有数据，开通后才能上传"
+                          : "未激活：可以下载已有数据，输入激活码后才能上传"
                         : "已登录"}
                       {` · 已用 ${formatBytes(account.usedBytes)} / ${formatBytes(account.quotaBytes)}`}
                     </div>
@@ -304,17 +318,47 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
                   )}
                 </div>
                 <div className="nb-settings-actions-bar">
-                  {official && account?.requiresSubscription && !account.subscriptionActive && cfg?.pricingUrl && (
-                    <button type="button" className="nb-btn-primary" onClick={() => openExternalUrl(cfg.pricingUrl)}>
-                      开通订阅
-                    </button>
-                  )}
                   <button type="button" className="nb-btn-secondary" disabled={busy !== null} onClick={logout}>
                     <LogOut size={14} /> 退出登录
                   </button>
                 </div>
               </div>
-            ) : (
+            ) : null)}
+
+          {(mode === "server" || official) && loggedIn && account?.requiresSubscription && (
+            <div className="nb-sync-redeem">
+              <div className="nb-sync-field">
+                <label className="nb-settings-label" htmlFor="sync-code">
+                  {account.subscriptionActive ? "续期激活码" : "激活码"}
+                </label>
+                <div className="nb-path-input-group">
+                  <input
+                    id="sync-code"
+                    className="nb-input nb-mono-input"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="XYN-XXXX-XXXX-XXXX-XXXX"
+                    spellCheck={false}
+                    onKeyDown={(e) => e.key === "Enter" && code.trim() && redeem()}
+                  />
+                  <button type="button" className="nb-btn-primary" disabled={busy !== null || !code.trim()} onClick={redeem}>
+                    {busy === "redeem" ? "正在激活…" : "激活"}
+                  </button>
+                </div>
+                <div className="nb-settings-sub">
+                  {account.subscriptionActive ? "续期时间会接在当前有效期之后。" : "还没有激活码？"}
+                  {cfg?.pricingUrl && (
+                    <button type="button" className="nb-link-btn" onClick={() => openExternalUrl(cfg.pricingUrl)}>
+                      去官网购买
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(mode === "server" || official) &&
+            !loggedIn && (
               <div className="nb-sync-login">
                 <div className="nb-sync-field-row">
                   <div className="nb-sync-field">
@@ -343,7 +387,7 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
                   </button>
                 </div>
               </div>
-            ))}
+            )}
 
           {dirty && !needsLogin && (
             <div className="nb-settings-actions-bar">

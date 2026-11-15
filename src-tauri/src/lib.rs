@@ -99,6 +99,7 @@ pub fn run() {
             commands::sync_auth,
             commands::sync_account,
             commands::sync_logout,
+            commands::sync_redeem,
             commands::open_external_url,
             commands::list_backups,
             commands::create_backup_now,
