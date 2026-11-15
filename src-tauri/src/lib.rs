@@ -3,6 +3,9 @@ pub mod watch;
 pub mod sync;
 pub mod sync_remote;
 pub mod sync_config;
+pub mod license_format;
+pub mod license;
+pub mod versions;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
@@ -100,6 +103,12 @@ pub fn run() {
             commands::sync_account,
             commands::sync_logout,
             commands::sync_redeem,
+            commands::license_status,
+            commands::license_activate,
+            commands::license_deactivate,
+            commands::page_versions_list,
+            commands::page_version_get,
+            commands::page_version_restore,
             commands::open_external_url,
             commands::list_backups,
             commands::create_backup_now,

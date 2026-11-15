@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlignCenter,
   Archive,
+  BadgeCheck,
   Cloud,
   BookOpen,
   CheckCircle2,
@@ -53,11 +54,14 @@ import { KeybindingSettingsPanel } from "./KeybindingSettingsPanel";
 import { ThemeStudioPanel } from "./ThemeStudioPanel";
 import { XyLogoIcon } from "./XyLogoIcon";
 import { SyncSettingsPanel } from "./SyncSettingsPanel";
+import { ProSettingsPanel } from "./ProSettingsPanel";
+import type { LicenseStatus } from "../../api/pro";
 import type { SyncConfig } from "../../api/sync";
 
 export type SettingsTabId =
   | "storage"
   | "sync"
+  | "pro"
   | "themes"
   | "appearance"
   | "shortcuts"
@@ -107,6 +111,7 @@ export interface SettingsModalProps {
   syncing: boolean;
   onRunSync: () => Promise<void>;
   onSyncConfigChanged: (cfg: SyncConfig) => void;
+  onLicenseChanged: (status: LicenseStatus) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -164,6 +169,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   syncing,
   onRunSync,
   onSyncConfigChanged,
+  onLicenseChanged,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
   const [localInfo, setLocalInfo] = useState<StorageConfigInfo | null>(storageInfo);
@@ -511,6 +517,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
     { id: "appearance", label: "外观与排版", icon: <Palette size={15} /> },
     { id: "backup", label: "备份与数据安全", icon: <ShieldCheck size={15} /> },
+    { id: "pro", label: "永久版", icon: <BadgeCheck size={15} /> },
     { id: "about", label: "关于软件", icon: <Info size={15} /> },
   ];
 
@@ -1459,6 +1466,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onConfigChanged={onSyncConfigChanged}
                 onNotify={onNotify}
               />
+            )}
+
+            {activeTab === "pro" && (
+              <ProSettingsPanel onLicenseChanged={onLicenseChanged} onNotify={onNotify} />
             )}
 
             {activeTab === "themes" && (

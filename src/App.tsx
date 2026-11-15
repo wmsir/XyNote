@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useSyncController } from "./hooks/useSyncController";
+import { getLicenseStatus, type LicenseStatus } from "./api/pro";
+import { PageHistoryModal } from "./components/shell/PageHistoryModal";
 import {
   convertMarkdownBlocks,
   createPage,
@@ -443,6 +445,22 @@ export const App: React.FC = () => {
     onRemoteChanges: handleRemoteSyncChanges,
     showToast,
   });
+
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    getLicenseStatus().then(setLicense).catch(() => {});
+  }, []);
+
+  const handleVersionRestored = useCallback(
+    async (pageId: string) => {
+      await refreshSidebarLists();
+      if (detailRef.current?.page.id === pageId) {
+        setDetail(await getPageDetail(pageId));
+      }
+    },
+    [refreshSidebarLists]
+  );
 
   const pushRecentLocalMd = useCallback((doc: LocalMarkdownDocument) => {
     setRecentLocalMdFiles((prev) => {
@@ -1928,6 +1946,10 @@ export const App: React.FC = () => {
               handleExportMarkdown(detail.page.id).catch(() => {});
             }
           }}
+          onOpenHistory={async () => {
+            await flushPendingBlockSave();
+            setHistoryOpen(true);
+          }}
           onOpenImportMarkdown={() => setMarkdownModalMode("import")}
           onTrashPage={() => {
             if (detail?.page) {
@@ -2299,6 +2321,18 @@ export const App: React.FC = () => {
         syncing={syncing}
         onRunSync={syncNow}
         onSyncConfigChanged={setSyncConfig}
+        onLicenseChanged={setLicense}
+      />
+
+      <PageHistoryModal
+        open={historyOpen}
+        pageId={detail?.page.id ?? null}
+        pageTitle={detail?.page.title ?? ""}
+        license={license}
+        onClose={() => setHistoryOpen(false)}
+        onRestored={handleVersionRestored}
+        onOpenProSettings={() => handleOpenSettingsAtTab("pro")}
+        onNotify={showToast}
       />
 
       <TemplatesModal

@@ -108,7 +108,17 @@ pub fn save_page_blocks(
     page_id: String,
     blocks: Vec<SaveBlockItem>,
 ) -> Result<Vec<Block>, String> {
+    checkpoint_before_edit(&db, &page_id);
     db.save_page_blocks(&page_id, blocks).map_err(Into::into)
+}
+
+/// 永久版：编辑前按间隔自动保存一份历史版本（失败不影响保存）
+fn checkpoint_before_edit(db: &Database, page_id: &str) {
+    if let Ok(conn) = db.lock() {
+        if crate::license::is_pro_conn(&conn) {
+            let _ = crate::versions::checkpoint(&conn, page_id, "edit", crate::versions::AUTO_GAP_MINUTES);
+        }
+    }
 }
 
 #[tauri::command]
@@ -147,6 +157,7 @@ pub fn delete_db_column(db: State<'_, Database>, id: String) -> Result<(), Strin
 
 #[tauri::command]
 pub fn upsert_db_row(db: State<'_, Database>, row: UpsertDbRowInput) -> Result<DbRow, String> {
+    checkpoint_before_edit(&db, &row.page_id);
     db.upsert_db_row(row).map_err(Into::into)
 }
 
@@ -651,4 +662,57 @@ pub async fn export_style_plugin_dialog(
         )
     })
     .await
+}
+
+/* ---------------- 永久版 ---------------- */
+
+#[tauri::command]
+pub fn license_status(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::status(&db).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn license_activate(db: State<'_, Database>, license: String) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::activate(&db, &license).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn license_deactivate(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::deactivate(&db).map_err(Into::into)
+}
+
+fn require_pro(db: &Database) -> Result<(), String> {
+    if crate::license::is_pro(db) {
+        Ok(())
+    } else {
+        Err("页面历史是永久版功能".into())
+    }
+}
+
+#[tauri::command]
+pub fn page_versions_list(db: State<'_, Database>, page_id: String) -> Result<Vec<crate::versions::PageVersionMeta>, String> {
+    require_pro(&db)?;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    crate::versions::list(&conn, &page_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn page_version_get(db: State<'_, Database>, version_id: String) -> Result<crate::versions::PageVersionView, String> {
+    require_pro(&db)?;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    crate::versions::get(&conn, &version_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn page_version_restore(db: State<'_, Database>, version_id: String) -> Result<String, String> {
+    require_pro(&db)?;
+    let page_id = {
+        let mut conn = db.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let page_id = crate::versions::restore(&tx, &version_id).map_err(String::from)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        crate::storage::after_tree_mutated(&conn);
+        page_id
+    };
+    Ok(page_id)
 }
