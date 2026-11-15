@@ -3669,3 +3669,77 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------------- 侧栏：统一的「工作区」与可拖动宽度 ---------------- */
+.nb-sidebar {
+  position: relative;
+}
+.nb-sidebar.is-resizing {
+  transition: none;
+}
+.nb-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.nb-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--accent-color);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.nb-sidebar-resizer:hover::after,
+.nb-sidebar-resizer:focus-visible::after,
+.nb-sidebar.is-resizing .nb-sidebar-resizer::after {
+  opacity: 1;
+}
+.nb-sidebar-resizer:focus-visible {
+  outline: none;
+}
+.nb-ws-header {
+  min-height: 34px;
+}
+.nb-ws-actions {
+  gap: 2px;
+}
+.nb-section-action-btn.is-lg {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+}
+.nb-section-action-btn.is-lg:hover {
+  color: var(--text-primary);
+}
+.nb-ws-section .nb-folder-tree {
+  margin-top: 2px;
+}
+.nb-recent-toggle {
+  width: 100%;
+}
+.nb-recent-open {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  opacity: 0;
+}
+.nb-recent-toggle:hover .nb-recent-open,
+.nb-recent-open:focus-visible {
+  opacity: 1;
+}
+.nb-recent-open:hover {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+}

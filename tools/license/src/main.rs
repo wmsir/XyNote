@@ -30,6 +30,7 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("keygen") => keygen(&args[1..]),
         Some("issue") => issue(&args[1..]),
+        Some("verify") => verify_cmd(&args[1..]),
         _ => usage(),
     };
     if let Err(e) = result {
@@ -48,6 +49,22 @@ fn keygen(args: &[String]) -> Result<(), String> {
     println!("私钥已保存到 {}（请备份并妥善保管，切勿提交到代码仓库）", out);
     println!("公钥（填入 src-tauri/license_pubkey.txt）：");
     println!("{}", hex(&key.verifying_key().to_bytes()));
+    Ok(())
+}
+
+/// `xynote-license verify --pubkey-file src-tauri/license_pubkey.txt --license XYNOTE1.…`
+fn verify_cmd(args: &[String]) -> Result<(), String> {
+    let file = arg(args, "--pubkey-file").ok_or("缺少 --pubkey-file")?;
+    let license = arg(args, "--license").ok_or("缺少 --license")?;
+    let raw = std::fs::read_to_string(&file).map_err(|e| format!("读取公钥失败：{}", e))?;
+    let key = raw
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .and_then(parse_hex32)
+        .ok_or("公钥文件里没有公钥")?;
+    let p = license_format::verify(&license, &key)?;
+    println!("签名有效：{} / {} / {}", p.id, p.name, p.edition);
     Ok(())
 }
 

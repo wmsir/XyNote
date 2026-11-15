@@ -405,6 +405,8 @@ impl DocxBuilder {
                         xml_escape(line)
                     ));
                 }
+                // 代码块后留一行间距
+                self.body.push_str(r#"<w:p><w:pPr><w:spacing w:after="0" w:line="120" w:lineRule="exact"/></w:pPr></w:p>"#);
             }
             Event::Start(Tag::List(start)) => {
                 self.flush_para();
@@ -659,6 +661,15 @@ mod tests {
         assert!(rels.contains("https://fwpt.cn") && rels.contains("media/image1.png"));
         // 每个 w:p 都闭合（粗略检查 XML 结构）
         assert_eq!(doc.matches("<w:p>").count() + doc.matches("<w:p/>").count(), doc.matches("</w:p>").count() + doc.matches("<w:p/>").count());
+    }
+
+    /// 设置 XYNOTE_EXPORT_SAMPLE_DIR 时把示例导出写到磁盘，便于用 Word / 浏览器实际打开检查
+    #[test]
+    fn writes_samples_when_requested() {
+        let Ok(dir) = std::env::var("XYNOTE_EXPORT_SAMPLE_DIR") else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(format!("{}/sample.docx", dir), markdown_to_docx("周报", SAMPLE).unwrap()).unwrap();
+        std::fs::write(format!("{}/sample.html", dir), markdown_to_html_document("周报", SAMPLE)).unwrap();
     }
 
     #[test]
