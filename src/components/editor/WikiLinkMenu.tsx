@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import { FilePlus2 } from "lucide-react";
 import type { Page } from "../../types/notion";
 
@@ -195,7 +196,7 @@ export const WikiLinkMenu: React.FC<WikiLinkMenuProps> = ({
                   }}
                 >
                   <span className="nb-editor-menu-item-icon">
-                    {p.icon || (p.pageType === "database" ? "🗃️" : "📄")}
+                    <PageIcon icon={p.icon} size={16} fallback={p.pageType === "database" ? "🗃️" : "📄"} />
                   </span>
                   <span className="nb-editor-menu-item-body">
                     <span className="nb-editor-menu-item-title">

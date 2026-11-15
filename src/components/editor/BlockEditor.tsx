@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { iconAsText } from "../../icons/pageIcon";
 import { openPathInExplorer, saveAssetImage, saveLocalNoteImage } from "../../api/client";
 import type {
   Block,
@@ -853,7 +854,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   const insertWikiLinkIntoBlock = useCallback(
     (blockId: string, removeChars: number, targetPage: Page) => {
       const icon = escapeHtml(
-        targetPage.icon || (targetPage.pageType === "database" ? "🗃️" : "📄")
+        iconAsText(targetPage.icon, targetPage.pageType === "database" ? "🗃️" : "📄")
       );
       const title = escapeHtml(targetPage.title || "无标题");
       const linkHtml = `<a href="#" data-page-id="${escapeHtml(
@@ -914,7 +915,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         handleContentChange(blockId, cleanedHtml);
         try {
           const created = await onCreateSubpage("无标题子页面");
-          const icon = escapeHtml(created.icon || "📄");
+          const icon = escapeHtml(iconAsText(created.icon));
           const title = escapeHtml(created.title || "无标题子页面");
           const linkHtml = `<a href="#" data-page-id="${escapeHtml(
             created.id
@@ -1060,7 +1061,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
 
       try {
         const created = await onCreateSubpage(subpageTitle);
-        const icon = escapeHtml(created.icon || "📄");
+        const icon = escapeHtml(iconAsText(created.icon));
         const title = escapeHtml(created.title || subpageTitle);
         const linkHtml = `<a href="#" data-page-id="${escapeHtml(
           created.id

@@ -1,13 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Image, Plus, Smile, X } from "lucide-react";
 import type { Page, UpdatePagePatch } from "../../types/notion";
+import { PageIcon } from "../../icons/pageIcon";
+import { IconPicker } from "./IconPicker";
 
-const CURATED_EMOJIS = [
-  "📄", "📝", "📓", "📚", "🏠", "🗺️", "✅", "🏗️",
-  "⚙️", "💡", "🎯", "🚀", "🧭", "📌", "📊", "🗂️",
-  "🗓️", "🧠", "🔬", "🛠️", "🌱", "✨", "🔥", "⭐",
-  "💬", "📎", "🔒", "🎨", "🧩", "🏆", "📦", "🌐",
-];
 
 const COVER_PRESETS: Array<{ label: string; value: string }> = [
   {
@@ -259,31 +255,20 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
                 onClick={() => setEmojiOpen((v) => !v)}
                 title="点击更换页面图标"
               >
-                {page.icon || "📄"}
+                <PageIcon icon={page.icon} size={56} strokeWidth={1.5} fallback="📄" />
               </button>
 
               {emojiOpen && (
-                <div
-                  className="nb-popover"
-                  style={{ left: 0, top: "74px", width: "284px" }}
-                >
-                  <div className="nb-menu-label">选择页面图标</div>
-                  <div className="nb-emoji-grid">
-                    {CURATED_EMOJIS.map((em) => (
-                      <button
-                        key={em}
-                        type="button"
-                        className="nb-emoji-cell"
-                        onClick={() => {
-                          onUpdatePage({ icon: em });
-                          setEmojiOpen(false);
-                        }}
-                      >
-                        {em}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <IconPicker
+                  value={page.icon ?? ""}
+                  style={{ left: 0, top: "74px", position: "absolute" }}
+                  onClose={() => setEmojiOpen(false)}
+                  onChange={(icon, opts) => {
+                    onUpdatePage({ icon: icon || (page.pageType === "database" ? "🗃️" : "📄") });
+                    // 换颜色时保持打开；选了新图标或表情就关闭
+                    if (!opts?.keepOpen) setEmojiOpen(false);
+                  }}
+                />
               )}
             </div>
 

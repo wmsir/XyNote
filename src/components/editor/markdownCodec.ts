@@ -1,4 +1,5 @@
 import katex from "katex";
+import { iconAsText } from "../../icons/pageIcon";
 import type {
   Block,
   BlockProps,
@@ -256,7 +257,7 @@ export function inlineMarkdownToHtml(text: string, pages: Page[]): string {
     );
     if (matchedPage) {
       const icon = escapeHtml(
-        matchedPage.icon || (matchedPage.pageType === "database" ? "🗃️" : "📄")
+        iconAsText(matchedPage.icon, matchedPage.pageType === "database" ? "🗃️" : "📄")
       );
       const title = escapeHtml(matchedPage.title || "无标题");
       return stash(
@@ -382,7 +383,7 @@ export function upgradeResidualInlineMarkdown(
     );
     if (matchedPage) {
       const icon = escapeHtml(
-        matchedPage.icon || (matchedPage.pageType === "database" ? "🗃️" : "📄")
+        iconAsText(matchedPage.icon, matchedPage.pageType === "database" ? "🗃️" : "📄")
       );
       const title = escapeHtml(matchedPage.title || "无标题");
       return stash(

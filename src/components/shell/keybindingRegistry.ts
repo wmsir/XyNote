@@ -5,7 +5,8 @@ export type KeybindingCategory =
   | "turnInto"
   | "blockAction"
   | "inlineFormat"
-  | "workspace";
+  | "workspace"
+  | "textEditor";
 
 export interface KeybindingDefinition {
   id: string;
@@ -25,6 +26,7 @@ export const KEYBINDING_CATEGORY_TABS: Array<{
   { id: "blockAction", label: "块操作与颜色" },
   { id: "inlineFormat", label: "行内格式" },
   { id: "workspace", label: "全局与视图" },
+  { id: "textEditor", label: "文本 / 代码编辑器" },
 ];
 
 export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
@@ -445,6 +447,102 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
   },
 ];
 
+/* ───────────── 文本 / 代码编辑器（TextEditor）───────────── */
+
+export type TextKeymapPreset = "idea" | "vscode";
+/** 记录当前用的是哪套预设（不是动作，合并时作为普通键保留） */
+export const TEXT_PRESET_KEY = "text.preset";
+
+interface TextActionSpec {
+  id: string;
+  label: string;
+  description: string;
+  idea: string;
+  vscode: string;
+}
+
+const TEXT_ACTIONS: TextActionSpec[] = [
+  { id: "text.save", label: "保存", description: "立即把文件写入磁盘", idea: "Ctrl+S", vscode: "Ctrl+S" },
+  { id: "text.find", label: "查找", description: "打开查找栏，选中的文字会自动填入", idea: "Ctrl+F", vscode: "Ctrl+F" },
+  { id: "text.replace", label: "替换", description: "打开查找替换栏", idea: "Ctrl+R", vscode: "Ctrl+H" },
+  { id: "text.findNext", label: "查找下一个", description: "跳到下一个匹配", idea: "F3", vscode: "F3" },
+  { id: "text.findPrev", label: "查找上一个", description: "跳到上一个匹配", idea: "Shift+F3", vscode: "Shift+F3" },
+  { id: "text.gotoLine", label: "跳到行", description: "输入行号跳转", idea: "Ctrl+G", vscode: "Ctrl+G" },
+  { id: "text.duplicateLine", label: "复制行", description: "把当前行或选中的行复制一份到下方", idea: "Ctrl+D", vscode: "Alt+Shift+ArrowDown" },
+  { id: "text.deleteLine", label: "删除行", description: "删除当前行或选中的行", idea: "Ctrl+Y", vscode: "Ctrl+Shift+K" },
+  { id: "text.moveLineUp", label: "上移行", description: "把当前行或选中的行向上移动一行", idea: "Alt+Shift+ArrowUp", vscode: "Alt+ArrowUp" },
+  { id: "text.moveLineDown", label: "下移行", description: "把当前行或选中的行向下移动一行", idea: "Alt+Shift+ArrowDown", vscode: "Alt+ArrowDown" },
+  { id: "text.toggleComment", label: "行注释", description: "按当前语言添加或取消行注释", idea: "Ctrl+/", vscode: "Ctrl+/" },
+  { id: "text.blockComment", label: "块注释", description: "用块注释包住选中内容，再按一次取消", idea: "Ctrl+Shift+/", vscode: "Alt+Shift+A" },
+  { id: "text.expandSelection", label: "扩大选区", description: "依次选中单词、整行、全文", idea: "Ctrl+W", vscode: "Alt+Shift+ArrowRight" },
+  { id: "text.selectNextOccurrence", label: "选中下一个相同内容", description: "选中光标处的单词，再按跳到下一个相同内容", idea: "Alt+J", vscode: "Ctrl+D" },
+  { id: "text.insertLineBelow", label: "在下方插入新行", description: "不打断当前行，直接在下面开始新的一行", idea: "Shift+Enter", vscode: "Ctrl+Enter" },
+  { id: "text.insertLineAbove", label: "在上方插入新行", description: "在当前行上面开始新的一行", idea: "Ctrl+Alt+Enter", vscode: "Ctrl+Shift+Enter" },
+  { id: "text.joinLines", label: "合并行", description: "把下一行接到当前行末尾", idea: "Ctrl+Shift+J", vscode: "" },
+  { id: "text.toggleCase", label: "切换大小写", description: "把选中的文字在大写和小写之间切换", idea: "Ctrl+Shift+U", vscode: "" },
+  { id: "text.format", label: "格式化", description: "JSON 重新缩进排版；其他文件去掉行尾空格", idea: "Ctrl+Alt+L", vscode: "Alt+Shift+F" },
+  { id: "text.toggleWrap", label: "切换自动换行", description: "长行在窗口内折行显示", idea: "", vscode: "Alt+Z" },
+  { id: "text.zoomIn", label: "放大字号", description: "也可以按住 Ctrl 滚动鼠标滚轮", idea: "Ctrl+=", vscode: "Ctrl+=" },
+  { id: "text.zoomOut", label: "缩小字号", description: "也可以按住 Ctrl 滚动鼠标滚轮", idea: "Ctrl+-", vscode: "Ctrl+-" },
+  { id: "text.zoomReset", label: "恢复默认字号", description: "字号恢复为 14", idea: "Ctrl+0", vscode: "Ctrl+0" },
+];
+
+export const TEXT_KEYMAP_PRESETS: Record<TextKeymapPreset, { label: string; map: KeybindingMap }> = {
+  idea: {
+    label: "IntelliJ IDEA",
+    map: Object.fromEntries(TEXT_ACTIONS.map((a) => [a.id, a.idea])),
+  },
+  vscode: {
+    label: "VS Code",
+    map: Object.fromEntries(TEXT_ACTIONS.map((a) => [a.id, a.vscode])),
+  },
+};
+
+KEYBINDING_DEFINITIONS.push(
+  ...TEXT_ACTIONS.map<KeybindingDefinition>((a) => ({
+    id: a.id,
+    category: "textEditor",
+    categoryLabel: "文本 / 代码编辑器",
+    label: a.label,
+    description: a.description,
+    defaultShortcut: a.idea,
+  }))
+);
+
+export function textPresetOf(map: KeybindingMap | null | undefined): TextKeymapPreset {
+  return map?.[TEXT_PRESET_KEY] === "vscode" ? "vscode" : "idea";
+}
+
+/** 某个动作在当前预设下的默认快捷键（文本编辑器跟随所选预设） */
+export function defaultShortcutFor(def: KeybindingDefinition, map: KeybindingMap | null | undefined): string {
+  if (def.category !== "textEditor") return def.defaultShortcut;
+  return TEXT_KEYMAP_PRESETS[textPresetOf(map)].map[def.id] ?? def.defaultShortcut;
+}
+
+/** 切换文本编辑器预设：所有 text.* 快捷键换成预设值 */
+export function applyTextPreset(map: KeybindingMap, preset: TextKeymapPreset): KeybindingMap {
+  return { ...map, ...TEXT_KEYMAP_PRESETS[preset].map, [TEXT_PRESET_KEY]: preset };
+}
+
+/** 文本编辑器录制与匹配用：在通用规则之外，允许 Shift+Enter 这类只带 Shift 的组合 */
+export function normalizeTextEditorShortcut(e: KeyboardEvent | React.KeyboardEvent): string | null {
+  const base = normalizeKeyboardEventToShortcut(e);
+  if (base) return base;
+  if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Enter") return "Shift+Enter";
+  return null;
+}
+
+/** 文本编辑器：快捷键（小写）→ 动作 id */
+export function buildTextShortcutLookup(map: KeybindingMap | null | undefined): Map<string, string> {
+  const merged = mergeKeybindings(map);
+  const out = new Map<string, string>();
+  for (const a of TEXT_ACTIONS) {
+    const combo = (merged[a.id] ?? "").trim().toLowerCase();
+    if (combo && !out.has(combo)) out.set(combo, a.id);
+  }
+  return out;
+}
+
 export const DEFAULT_KEYBINDINGS: KeybindingMap = KEYBINDING_DEFINITIONS.reduce<KeybindingMap>(
   (acc, def) => {
     acc[def.id] = def.defaultShortcut;
@@ -598,8 +696,11 @@ export function findConflictingActions(
 ): KeybindingDefinition[] {
   const normalized = candidateCombo.trim().toLowerCase();
   if (!normalized) return [];
+  // 文本编辑器的快捷键只在编辑文本文件时生效，只和同一组比较
+  const targetIsText = targetActionId.startsWith("text.");
   return KEYBINDING_DEFINITIONS.filter((def) => {
     if (def.id === targetActionId) return false;
+    if ((def.category === "textEditor") !== targetIsText) return false;
     const bound = (merged[def.id] ?? "").trim().toLowerCase();
     return bound === normalized;
   });

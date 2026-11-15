@@ -34,7 +34,9 @@ export default defineConfig({
       output: {
         manualChunks: {
           katex: ["katex"],
-          vendor: ["react", "react-dom", "lucide-react"],
+          // lucide-react 不放进 vendor：界面用到的图标随主包加载，
+          // 页面图标选择器里的全部图标由 src/icons/lucideLibrary.ts 单独按需加载
+          vendor: ["react", "react-dom"],
         },
       },
     },

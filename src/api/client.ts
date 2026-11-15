@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { iconAsText } from "../icons/pageIcon";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import type {
   BacklinkItem,
@@ -1612,7 +1613,7 @@ function runTreeBatchMigration(
           return innerLabel;
         }
         resolvedLinks += 1;
-        return `<a href="#" data-page-id="${target.id}" class="nb-wiki-link">${target.icon || "📄"} ${escapeHtml(target.title)}</a>`;
+        return `<a href="#" data-page-id="${target.id}" class="nb-wiki-link">${iconAsText(target.icon)} ${escapeHtml(target.title)}</a>`;
       }
     );
   };

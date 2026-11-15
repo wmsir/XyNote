@@ -15,6 +15,7 @@ import {
   type TextFileDocument,
 } from "./api/textfile";
 import { createFolderEntry } from "./api/folders";
+import { savePageAsTemplate } from "./api/templates";
 import {
   convertMarkdownBlocks,
   createPage,
@@ -232,6 +233,7 @@ export const App: React.FC = () => {
   // Modal states
   const [searchOpen, setSearchOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templateFocusId, setTemplateFocusId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] =
@@ -2039,6 +2041,18 @@ export const App: React.FC = () => {
               handleExportAs(detail.page.id, fmt).catch(() => {});
             }
           }}
+          onSaveAsTemplate={async () => {
+            if (!detail) return;
+            await flushPendingBlockSave();
+            try {
+              const t = await savePageAsTemplate(detail.page.id);
+              setTemplateFocusId(t.id);
+              setTemplatesOpen(true);
+              showToast(`已把「${t.title}」存为模板`);
+            } catch (err) {
+              showToast(`存为模板失败：${err instanceof Error ? err.message : String(err)}`, 3600);
+            }
+          }}
           onOpenHistory={async () => {
             await flushPendingBlockSave();
             setHistoryOpen(true);
@@ -2069,6 +2083,7 @@ export const App: React.FC = () => {
             <TextEditor
               key={activeTextFile.filePath}
               doc={activeTextFile}
+              keybindings={keybindings}
               onNotify={showToast}
               onSavingChange={setIsSaving}
               onRevealInExplorer={(p) => {
@@ -2437,7 +2452,13 @@ export const App: React.FC = () => {
 
       <TemplatesModal
         open={templatesOpen}
-        onClose={() => setTemplatesOpen(false)}
+        onClose={() => {
+          setTemplatesOpen(false);
+          setTemplateFocusId(null);
+        }}
+        currentPage={!activeLocalMd && !activeTextFile && detail ? { id: detail.page.id, title: detail.page.title } : null}
+        onNotify={showToast}
+        focusTemplateId={templateFocusId}
         onUseTemplate={(input) => {
           handleCreatePage(input).catch(() => {});
         }}

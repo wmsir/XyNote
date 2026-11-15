@@ -92,6 +92,41 @@ pub fn empty_trash(db: State<'_, Database>) -> Result<(), String> {
     db.empty_trash().map_err(Into::into)
 }
 
+/* 我的模板 */
+#[tauri::command]
+pub fn list_custom_templates(db: State<'_, Database>) -> Result<Vec<crate::db::CustomTemplate>, String> {
+    db.list_custom_templates().map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn save_page_as_template(
+    db: State<'_, Database>,
+    page_id: String,
+    meta: Option<crate::db::TemplateMetaInput>,
+    replace_id: Option<String>,
+) -> Result<crate::db::CustomTemplate, String> {
+    db.save_page_as_template(&page_id, meta.unwrap_or_default(), replace_id.as_deref()).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn update_custom_template(
+    db: State<'_, Database>,
+    id: String,
+    meta: crate::db::TemplateMetaInput,
+) -> Result<crate::db::CustomTemplate, String> {
+    db.update_custom_template_meta(&id, meta).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn delete_custom_template(db: State<'_, Database>, id: String) -> Result<(), String> {
+    db.delete_custom_template(&id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn import_custom_templates(db: State<'_, Database>, items: Vec<crate::db::CustomTemplate>) -> Result<usize, String> {
+    db.import_custom_templates(items).map_err(Into::into)
+}
+
 #[tauri::command]
 pub fn duplicate_page(db: State<'_, Database>, id: String) -> Result<Page, String> {
     db.duplicate_page(&id).map_err(Into::into)

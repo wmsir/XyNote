@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { iconAsText } from "../../icons/pageIcon";
 import {
   Archive,
   Check,
@@ -278,7 +279,7 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
           .filter((p) => p.pageType === "doc")
           .map((p) => (
             <option key={p.id} value={p.id}>
-              {p.icon} {p.title || "无标题"}
+              {iconAsText(p.icon)} {p.title || "无标题"}
             </option>
           ))}
       </select>

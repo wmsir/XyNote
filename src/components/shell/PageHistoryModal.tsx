@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import { History, RotateCcw, X } from "lucide-react";
 import {
   getPageVersion,
@@ -146,7 +147,7 @@ export function PageHistoryModal({
               {view ? (
                 <>
                   <div className="nb-history-preview-title">
-                    {view.icon} {view.meta.title || "无标题"}
+                    <PageIcon icon={view.icon} size={18} /> {view.meta.title || "无标题"}
                   </div>
                   <div className="nb-history-preview-body">
                     {view.isDatabase ? (

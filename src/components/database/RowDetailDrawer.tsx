@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, Clock, FileText, Trash2, X } from "lucide-react";
 import type { DbColumn, DbRow, Page, SelectOption } from "../../types/notion";
@@ -147,7 +148,7 @@ export const RowDetailDrawer: React.FC<RowDetailDrawerProps> = ({
           <div className="nb-db-drawer-title-block">
             <span className="nb-db-drawer-page-icon">
               {linkedPage?.icon ? (
-                <span>{linkedPage.icon}</span>
+                <PageIcon icon={linkedPage.icon} size={22} />
               ) : (
                 <FileText size={22} />
               )}

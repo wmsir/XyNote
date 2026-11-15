@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import {
   AlignCenter,
   BookOpen,
@@ -24,6 +25,7 @@ import {
   Target,
   Trash2,
   Upload,
+  LayoutTemplate,
 } from "lucide-react";
 import type {
   BreadcrumbItem,
@@ -73,6 +75,8 @@ export interface TopbarProps {
   /** 导出：html / pdf / docx */
   onExportAs: (format: "html" | "pdf" | "docx") => void;
   onOpenHistory: () => void;
+  /** 把当前页面存为自定义模板 */
+  onSaveAsTemplate?: () => void;
   onOpenImportMarkdown: () => void;
   onTrashPage: () => void;
   onOpenSearch: () => void;
@@ -114,6 +118,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onExportMarkdown,
   onExportAs,
   onOpenHistory,
+  onSaveAsTemplate,
   onOpenImportMarkdown,
   onTrashPage,
   onOpenSearch,
@@ -179,7 +184,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                       onClick={() => onNavigatePage(crumb.id)}
                       title={crumb.title || "无标题"}
                     >
-                      <span>{isLast ? page.icon : crumb.icon || "📄"}</span>
+                      <PageIcon icon={isLast ? page.icon : crumb.icon} size={15} />
                       <span>
                         {(isLast ? page.title : crumb.title) || "无标题"}
                       </span>
@@ -527,6 +532,21 @@ export const Topbar: React.FC<TopbarProps> = ({
                         <History size={14} /> 历史版本
                       </span>
                     </button>
+
+                    {onSaveAsTemplate && page && !activeLocalMd && (
+                      <button
+                        type="button"
+                        className="nb-menu-item"
+                        onClick={() => {
+                          onSaveAsTemplate();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span className="nb-menu-item-left">
+                          <LayoutTemplate size={14} /> 存为模板
+                        </span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
