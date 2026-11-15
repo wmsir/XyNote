@@ -70,6 +70,12 @@
 
 登录和激活时会把本机信息（机器指纹的哈希、电脑名称、系统、软件版本）发给服务器，用于核对授权和统计。授权令牌由服务器签名、绑定本机，日常使用离线校验，不需要联网。
 
+## 下载与发布
+
+安装包在 [Releases](https://github.com/wmsir/XyNote/releases) 下载（Windows、macOS、Linux，以及自建同步服务器）。
+
+发新版本：把 `package.json` 和 `src-tauri/Cargo.toml` 的版本号改大并合并到 `main`，GitHub Actions 会自动打包并发布 `v<版本号>`。永久版授权公钥可在仓库 Secrets 中设置 `XYNOTE_LICENSE_PUBKEY`。
+
 ## 默认快捷键一览（均可在 `Ctrl + ,` -> `快捷键配置` 自定义）
 
 | 快捷键 | 功能说明 |

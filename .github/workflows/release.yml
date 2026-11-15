@@ -1,16 +1,25 @@
 name: Build & Release XyNote
 
-# 推送 v* 标签（版本号需与 package.json 一致）即自动打包并发布到 GitHub Releases；
-# 也可以在 Actions 页手动运行，只生成构建产物、不发布。
+# 自动发布：main 分支上的版本号（package.json）还没有发布过时，自动打包并创建
+# v<版本号> 标签与 GitHub Release。所以发新版只需要把版本号改大并合并到 main。
+# 也支持推送 v* 标签，或在 Actions 页手动运行（版本已发布过时只生成构建产物）。
 #
 # 可选的仓库 Secrets：
 #   XYNOTE_LICENSE_PUBKEY  永久版授权公钥（不设置时使用 src-tauri/license_pubkey.txt）
 
 on:
   push:
+    branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/release.yml
     tags:
       - "v*"
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -23,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - name: 检查标签与版本号一致
@@ -43,9 +53,22 @@ jobs:
           if ! grep -qE '^[0-9a-fA-F]{64}$' src-tauri/license_pubkey.txt && [[ -z "$XYNOTE_LICENSE_PUBKEY" ]]; then
             echo "::warning::未配置永久版授权公钥：这个版本无法登录或激活永久版"
           fi
+          # 该版本还没有发布过才发布（标签推送总是发布）
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            PUBLISH=true
+          elif gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$VERSION 已发布，本次只构建"
+            PUBLISH=false
+          else
+            PUBLISH=true
+          fi
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-app:
     needs: check-version
+    if: needs.check-version.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -134,6 +157,7 @@ jobs:
 
   build-server:
     needs: check-version
+    if: needs.check-version.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -156,7 +180,7 @@ jobs:
           path: dist-release/*
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.check-version.outputs.publish == 'true'
     needs: [check-version, build-app, build-server]
     runs-on: ubuntu-latest
     env:
@@ -174,6 +198,8 @@ jobs:
       - name: 发布到 GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           name: 小悦笔记 XyNote v${{ env.VERSION }}
           generate_release_notes: true
           body: |
