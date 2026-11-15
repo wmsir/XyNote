@@ -25,7 +25,10 @@ const S_ACCOUNT_TOKEN: &str = "sync.secret.licenseToken";
 
 /// 发码工具 `xynote-license keygen` 生成的公钥（十六进制），可在构建时用环境变量覆盖
 pub fn public_key() -> Option<[u8; 32]> {
-    let raw = option_env!("XYNOTE_LICENSE_PUBKEY").unwrap_or(include_str!("../license_pubkey.txt"));
+    // 构建时可用环境变量（如 GitHub Secrets）提供；为空时用仓库里的 license_pubkey.txt
+    let raw = option_env!("XYNOTE_LICENSE_PUBKEY")
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or(include_str!("../license_pubkey.txt"));
     raw.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')).and_then(parse_hex32)
 }
 
