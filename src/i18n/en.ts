@@ -423,7 +423,6 @@ const EN: Record<string, string> = {
   "团队周会纪要": "Team meeting notes",
   "图像": "Image",
   "图标": "Icons",
-  "图标来自 Lucide 开源图标库（ISC 协议）": "Icons from Lucide (ISC license)",
   "图标颜色": "Icon color",
   "图片": "Image",
   "图片附件目录 (assets)": "Image folder (assets)",

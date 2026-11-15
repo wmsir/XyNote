@@ -3975,11 +3975,6 @@ a {
   font-size: 13px;
   color: var(--text-tertiary);
 }
-.nb-iconpick-foot {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  text-align: right;
-}
 .nb-inline-page-icon {
   flex-shrink: 0;
   font-size: 16px;
