@@ -135,7 +135,9 @@ pub fn slugify_plugin_id(raw: &str) -> String {
 fn strip_plugin_ext(filename: &str) -> &str {
     let trimmed = filename.trim();
     let lower = trimmed.to_ascii_lowercase();
-    if lower.ends_with(".notion-theme.json") && trimmed.len() > 18 {
+    if lower.ends_with(".xynote-theme.json") && trimmed.len() > 18 {
+        &trimmed[..trimmed.len() - 18]
+    } else if lower.ends_with(".xynote-theme.json") && trimmed.len() > 18 {
         &trimmed[..trimmed.len() - 18]
     } else if lower.ends_with(".theme.json") && trimmed.len() > 11 {
         &trimmed[..trimmed.len() - 11]
@@ -501,9 +503,22 @@ pub fn ensure_plugins_initialized_on_disk(
     let state_path = plugins_dir.join(PLUGIN_STATE_FILENAME);
     let mut state = load_plugin_state_file(&state_path);
 
+    // 早期版本的主题文件扩展名是 .notion-theme.json，统一改成 .xynote-theme.json
+    if let Ok(read) = std::fs::read_dir(&themes_dir) {
+        for item in read.flatten() {
+            let name = item.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.strip_suffix(".notion-theme.json") {
+                let target = themes_dir.join(format!("{}.xynote-theme.json", stem));
+                if !target.exists() {
+                    let _ = std::fs::rename(item.path(), target);
+                }
+            }
+        }
+    }
+
     if !state.seeded_builtin_v030 {
         for theme in builtin_themes_seed() {
-            let file_path = themes_dir.join(format!("{}.notion-theme.json", theme.id));
+            let file_path = themes_dir.join(format!("{}.xynote-theme.json", theme.id));
             if !file_path.exists() {
                 let pretty = serde_json::to_string_pretty(&theme)?;
                 std::fs::write(&file_path, pretty.as_bytes())?;
@@ -982,7 +997,7 @@ impl Database {
         if let Some(prev) = existing {
             let prev_path = Path::new(&prev.file_path);
             let target_path = if kind == "theme" {
-                themes_dir.join(format!("{}.notion-theme.json", id))
+                themes_dir.join(format!("{}.xynote-theme.json", id))
             } else {
                 snippets_dir.join(format!("{}.css", id))
             };
@@ -1049,7 +1064,7 @@ impl Database {
                 custom_css,
                 updated_at: ts,
             };
-            let file_path = themes_dir.join(format!("{}.notion-theme.json", id));
+            let file_path = themes_dir.join(format!("{}.xynote-theme.json", id));
             std::fs::write(&file_path, serde_json::to_string_pretty(&disk_theme)?.as_bytes())?;
 
             if should_enable {
@@ -1303,7 +1318,7 @@ impl Database {
                 updated_at: item.updated_at.clone(),
             };
             let json = serde_json::to_string_pretty(&export_obj)?;
-            let default_fname = format!("{}.notion-theme.json", item.id);
+            let default_fname = format!("{}.xynote-theme.json", item.id);
             Ok((item, default_fname, format!("{}\n", json)))
         } else {
             let css = format_css_with_metadata_header(
@@ -1353,7 +1368,7 @@ mod tests {
 
         let db = Database::open_portable(&exe_dir, &fallback_dir, false).unwrap();
 
-        // Confirm cold-start `open_portable` immediately created 5 `.notion-theme.json` + 5 `.css` files on disk
+        // Confirm cold-start `open_portable` immediately created 5 `.xynote-theme.json` + 5 `.css` files on disk
         let themes_dir = exe_dir.join("data").join("plugins").join("themes");
         let snippets_dir = exe_dir.join("data").join("plugins").join("snippets");
         assert!(themes_dir.is_dir());
@@ -1365,7 +1380,7 @@ mod tests {
             .filter(|e| {
                 e.file_name()
                     .to_string_lossy()
-                    .ends_with(".notion-theme.json")
+                    .ends_with(".xynote-theme.json")
             })
             .collect();
         let snippet_files: Vec<_> = std::fs::read_dir(&snippets_dir)
@@ -1536,7 +1551,7 @@ mod tests {
         let (_tmeta, tfname, exported_theme_json) = db
             .serialize_style_plugin_for_export(&created_theme.id)
             .unwrap();
-        assert!(tfname.ends_with(".notion-theme.json"));
+        assert!(tfname.ends_with(".xynote-theme.json"));
         assert!(exported_theme_json.contains("\"bgPrimary\": \"#141210\""));
 
         // 4. Built-in plugins are protected from deletion

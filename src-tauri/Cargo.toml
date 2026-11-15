@@ -1,12 +1,12 @@
 [package]
-name = "notion-desktop"
+name = "xynote"
 version = "0.3.5"
 description = "小悦 · 轻量知识笔记 (XyNote) — 悦享服务、愉悦记录，块级结构与多维表格桌面端 (https://fwpt.cn/)"
 authors = ["fwpt.cn <admin@fwpt.cn>"]
 edition = "2021"
 
 [lib]
-name = "notion_desktop_lib"
+name = "xynote_lib"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -22,6 +22,8 @@ thiserror = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 ureq = { version = "2", default-features = false, features = ["tls"] }
+notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+trash = "5"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 rfd = "0.15"

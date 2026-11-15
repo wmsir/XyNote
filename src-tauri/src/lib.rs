@@ -1,4 +1,5 @@
 pub mod folders;
+pub mod watch;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
@@ -36,6 +37,7 @@ pub fn run() {
             let database = Database::open_portable(&exe_dir, &fallback_app_data_dir, true)
                 .map_err(|e| format!("Failed to initialize portable SQLite database: {}", e))?;
             app.manage(database);
+            app.manage(watch::FsWatcher::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -83,6 +85,11 @@ pub fn run() {
             commands::list_folder_entries,
             commands::create_folder_entry,
             commands::rename_folder_entry,
+            commands::move_folder_entry,
+            commands::trash_folder_entry,
+            commands::search_folder_notes,
+            commands::set_watched_paths,
+            commands::save_local_note_image,
             commands::list_backups,
             commands::create_backup_now,
             commands::restore_backup,

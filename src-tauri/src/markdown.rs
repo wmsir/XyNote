@@ -1638,11 +1638,15 @@ fn format_single_block_lines(
             lines.push(String::new());
         }
         "image" => {
-            let url = props
-                .url
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| content.trim());
+            // 磁盘笔记的图片写回原来的相对路径，而不是用于显示的 data URL
+            // 只有显示用的 url 仍是 data URL 时才用 local_src（用户改成网络图片后以 url 为准）
+            let display = props.url.as_deref().filter(|s| !s.is_empty());
+            let url = match (display, props.local_src.as_deref().filter(|s| !s.is_empty())) {
+                (Some(d), Some(local)) if d.starts_with("data:") => local,
+                (Some(d), _) => d,
+                (None, Some(local)) => local,
+                (None, None) => content.trim(),
+            };
             let caption = props.caption.as_deref().unwrap_or("");
             lines.push(format!("![{}]({})", caption, url));
             lines.push(String::new());

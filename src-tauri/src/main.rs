@@ -2,5 +2,5 @@
 
 fn main() {
     #[cfg(not(test))]
-    notion_desktop_lib::run();
+    xynote_lib::run();
 }

@@ -519,7 +519,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="nb-modal-title">
             <Settings size={17} />
             <span>偏好设置中心</span>
-            <span className="nb-settings-version-pill">v0.3.5</span>
+            <span className="nb-settings-version-pill">v{__APP_VERSION__}</span>
           </div>
           <button
             type="button"
@@ -672,7 +672,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">主数据库文件</span>
                       <code className="nb-storage-kv-val">
-                        {info?.dbFilePath ?? ".\\data\\notion_desktop.db"}
+                        {info?.dbFilePath ?? ".\\data\\xynote.db"}
                       </code>
                       <span className="nb-storage-kv-tag">
                         {formatBytes(info?.dbSizeBytes ?? 0)} · {info?.pageCount ?? 0} 页 /{" "}
@@ -1471,7 +1471,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-about-title">
                       小悦 · 轻量知识笔记 (XyNote)
                       <span className="nb-settings-version-pill">
-                        v0.3.5
+                        v{__APP_VERSION__}
                       </span>
                     </div>
                     <div className="nb-about-sub">
@@ -1524,7 +1524,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">桌面引擎版本</span>
                       <span className="nb-storage-kv-val">
-                        v0.3.5 (
+                        v{__APP_VERSION__} (
                         {isTauri
                           ? "Tauri v2 Native + Rust SQLite WAL/FTS5"
                           : "Browser Preview LocalStorage Engine"}
@@ -1540,7 +1540,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">当前主数据库路径</span>
                       <code className="nb-storage-kv-val">
-                        {info?.dbFilePath ?? ".\\data\\notion_desktop.db"}
+                        {info?.dbFilePath ?? ".\\data\\xynote.db"}
                       </code>
                     </div>
                     <div className="nb-storage-kv-item">

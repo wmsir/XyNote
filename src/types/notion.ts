@@ -38,6 +38,8 @@ export interface BlockProps {
   checked?: boolean;
   language?: string;
   calloutIcon?: string;
+  /** 磁盘笔记里图片的原始相对路径；url 为显示用的 data URL */
+  localSrc?: string;
   color?: string;
   collapsed?: boolean;
   childrenText?: string;
@@ -390,4 +392,14 @@ export interface FolderListing {
 export interface WorkspaceFolder {
   path: string;
   name: string;
+}
+
+/** 文件夹全文搜索结果 */
+export interface FolderSearchHit {
+  path: string;
+  name: string;
+  rootName: string;
+  /** 匹配行号；只匹配到文件名时为 0 */
+  line: number;
+  snippet: string;
 }

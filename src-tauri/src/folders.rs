@@ -262,6 +262,157 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<FolderEntry, AppError>
     to_entry(&dst).ok_or_else(|| AppError::NotFound("重命名后无法读取".into()))
 }
 
+/// 把文件或文件夹移动到另一个文件夹（拖拽）；目标已有同名条目时拒绝，不能把文件夹移进它自己里面
+pub fn move_entry(path: &str, target_dir: &str) -> Result<FolderEntry, AppError> {
+    let src = PathBuf::from(normalize_win32_path_str(path));
+    if !src.exists() {
+        return Err(AppError::NotFound(format!("条目不存在：{}", src.display())));
+    }
+    let dest_dir = clean_dir(target_dir)?;
+    let name = src
+        .file_name()
+        .ok_or_else(|| AppError::Validation("不能移动磁盘根目录".into()))?
+        .to_owned();
+    if src.parent().map(|p| p == dest_dir).unwrap_or(false) {
+        return to_entry(&src).ok_or_else(|| AppError::NotFound("无法读取条目".into()));
+    }
+    if src.is_dir() {
+        let src_abs = src.canonicalize()?;
+        let dest_abs = dest_dir.canonicalize()?;
+        if dest_abs.starts_with(&src_abs) {
+            return Err(AppError::Validation("不能把文件夹移动到它自己里面".into()));
+        }
+    }
+    let dst = dest_dir.join(&name);
+    if dst.exists() {
+        return Err(AppError::Validation(format!(
+            "目标文件夹里已有「{}」",
+            name.to_string_lossy()
+        )));
+    }
+    if std::fs::rename(&src, &dst).is_err() {
+        // 跨磁盘移动时 rename 会失败：文件用复制 + 删除代替
+        if src.is_file() {
+            std::fs::copy(&src, &dst)?;
+            std::fs::remove_file(&src)?;
+        } else {
+            return Err(AppError::Validation("暂不支持跨磁盘移动文件夹".into()));
+        }
+    }
+    to_entry(&dst).ok_or_else(|| AppError::NotFound("移动后无法读取".into()))
+}
+
+/// 移到系统回收站（可恢复），不做永久删除
+pub fn trash_entry(path: &str) -> Result<(), AppError> {
+    let target = PathBuf::from(normalize_win32_path_str(path));
+    if !target.exists() {
+        return Err(AppError::NotFound(format!("条目不存在：{}", target.display())));
+    }
+    trash::delete(&target).map_err(|e| AppError::Validation(format!("无法移到回收站：{}", e)))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSearchHit {
+    pub path: String,
+    pub name: String,
+    /// 所属根文件夹的显示名
+    pub root_name: String,
+    /// 匹配所在行号（从 1 开始）；只匹配到文件名时为 0
+    pub line: usize,
+    pub snippet: String,
+}
+
+fn snippet_around(line: &str, byte_idx: usize, needle_len: usize) -> String {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let pos = chars.iter().position(|(i, _)| *i >= byte_idx).unwrap_or(0);
+    let start = pos.saturating_sub(24);
+    let end = (pos + needle_len + 40).min(chars.len());
+    let mut out: String = chars[start..end].iter().map(|(_, c)| *c).collect();
+    out = out.trim().to_string();
+    if start > 0 {
+        out = format!("…{}", out);
+    }
+    if end < chars.len() {
+        out.push('…');
+    }
+    out
+}
+
+/// 在挂载的文件夹里全文搜索笔记（文件名 + 内容，不区分大小写）。
+/// 有上限：最多扫描 5000 个文件、单个文件 2MB、总耗时约 1.5 秒、返回 60 条。
+pub fn search_notes(roots: &[(String, String)], query: &str) -> Vec<FolderSearchHit> {
+    let needle = query.trim().to_lowercase();
+    let mut hits = Vec::new();
+    if needle.is_empty() {
+        return hits;
+    }
+    let started = std::time::Instant::now();
+    let mut scanned = 0usize;
+    for (root_path, root_name) in roots {
+        let mut stack = vec![PathBuf::from(normalize_win32_path_str(root_path))];
+        while let Some(dir) = stack.pop() {
+            if hits.len() >= 60 || scanned >= 5000 || started.elapsed().as_millis() > 1500 {
+                return hits;
+            }
+            let Ok(read) = std::fs::read_dir(&dir) else { continue };
+            for item in read.flatten() {
+                let name = item.file_name().to_string_lossy().into_owned();
+                if is_hidden_name(&name) {
+                    continue;
+                }
+                let path = item.path();
+                if path.is_dir() {
+                    if !SKIPPED_DIRS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                if !is_note_file(&path) {
+                    continue;
+                }
+                scanned += 1;
+                let path_str = path.to_string_lossy().into_owned();
+                if name.to_lowercase().contains(&needle) {
+                    hits.push(FolderSearchHit {
+                        path: path_str.clone(),
+                        name: name.clone(),
+                        root_name: root_name.clone(),
+                        line: 0,
+                        snippet: String::new(),
+                    });
+                }
+                let Ok(meta) = item.metadata() else { continue };
+                if meta.len() > 2 * 1024 * 1024 {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(&path) else { continue };
+                let text = String::from_utf8_lossy(&bytes);
+                for (idx, line) in text.lines().enumerate() {
+                    let lower = line.to_lowercase();
+                    if let Some(pos) = lower.find(&needle) {
+                        // 小写化可能改变字节长度：按比例换回原行位置，只用于截取片段
+                        let approx = pos.min(line.len());
+                        let approx = (0..=approx).rev().find(|i| line.is_char_boundary(*i)).unwrap_or(0);
+                        hits.push(FolderSearchHit {
+                            path: path_str.clone(),
+                            name: name.clone(),
+                            root_name: root_name.clone(),
+                            line: idx + 1,
+                            snippet: snippet_around(line, approx, needle.chars().count()),
+                        });
+                        break;
+                    }
+                }
+                if hits.len() >= 60 {
+                    return hits;
+                }
+            }
+        }
+    }
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +467,30 @@ mod tests {
         assert!(rename_entry(&renamed.path, "sub/x.md").is_err());
         let moved_dir = rename_entry(&sub.path, "项目归档").unwrap();
         assert!(Path::new(&moved_dir.path).is_dir());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn move_and_search_notes() {
+        let dir = temp_dir("move");
+        let sub = create_entry(dir.to_str().unwrap(), "归档", true).unwrap();
+        let note = create_entry(dir.to_str().unwrap(), "周报", false).unwrap();
+        std::fs::write(&note.path, "# 周报\n\n本周完成 Rust 文件监听与冲突检测。\n").unwrap();
+
+        let moved = move_entry(&note.path, &sub.path).unwrap();
+        assert!(Path::new(&moved.path).is_file());
+        assert!(!Path::new(&note.path).exists());
+        assert!(move_entry(&sub.path, &sub.path).is_err(), "不能移进自己");
+
+        let roots = vec![(dir.to_string_lossy().into_owned(), "测试".to_string())];
+        let hits = search_notes(&roots, "冲突检测");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line, 3);
+        assert!(hits[0].snippet.contains("冲突检测"));
+        assert_eq!(hits[0].root_name, "测试");
+        let by_name = search_notes(&roots, "周报");
+        assert!(by_name.iter().any(|h| h.line == 0));
+        assert!(search_notes(&roots, "   ").is_empty());
         std::fs::remove_dir_all(dir).ok();
     }
 

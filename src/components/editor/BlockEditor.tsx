@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { openPathInExplorer, saveAssetImage } from "../../api/client";
+import { openPathInExplorer, saveAssetImage, saveLocalNoteImage } from "../../api/client";
 import type {
   Block,
   BlockProps,
@@ -1375,7 +1375,20 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
           : `paste-${Date.now()}.${ext}`;
 
       let resolvedUrl = dataUrl;
-      if (preferences?.imageSaveMode !== "base64") {
+      // 磁盘笔记：图片存到笔记旁边的 assets/，Markdown 里写相对路径，换电脑或用其他编辑器也能看到
+      let resolvedLocalSrc: string | undefined;
+      if (pageId.startsWith("local:")) {
+        try {
+          const b64Payload = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+          const saved = await saveLocalNoteImage(pageId.slice("local:".length), fileName, b64Payload, mimeType);
+          if (saved) {
+            resolvedUrl = saved.displayUrl;
+            resolvedLocalSrc = saved.relativePath;
+          }
+        } catch {
+          // 写不进去（只读目录等）时退回内嵌图片
+        }
+      } else if (preferences?.imageSaveMode !== "base64") {
         try {
           const b64Payload = dataUrl.includes(",")
             ? dataUrl.split(",")[1]
@@ -1404,6 +1417,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         const nextProps: BlockProps = {
           ...target.props,
           url: resolvedUrl,
+          localSrc: resolvedLocalSrc,
           caption: target.props.caption || defaultCaption,
           imageWidth: target.props.imageWidth || "full",
         };
@@ -1421,6 +1435,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
 
       const imgBlock = createNewBlock(pageId, "image", 0, "", {
         url: resolvedUrl,
+        ...(resolvedLocalSrc ? { localSrc: resolvedLocalSrc } : {}),
         caption: defaultCaption,
         imageWidth: "full",
       });

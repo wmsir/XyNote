@@ -123,15 +123,6 @@ export const Topbar: React.FC<TopbarProps> = ({
     return () => window.removeEventListener("mousedown", onOutside);
   }, [menuOpen]);
 
-  const cycleTheme = () => {
-    const next: ThemeMode =
-      theme === "light" ? "dark" : theme === "dark" ? "sepia" : "light";
-    onChangeTheme(next);
-  };
-
-  const themeLabel =
-    theme === "light" ? "浅色模式" : theme === "dark" ? "深色模式" : "护眼暖色";
-
   const isDocMode = Boolean(activeLocalMd || (page && page.pageType === "doc"));
 
   return (
@@ -150,39 +141,13 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         {activeLocalMd ? (
           <div className="nb-local-md-bar">
-            <span className="nb-local-md-badge">本地直编</span>
+            <span className="nb-local-md-badge" title="直接编辑磁盘上的文件，保存即写回">磁盘文件</span>
             <span
               className="nb-local-md-filename"
               title={activeLocalMd.filePath}
             >
-              📝 {activeLocalMd.fileName}
+              {activeLocalMd.fileName}
             </span>
-            <div className="nb-local-md-actions">
-              <button
-                type="button"
-                className="nb-topbar-mini-btn"
-                onClick={onSaveImmediate}
-                title="立即保存至磁盘 (Ctrl+S)"
-              >
-                <Save size={12} /> 保存
-              </button>
-              <button
-                type="button"
-                className="nb-topbar-mini-btn"
-                onClick={onSaveAsMarkdown}
-                title="另存为本地 Markdown 文件 (Ctrl+Shift+S)"
-              >
-                <Download size={12} /> 另存为
-              </button>
-              <button
-                type="button"
-                className="nb-topbar-mini-btn is-accent"
-                onClick={onImportLocalMdToWorkspace}
-                title="将此本地 .md 文件同时收录进 SQLite 工作区页面"
-              >
-                <FileInput size={12} /> 收入知识库
-              </button>
-            </div>
           </div>
         ) : (
           page && (
@@ -265,33 +230,6 @@ export const Topbar: React.FC<TopbarProps> = ({
               <ListTree size={15} />
             </button>
 
-            <button
-              type="button"
-              className={`nb-icon-btn${focusMode ? " is-mode-on" : ""}`}
-              onClick={onToggleFocusMode}
-              title="专注模式 Focus Mode (F8)"
-            >
-              <Target size={15} />
-            </button>
-
-            <button
-              type="button"
-              className={`nb-icon-btn${typewriterMode ? " is-mode-on" : ""}`}
-              onClick={onToggleTypewriterMode}
-              title="打字机居中模式 Typewriter (F9)"
-            >
-              <AlignCenter size={15} />
-            </button>
-
-            <button
-              type="button"
-              className={`nb-icon-btn${zenMode ? " is-mode-on" : ""}`}
-              onClick={onToggleZenMode}
-              title={zenMode ? "退出禅模式 (Zen)" : "进入禅模式沉浸写作 (Zen)"}
-            >
-              {zenMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-            </button>
-
             <span className="nb-topbar-divider" />
           </>
         )}
@@ -310,26 +248,6 @@ export const Topbar: React.FC<TopbarProps> = ({
           title="全局搜索 (Ctrl+K)"
         >
           <Search size={16} />
-        </button>
-
-        <button
-          type="button"
-          className="nb-icon-btn"
-          onClick={cycleTheme}
-          title={`当前：${themeLabel}（点击切换）`}
-        >
-          {theme === "light" && <Sun size={16} />}
-          {theme === "dark" && <Moon size={16} />}
-          {theme === "sepia" && <BookOpen size={16} />}
-        </button>
-
-        <button
-          type="button"
-          className="nb-icon-btn"
-          onClick={onOpenSettings}
-          title="偏好设置中心 (Ctrl+,)"
-        >
-          <Settings size={16} />
         </button>
 
         {page && !activeLocalMd && (
@@ -359,6 +277,83 @@ export const Topbar: React.FC<TopbarProps> = ({
                 className="nb-popover"
                 style={{ right: 0, top: "32px", width: "256px" }}
               >
+                {activeLocalMd && (
+                  <>
+                    <div className="nb-menu-label">磁盘文件</div>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onSaveImmediate();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Save size={14} /> 立即保存
+                      </span>
+                      <kbd className="nb-menu-kbd">Ctrl+S</kbd>
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onSaveAsMarkdown();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <Download size={14} /> 另存为…
+                      </span>
+                      <kbd className="nb-menu-kbd">Ctrl+Shift+S</kbd>
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onImportLocalMdToWorkspace();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        <FileInput size={14} /> 复制一份到工作区页面
+                      </span>
+                    </button>
+                    <div className="nb-menu-divider" />
+                  </>
+                )}
+
+                {isDocMode && (
+                  <>
+                    <div className="nb-menu-label">写作模式</div>
+                    <button type="button" className="nb-menu-item" onClick={onToggleFocusMode}>
+                      <span className="nb-menu-item-left">
+                        <Target size={14} /> 专注模式
+                      </span>
+                      <span className="nb-menu-check">{focusMode ? "✓" : <kbd className="nb-menu-kbd">F8</kbd>}</span>
+                    </button>
+                    <button type="button" className="nb-menu-item" onClick={onToggleTypewriterMode}>
+                      <span className="nb-menu-item-left">
+                        <AlignCenter size={14} /> 打字机居中
+                      </span>
+                      <span className="nb-menu-check">{typewriterMode ? "✓" : <kbd className="nb-menu-kbd">F9</kbd>}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-menu-item"
+                      onClick={() => {
+                        onToggleZenMode();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <span className="nb-menu-item-left">
+                        {zenMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />} 禅模式
+                      </span>
+                      <span className="nb-menu-check">{zenMode ? "✓" : <kbd className="nb-menu-kbd">F11</kbd>}</span>
+                    </button>
+                    <div className="nb-menu-divider" />
+                  </>
+                )}
+
                 <div className="nb-menu-label">字体风格</div>
                 <div className="nb-font-switcher">
                   <button
@@ -470,20 +465,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                   }}
                 >
                   <span className="nb-menu-item-left">
-                    <FolderOpen size={14} /> 打开本地 .md 直编 (Ctrl+O)
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => {
-                    onSaveAsMarkdown();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <span className="nb-menu-item-left">
-                    <Save size={14} /> 另存为本地 .md
+                    <FolderOpen size={14} /> 打开 .md 文件… (Ctrl+O)
                   </span>
                 </button>
 

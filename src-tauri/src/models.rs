@@ -20,6 +20,9 @@ pub enum AppError {
     Validation(String),
     #[error("Lock poisoned")]
     LockPoisoned,
+    /// 磁盘文件在打开后被其他程序改过；携带文件当前的修改时间
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 impl From<AppError> for String {
@@ -75,6 +78,9 @@ pub struct BlockProps {
     pub rows: Option<Vec<Vec<String>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// 磁盘笔记里图片的原始引用（如 `assets/a.png`）；url 用于显示，保存时写回这里的相对路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_src: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
