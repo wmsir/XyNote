@@ -1,8 +1,8 @@
 //! 小悦笔记永久版授权（官方服务）。
 //!
-//! - 通行证账号第一次在软件里登录，赠送一年永久版权限（trial）。
-//! - 官网购买后发放激活码 `XYP-XXXX-XXXX-XXXX-XXXX`，一个激活码最多在 3 台电脑上使用，
-//!   第一次激活时绑定到激活的通行证账号。
+//! - 通行证账号第一次在软件里登录，赠送一年永久版权限（trial），免费账号只能绑定 1 台电脑。
+//! - 官网购买后发放激活码 `XYP-XXXX-XXXX-XXXX-XXXX`，一个激活码默认可在 3 台电脑上使用，
+//!   第一次激活时绑定到激活的通行证账号；不够用时可以单独购买「增加 1 台电脑」。
 //! - 每次登录 / 激活都记录机器信息（机器指纹、名称、系统、版本），用于核对和统计。
 //! - 服务器返回用永久版私钥签名的授权令牌，软件离线校验（绑定本机、试用期带到期时间）。
 
@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 pub const TRIAL_DAYS: i64 = 365;
 pub const DEFAULT_MAX_DEVICES: i64 = 3;
+/// 免费账号（一年免费期）可绑定的电脑数
+pub const TRIAL_MAX_DEVICES: i64 = 1;
 
 pub const SCHEMA_SQL: &str = "
     CREATE TABLE IF NOT EXISTS license_codes (
@@ -47,6 +49,11 @@ pub const SCHEMA_SQL: &str = "
         PRIMARY KEY (user_id, machine_id)
     );
     CREATE INDEX IF NOT EXISTS idx_license_codes_owner ON license_codes(owner_user_id);
+    CREATE TABLE IF NOT EXISTS trial_bindings (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        machine_id TEXT NOT NULL,
+        bound_at TEXT NOT NULL
+    );
 ";
 
 /// 软件上报的机器信息
@@ -279,6 +286,14 @@ pub fn activate(conn: &Connection, user_id: i64, d: &DeviceInfo, code: Option<&s
         }
     }
 
+    // 已购永久版但电脑数用满：不再退回免费试用，提示停用旧电脑或加购
+    if let Some((_, max)) = owned.iter().max_by_key(|(_, m)| *m) {
+        return Err(LicenseError::Conflict(format!(
+            "你的永久版已在 {} 台电脑上使用。请先在不用的电脑上「停用本机授权」或到用户中心解绑，也可以在用户中心加购电脑数",
+            max
+        )));
+    }
+
     // 一年免费期：账号第一次在软件中登录时开始计算
     let trial_until = match trial_until {
         Some(t) => t,
@@ -290,31 +305,167 @@ pub fn activate(conn: &Connection, user_id: i64, d: &DeviceInfo, code: Option<&s
     };
     let trial_active = chrono::DateTime::parse_from_rfc3339(&trial_until).map(|t| t > now()).unwrap_or(false);
     if trial_active {
+        // 免费账号只能绑定 1 台电脑
+        let bound: Option<String> = conn
+            .query_row("SELECT machine_id FROM trial_bindings WHERE user_id = ?1", params![user_id], |r| r.get(0))
+            .optional()?;
+        match bound {
+            Some(m) if m != machine => {
+                return Err(LicenseError::Conflict(
+                    "免费账号只能在 1 台电脑上使用。请先在原来的电脑上「停用本机授权」，或到用户中心解绑；购买永久版可在 3 台电脑使用"
+                        .into(),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                conn.execute(
+                    "INSERT INTO trial_bindings (user_id, machine_id, bound_at) VALUES (?1, ?2, ?3)",
+                    params![user_id, machine, now().to_rfc3339()],
+                )?;
+            }
+        }
         return Ok(Entitlement {
             edition: "trial".into(),
             expires_at: Some(trial_until.clone()),
             code: None,
-            devices_used: 0,
-            max_devices: 0,
+            devices_used: 1,
+            max_devices: TRIAL_MAX_DEVICES,
             trial_until: Some(trial_until),
         });
-    }
-    if let Some((_, max)) = owned.first() {
-        return Err(LicenseError::Conflict(format!(
-            "你的激活码已在 {} 台电脑上使用。请先在不用的电脑上「停用本机授权」",
-            max
-        )));
     }
     Err(LicenseError::PaymentRequired("一年免费期已结束，购买永久版后输入激活码即可继续使用".into()))
 }
 
 /// 在本机停用授权，空出一个位置
 pub fn deactivate(conn: &Connection, user_id: i64, machine_id: &str) -> rusqlite::Result<usize> {
-    conn.execute(
+    let n = conn.execute(
         "DELETE FROM license_activations WHERE machine_id = ?1
          AND code IN (SELECT code FROM license_codes WHERE owner_user_id = ?2)",
         params![machine_id.trim(), user_id],
+    )?;
+    let t = conn.execute(
+        "DELETE FROM trial_bindings WHERE user_id = ?1 AND machine_id = ?2",
+        params![user_id, machine_id.trim()],
+    )?;
+    Ok(n + t)
+}
+
+/// 给账号名下的激活码增加电脑数量（购买「增加 1 台电脑」后调用），返回被增加的激活码
+pub fn add_device_slot(conn: &Connection, user_id: i64, count: i64) -> Result<String, String> {
+    let code: Option<String> = conn
+        .query_row(
+            "SELECT code FROM license_codes WHERE owner_user_id = ?1 AND revoked = 0 ORDER BY created_at LIMIT 1",
+            params![user_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let code = code.ok_or("该账号还没有永久版激活码，请先购买永久版")?;
+    conn.execute("UPDATE license_codes SET max_devices = max_devices + ?1 WHERE code = ?2", params![count, code])
+        .map_err(|e| e.to_string())?;
+    Ok(code)
+}
+
+pub fn owns_code(conn: &Connection, user_id: i64) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM license_codes WHERE owner_user_id = ?1 AND revoked = 0",
+        params![user_id],
+        |r| r.get::<_, i64>(0),
     )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserDevice {
+    pub machine_id: String,
+    pub machine_name: String,
+    pub os: String,
+    pub app_version: String,
+    pub last_at: String,
+    /// lifetime（占用激活码的位置）/ trial（免费账号绑定的那台）
+    pub kind: String,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserCode {
+    pub code: String,
+    pub max_devices: i64,
+    pub devices_used: i64,
+    pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseSummary {
+    pub trial_until: Option<String>,
+    pub trial_active: bool,
+    pub trial_max_devices: i64,
+    pub codes: Vec<UserCode>,
+    pub devices: Vec<UserDevice>,
+}
+
+/// 用户中心：授权、激活码与已绑定的电脑
+pub fn summary(conn: &Connection, user_id: i64) -> rusqlite::Result<LicenseSummary> {
+    let trial_until: Option<String> =
+        conn.query_row("SELECT trial_until FROM users WHERE id = ?1", params![user_id], |r| r.get(0)).optional()?.flatten();
+    let trial_active = trial_until
+        .as_deref()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t > now())
+        .unwrap_or(false);
+    let mut stmt = conn.prepare(
+        "SELECT c.code, c.max_devices, c.revoked, (SELECT COUNT(*) FROM license_activations a WHERE a.code = c.code)
+         FROM license_codes c WHERE c.owner_user_id = ?1 ORDER BY c.created_at",
+    )?;
+    let codes = stmt
+        .query_map(params![user_id], |r| {
+            Ok(UserCode { code: r.get(0)?, max_devices: r.get(1)?, revoked: r.get::<_, i64>(2)? != 0, devices_used: r.get(3)? })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut devices = Vec::new();
+    let mut stmt = conn.prepare(
+        "SELECT a.machine_id, a.machine_name, a.os, a.app_version, a.last_at, a.code
+         FROM license_activations a JOIN license_codes c ON c.code = a.code
+         WHERE c.owner_user_id = ?1 ORDER BY a.last_at DESC",
+    )?;
+    for d in stmt.query_map(params![user_id], |r| {
+        Ok(UserDevice {
+            machine_id: r.get(0)?,
+            machine_name: r.get(1)?,
+            os: r.get(2)?,
+            app_version: r.get(3)?,
+            last_at: r.get(4)?,
+            kind: "lifetime".into(),
+            code: Some(r.get(5)?),
+        })
+    })? {
+        devices.push(d?);
+    }
+    let trial: Option<(String, String)> = conn
+        .query_row(
+            "SELECT t.machine_id, t.bound_at FROM trial_bindings t WHERE t.user_id = ?1",
+            params![user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((mid, bound_at)) = trial {
+        if !devices.iter().any(|d| d.machine_id == mid) {
+            let info: Option<(String, String, String, String)> = conn
+                .query_row(
+                    "SELECT machine_name, os, app_version, last_at FROM devices WHERE user_id = ?1 AND machine_id = ?2",
+                    params![user_id, mid],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?;
+            let (name, os, ver, last) = info.unwrap_or_else(|| ("未知电脑".into(), String::new(), String::new(), bound_at));
+            devices.push(UserDevice { machine_id: mid, machine_name: name, os, app_version: ver, last_at: last, kind: "trial".into(), code: None });
+        }
+    }
+    Ok(LicenseSummary { trial_until, trial_active, trial_max_devices: TRIAL_MAX_DEVICES, codes, devices })
 }
 
 #[derive(Debug, Clone, Serialize)]

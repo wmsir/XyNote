@@ -711,8 +711,14 @@ pub fn license_logout(db: State<'_, Database>) -> Result<crate::license::License
 }
 
 #[tauri::command]
-pub async fn license_create_order(app: AppHandle) -> Result<serde_json::Value, String> {
-    license_blocking(app, crate::license::create_order).await
+pub async fn license_create_order(app: AppHandle, product: Option<String>) -> Result<serde_json::Value, String> {
+    let product = product.unwrap_or_else(|| "lifetime".into());
+    license_blocking(app, move |db| crate::license::create_order(db, &product)).await
+}
+
+#[tauri::command]
+pub async fn feedback_submit(app: AppHandle, category: String, content: String, contact: String) -> Result<(), String> {
+    license_blocking(app, move |db| crate::license::submit_feedback(db, &category, &content, &contact)).await
 }
 
 fn require_pro(db: &Database) -> Result<(), String> {

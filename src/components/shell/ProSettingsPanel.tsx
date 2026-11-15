@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BadgeCheck, Clock, LogOut, MonitorSmartphone } from "lucide-react";
+import { BadgeCheck, Clock, ExternalLink, LogOut, MonitorSmartphone, Plus } from "lucide-react";
 import { openExternalUrl, syncErrorText } from "../../api/sync";
 import {
   activateLicense,
@@ -11,6 +11,7 @@ import {
   PRO_FEATURES,
   PRO_PRICE,
   type LicenseStatus,
+  type ProProduct,
 } from "../../api/pro";
 import { PurchaseDialog } from "./PurchaseDialog";
 
@@ -33,7 +34,7 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
-  const [buying, setBuying] = useState(false);
+  const [buying, setBuying] = useState<ProProduct | null>(null);
 
   useEffect(() => {
     getLicenseStatus().then(setStatus).catch(() => {});
@@ -100,7 +101,7 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
       <div>
         <h3 className="nb-settings-heading">永久版</h3>
         <p className="nb-settings-desc">
-          小悦笔记的编辑、多维表格和各种同步方式都免费使用。永久版 {PRO_PRICE} 一次购买、长期使用；登录 FWPT 通行证即可免费体验一年。
+          小悦笔记的编辑、多维表格和各种同步方式都免费使用。登录 FWPT 通行证即可免费体验一年（1 台电脑）；永久版 {PRO_PRICE} 一次购买，可在 3 台电脑使用，不够还能单独增加。
         </p>
       </div>
 
@@ -130,13 +131,23 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
                 {lifetime && s?.code ? ` · 激活码 ${s.code}` : ""}
                 {lifetime && s?.maxDevices ? `（已用 ${s.devicesUsed ?? 1} / ${s.maxDevices} 台）` : ""}
               </div>
-              {trial && <div className="nb-settings-sub">注册登录赠送一年。到期后购买永久版即可继续使用。</div>}
+              {trial && <div className="nb-settings-sub">注册登录赠送一年，免费账号可在 1 台电脑使用。购买永久版可用 3 台。</div>}
             </div>
           </div>
           <div className="nb-settings-actions-bar">
             {!lifetime && (
-              <button type="button" className="nb-btn-primary" disabled={!s?.configured} onClick={() => setBuying(true)}>
+              <button type="button" className="nb-btn-primary" disabled={!s?.configured} onClick={() => setBuying("lifetime")}>
                 购买永久版 {PRO_PRICE}
+              </button>
+            )}
+            {lifetime && s?.loggedIn && (
+              <button type="button" className="nb-btn-secondary" onClick={() => setBuying("device_slot")}>
+                <Plus size={14} /> 增加 1 台电脑
+              </button>
+            )}
+            {s?.loggedIn && (
+              <button type="button" className="nb-btn-secondary" onClick={() => openExternalUrl(s.userCenterUrl)}>
+                <ExternalLink size={14} /> 管理电脑与订单
               </button>
             )}
             {lifetime && (
@@ -152,6 +163,7 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
             )}
             <span className="nb-settings-sub">本机：{s?.machineName}</span>
           </div>
+          {s?.notice && !s.active && <div className="nb-sync-error">{s.notice}</div>}
           {confirmDeactivate && (
             <div className="nb-settings-sub">停用后本机不能再使用永久版功能，激活码空出一个位置，可以在其他电脑上激活。</div>
           )}
@@ -262,7 +274,7 @@ export function ProSettingsPanel({ onLicenseChanged, onNotify }: ProSettingsPane
         </ul>
       </div>
 
-      {buying && s && <PurchaseDialog status={s} onClose={() => setBuying(false)} onNotify={onNotify} />}
+      {buying && s && <PurchaseDialog status={s} product={buying} onClose={() => setBuying(null)} onNotify={onNotify} />}
     </div>
   );
 }

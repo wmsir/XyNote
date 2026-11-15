@@ -33,36 +33,64 @@ cargo run --release
 | `XYNOTE_CORS_ORIGINS` | 空 | 允许调用接口的网站，逗号分隔，官方填 `https://fwpt.cn` |
 | `XYNOTE_LICENSE_KEY_FILE` | 空 | 永久版签名私钥文件（`tools/license keygen` 生成）；未设置时无法登录激活永久版 |
 | `XYNOTE_PRICE_LIFETIME_CENTS` | `990` | 永久版价格（分） |
+| `XYNOTE_PRICE_DEVICE_SLOT_CENTS` | `300` | 增加 1 台电脑的价格（分） |
 | `XYNOTE_ADMIN_TOKEN` | 空 | 管理接口令牌（至少 16 位），为空时管理接口关闭；命令行 `gen-codes` 不需要 |
 
-## 永久版授权与官网购买（fwpt.cn）
+## 官方部署：小悦笔记服务（fwpt.cn/xynote/）
 
-官方部署时，本服务同时负责小悦笔记永久版的授权：
+官方部署时，本服务就是小悦笔记的后台：授权、订单、意见反馈，并自带两个网页：
 
-- **免费一年**：通行证账号第一次在软件里登录（`POST /api/v1/license/activate`），自动获得一年永久版权限。
-- **购买**：用户在软件或 `fwpt.cn/xynote.html` 下单（永久版 ¥9.9，`XYNOTE_PRICE_LIFETIME_CENTS` 可调），扫码付款后把付款截图和订单信息发到 admin@fwpt.cn。
-- **发码**：管理员在 `fwpt.cn/xynote-admin.html` 核对无误后点「确认到账」，系统生成绑定购买账号的激活码 `XYP-…`（最多 3 台电脑），再点「发送邮件」把激活码发给用户；激活码也显示在用户的「我的订单」。
-- **激活**：软件登录通行证后输入激活码。每次登录 / 激活都会记录机器指纹、名称、系统和版本（`devices` 表），管理页可以看到统计、每个激活码已激活的电脑，并可「清空电脑」或停用激活码。
+| 地址 | 内容 |
+|---|---|
+| `https://fwpt.cn/xynote/` | **用户中心**：授权状态、已绑定的电脑（可解绑）、购买、订单与激活码、意见反馈与回复 |
+| `https://fwpt.cn/xynote/admin/` | **管理后台**：概览统计、订单确认、激活码、用户、意见反馈（通行证角色为 ADMIN，或输入 `XYNOTE_ADMIN_TOKEN`） |
+
+fwpt.cn 首页（index 项目）只负责介绍和跳转。用户在 fwpt.cn 已登录时，用户中心会直接沿用通行证登录状态。
+
+### 授权规则
+
+- **免费一年，1 台电脑**：通行证账号第一次在软件里登录，自动获得一年永久版权限，只能绑定 1 台电脑；换电脑时在旧电脑「停用本机授权」或在用户中心解绑。
+- **永久版 ¥9.9，3 台电脑**：激活码 `XYP-…` 第一次激活时绑定通行证账号。
+- **增加电脑 ¥3 / 台**：3 台不够用时在用户中心或软件里单独购买，确认后给账号名下的激活码 +1 台。
+- 每次登录 / 激活都会记录机器指纹、名称、系统、版本，管理后台可以看到。
 - 授权令牌用 `XYNOTE_LICENSE_KEY_FILE` 的私钥签名（绑定机器，免费期带到期时间），软件内置对应公钥离线校验。
 
-官方部署示例（服务放在 `sync.fwpt.cn`，通行证后端在本机 8088）：
+### 购买流程
+
+用户在用户中心或软件里下单 → 扫码付款并备注付款码 → 把付款截图和订单信息发到 admin@fwpt.cn → 管理员在管理后台核对后点「确认到账」：永久版生成激活码并「发送邮件」给用户；增加电脑直接给激活码 +1 台。
+
+### 部署
 
 ```bash
-docker run -d --name xynote-sync -p 127.0.0.1:8787:8787 \
+docker run -d --name xynote -p 127.0.0.1:8787:8787 \
   -v xynote-data:/data -v /etc/xynote/license.key:/keys/license.key:ro \
   -e XYNOTE_ONEID_BASE=http://host.docker.internal:8088 --add-host=host.docker.internal:host-gateway \
-  -e XYNOTE_CORS_ORIGINS=https://fwpt.cn \
   -e XYNOTE_LICENSE_KEY_FILE=/keys/license.key \
   xynote-sync-server
 ```
 
+Nginx（fwpt.cn 的 server 块里加一段，`/xynote/` 末尾的斜杠不能少）：
+
+```nginx
+location = /xynote { return 301 /xynote/; }
+location /xynote/ {
+    proxy_pass http://127.0.0.1:8787/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    client_max_body_size 64m;
+}
+```
+
+客户端默认连接 `https://fwpt.cn/xynote`（授权、订单、反馈），登录直接使用 fwpt.cn 首页同一个通行证接口 `https://fwpt.cn/api/v1/auth/login`。构建时可用 `XYNOTE_OFFICIAL_SYNC_URL`、`XYNOTE_ONEID_URL` 覆盖。
+
 手动生成激活码（赠送、活动）：
 
 ```bash
-docker exec xynote-sync xynote-sync-server gen-license-codes --count 10 --note "活动赠送"
+docker exec xynote xynote-sync-server gen-license-codes --count 10 --note "活动赠送"
 ```
 
-接口：`POST /api/v1/license/activate`（`{machineId, machineName, os, appVersion, code?}`）、`POST /api/v1/license/deactivate`、`GET /api/v1/store/products`、`GET|POST /api/v1/store/orders`、`POST /api/v1/store/orders/{id}/cancel`；管理：`GET /api/v1/admin/stats`、`GET /api/v1/admin/orders`、`POST /api/v1/admin/orders/{id}/confirm|reject`、`GET|POST /api/v1/admin/license-codes`、`POST /api/v1/admin/license-codes/{code}/reset|revoke`。
+主要接口：`POST /api/v1/license/activate`、`POST /api/v1/license/deactivate`、`GET /api/v1/me`、`POST /api/v1/me/devices/{machineId}/unbind`、`GET|POST /api/v1/store/orders`、`POST /api/v1/feedback`、`GET /api/v1/feedback/mine`；管理：`GET /api/v1/admin/stats`、`/api/v1/admin/orders`、`/api/v1/admin/license-codes`、`/api/v1/admin/users`、`/api/v1/admin/feedback`。
 
 ## 同步订阅激活码（自建服务器）
 

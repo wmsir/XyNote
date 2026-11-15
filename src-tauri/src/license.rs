@@ -167,6 +167,10 @@ pub struct LicenseStatus {
     pub devices_used: Option<i64>,
     pub max_devices: Option<i64>,
     pub trial_until: Option<String>,
+    /// 登录成功但授权服务返回的提示（如免费账号已绑定其他电脑）
+    pub notice: Option<String>,
+    /// 用户中心（购买、管理电脑、查看订单）
+    pub user_center_url: String,
 }
 
 fn status_conn(conn: &Connection) -> LicenseStatus {
@@ -192,6 +196,8 @@ fn status_conn(conn: &Connection) -> LicenseStatus {
         devices_used: num("devicesUsed"),
         max_devices: num("maxDevices"),
         trial_until: text("trialUntil"),
+        notice: text("notice"),
+        user_center_url: crate::sync_config::official_pricing_url().to_string(),
     }
 }
 
@@ -228,11 +234,15 @@ fn call(path: &str, token: Option<&str>, body: Option<Value>) -> Result<Value, C
         Err(ureq::Error::Status(401, _)) => Err(CallError::Unauthorized),
         Err(ureq::Error::Status(code, r)) => {
             let v = parse(r);
-            Err(CallError::Other(
-                v.get("message").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("授权服务返回错误 {}", code)),
-            ))
+            Err(CallError::Other(v.get("message").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| {
+                if matches!(code, 404 | 502 | 503 | 504) {
+                    "小悦笔记服务暂时无法访问，请稍后再试".to_string()
+                } else {
+                    format!("小悦笔记服务返回错误 {}", code)
+                }
+            })))
         }
-        Err(_) => Err(CallError::Other("无法连接授权服务，请检查网络后重试".into())),
+        Err(_) => Err(CallError::Other("无法连接小悦笔记服务，请检查网络后重试".into())),
     }
 }
 
@@ -276,15 +286,52 @@ fn activate_online(db: &Database, token: &str, code: Option<&str>) -> Result<Lic
     }
 }
 
+/// 直接调用 fwpt.cn 的通行证登录接口（与首页、磐石密码本相同），返回令牌和显示名
+fn oneid_login(account: &str, password: &str) -> Result<(String, String), AppError> {
+    let url = format!("{}/api/v1/auth/login", crate::sync_config::oneid_base_url().trim_end_matches('/'));
+    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(20)).build();
+    let body = serde_json::json!({ "username": account, "account": account, "password": password, "source": "XYNOTE" });
+    let res = agent.post(&url).set("Content-Type", "application/json").set("Accept", "application/json").send_string(&body.to_string());
+    let v: Value = match res {
+        Ok(r) => r.into_string().ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null),
+        Err(ureq::Error::Status(_, r)) => r.into_string().ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null),
+        Err(_) => return Err(AppError::Validation("无法连接 FWPT 通行证服务，请检查网络后重试".into())),
+    };
+    let data = v.get("data").filter(|d| d.is_object()).unwrap_or(&v);
+    let token = data
+        .get("token")
+        .or_else(|| data.get("access_token"))
+        .or_else(|| data.get("accessToken"))
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty());
+    let ok = v.get("code").and_then(Value::as_str).map(|c| c == "00000").unwrap_or(true);
+    match token {
+        Some(t) if ok => {
+            let text = |k: &str| data.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+            let display = text("realName").or_else(|| text("nickname")).or_else(|| text("username")).unwrap_or_else(|| account.to_string());
+            Ok((t.to_string(), display))
+        }
+        _ => Err(AppError::Validation(
+            v.get("message")
+                .or_else(|| v.get("msg"))
+                .and_then(Value::as_str)
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or("账号或密码不正确")
+                .to_string(),
+        )),
+    }
+}
+
 /// 用 FWPT 通行证登录；第一次登录会获得一年永久版权限
 pub fn login(db: &Database, account: &str, password: &str) -> Result<LicenseStatus, AppError> {
     if account.trim().is_empty() || password.is_empty() {
         return Err(AppError::Validation("请输入通行证账号和密码".into()));
     }
-    let res = crate::sync_remote::server_auth(crate::sync_config::official_server_url(), "login", account, password)?;
-    set(db, S_ACCOUNT_TOKEN, &res.token)?;
-    set(db, K_ACCOUNT, &res.account.email)?;
-    match activate_online(db, &res.token, None) {
+    let (token, display) = oneid_login(account.trim(), password)?;
+    set(db, S_ACCOUNT_TOKEN, &token)?;
+    set(db, K_ACCOUNT, &display)?;
+    let res_token = token;
+    match activate_online(db, &res_token, None) {
         Ok(s) => Ok(s),
         // 免费期已结束等情况：登录本身成功，提示交给界面
         Err(AppError::Validation(m)) if !m.contains("登录已过期") => {
@@ -349,14 +396,38 @@ pub fn logout(db: &Database) -> Result<LicenseStatus, AppError> {
 }
 
 /// 在软件里创建购买订单（显示付款码和订单信息）
-pub fn create_order(db: &Database) -> Result<Value, AppError> {
+pub fn create_order(db: &Database, product: &str) -> Result<Value, AppError> {
     let token = account_token(db)?.ok_or_else(|| AppError::Validation("请先登录 FWPT 通行证".into()))?;
-    match call("/api/v1/store/orders", Some(&token), Some(serde_json::json!({ "product": "lifetime" }))) {
+    let product = if product == "device_slot" { "device_slot" } else { "lifetime" };
+    match call("/api/v1/store/orders", Some(&token), Some(serde_json::json!({ "product": product }))) {
         Ok(v) => Ok(v),
         Err(CallError::Unauthorized) => {
             db.delete_setting(S_ACCOUNT_TOKEN)?;
             Err(AppError::Validation("登录已过期，请重新登录通行证".into()))
         }
+        Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+    }
+}
+
+/// 意见反馈：登录时关联通行证账号，未登录也可以提交
+pub fn submit_feedback(db: &Database, category: &str, content: &str, contact: &str) -> Result<(), AppError> {
+    let token = account_token(db)?;
+    let body = serde_json::json!({
+        "category": category,
+        "content": content,
+        "contact": contact,
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "os": format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+        "source": "app",
+    });
+    match call("/api/v1/feedback", token.as_deref(), Some(body.clone())) {
+        Ok(_) => Ok(()),
+        // 令牌过期时匿名提交
+        Err(CallError::Unauthorized) => match call("/api/v1/feedback", None, Some(body)) {
+            Ok(_) => Ok(()),
+            Err(CallError::Unauthorized) => Err(AppError::Validation("提交失败，请稍后重试".into())),
+            Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+        },
         Err(CallError::Other(m)) => Err(AppError::Validation(m)),
     }
 }

@@ -10,11 +10,17 @@ use serde::{Deserialize, Serialize};
 pub const SECRET_PREFIX: &str = "sync.secret.";
 
 /// 官方同步服务地址与订阅页面，可在构建时用环境变量覆盖
+/// 小悦笔记服务（授权、订单、反馈、用户中心），部署在 fwpt.cn 的 /xynote/ 下
 pub fn official_server_url() -> &'static str {
-    option_env!("XYNOTE_OFFICIAL_SYNC_URL").unwrap_or("https://sync.fwpt.cn")
+    option_env!("XYNOTE_OFFICIAL_SYNC_URL").filter(|v| !v.trim().is_empty()).unwrap_or("https://fwpt.cn/xynote")
 }
+/// 用户中心（购买、电脑管理、订单）
 pub fn official_pricing_url() -> &'static str {
-    option_env!("XYNOTE_PRICING_URL").unwrap_or("https://fwpt.cn/xynote.html")
+    option_env!("XYNOTE_PRICING_URL").filter(|v| !v.trim().is_empty()).unwrap_or("https://fwpt.cn/xynote/")
+}
+/// FWPT 统一通行证（与 fwpt.cn 首页使用同一个登录接口）
+pub fn oneid_base_url() -> &'static str {
+    option_env!("XYNOTE_ONEID_URL").filter(|v| !v.trim().is_empty()).unwrap_or("https://fwpt.cn")
 }
 
 const K_MODE: &str = "sync.mode";

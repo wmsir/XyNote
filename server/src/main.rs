@@ -16,6 +16,7 @@ mod app;
 mod oneid;
 mod store;
 mod licensing;
+mod feedback;
 #[path = "../../src-tauri/src/license_format.rs"]
 #[allow(dead_code)]
 mod license_format;
