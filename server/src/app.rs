@@ -81,6 +81,16 @@ impl OpenState for AppState {
                  size INTEGER NOT NULL,
                  updated_at TEXT NOT NULL,
                  PRIMARY KEY (user_id, key)
+             );
+             CREATE TABLE IF NOT EXISTS activation_codes (
+                 code_hash TEXT PRIMARY KEY,
+                 plan TEXT NOT NULL,
+                 days INTEGER NOT NULL,
+                 quota_mb INTEGER NULL,
+                 note TEXT NOT NULL DEFAULT '',
+                 created_at TEXT NOT NULL,
+                 redeemed_by INTEGER NULL REFERENCES users(id),
+                 redeemed_at TEXT NULL
              );",
         )
         .map_err(|e| e.to_string())?;
@@ -96,7 +106,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/account", get(account))
         .route("/api/v1/files", get(list_files))
         .route("/api/v1/files/*key", get(read_file).put(write_file).delete(delete_file))
+        .route("/api/v1/redeem", post(redeem))
         .route("/api/v1/admin/users/plan", post(admin_set_plan))
+        .route("/api/v1/admin/codes", post(admin_create_codes))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .with_state(state)
 }
@@ -415,7 +427,150 @@ async fn delete_file(State(state): State<AppState>, headers: HeaderMap, Path(key
     StatusCode::NO_CONTENT.into_response()
 }
 
+/* ---------------- 激活码 ---------------- */
+
+/// 去掉易混淆字符（0/O、1/I/L）后的 31 个字符
+const CODE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/// 生成形如 XYN-7K2M-Q9TP-4HXW-RC3D 的激活码（约 78 位随机）
+pub fn new_code() -> String {
+    let mut rng = rand::thread_rng();
+    let groups: Vec<String> = (0..4)
+        .map(|_| (0..4).map(|_| CODE_ALPHABET[(rng.next_u32() as usize) % CODE_ALPHABET.len()] as char).collect())
+        .collect();
+    format!("XYN-{}", groups.join("-"))
+}
+
+/// 兑换时忽略大小写、空格和横线
+fn code_hash(code: &str) -> String {
+    let norm: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect();
+    let norm = norm.strip_prefix("XYN").unwrap_or(&norm).to_string();
+    sha256_hex(&norm)
+}
+
+/// 生成一批激活码并写入数据库，返回明文（只在此时可见）
+pub fn create_codes(conn: &Connection, plan: &str, days: u32, quota_mb: Option<u64>, count: u32, note: &str) -> Result<Vec<String>, String> {
+    if plan.trim().is_empty() || plan == "free" {
+        return Err("plan 不能为空或 free".into());
+    }
+    if days == 0 || count == 0 || count > 10_000 {
+        return Err("days 需大于 0，count 需在 1~10000 之间".into());
+    }
+    let mut out = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let code = new_code();
+        conn.execute(
+            "INSERT INTO activation_codes (code_hash, plan, days, quota_mb, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![code_hash(&code), plan, days, quota_mb.map(|m| m as i64), note, now()],
+        )
+        .map_err(|e| e.to_string())?;
+        out.push(code);
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+struct RedeemInput {
+    code: String,
+}
+
+/// 兑换激活码：在当前有效期（未过期时）之后顺延天数；空间取两者较大值
+async fn redeem(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<RedeemInput>) -> Response {
+    let user = match authed(&state, &headers) {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let mut conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let tx = match conn.transaction() {
+        Ok(t) => t,
+        Err(e) => return internal(e),
+    };
+    let row: Option<(String, i64, Option<i64>, Option<i64>)> = tx
+        .query_row(
+            "SELECT plan, days, quota_mb, redeemed_by FROM activation_codes WHERE code_hash = ?1",
+            params![code_hash(&input.code)],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .unwrap_or(None);
+    let Some((plan, days, quota_mb, redeemed_by)) = row else {
+        return err(StatusCode::NOT_FOUND, "激活码不存在，请检查是否输入正确");
+    };
+    if redeemed_by.is_some() {
+        return err(StatusCode::CONFLICT, "该激活码已被使用");
+    }
+    let base = if subscription_active(&user) {
+        user.plan_expires_at
+            .as_deref()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .unwrap_or_else(chrono::Utc::now)
+    } else {
+        chrono::Utc::now()
+    };
+    let expires = (base + chrono::Duration::days(days)).to_rfc3339();
+    let quota = quota_mb.map(|m| (m as u64 * 1024 * 1024).max(user.quota_bytes)).unwrap_or(user.quota_bytes);
+    let ok = tx
+        .execute(
+            "UPDATE activation_codes SET redeemed_by = ?1, redeemed_at = ?2 WHERE code_hash = ?3 AND redeemed_by IS NULL",
+            params![user.id, now(), code_hash(&input.code)],
+        )
+        .and_then(|_| {
+            tx.execute(
+                "UPDATE users SET plan = ?1, plan_expires_at = ?2, quota_bytes = ?3 WHERE id = ?4",
+                params![plan, expires, quota as i64, user.id],
+            )
+        })
+        .and_then(|_| tx.commit());
+    if let Err(e) = ok {
+        return internal(e);
+    }
+    let Some((user, _)) = load_user(&conn, "id = ?1", &user.id) else { return internal("user missing") };
+    Json(account_json(&state, &conn, &user)).into_response()
+}
+
 /* ---------------- 管理（开通 / 续费套餐） ---------------- */
+
+fn admin_ok(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    let Some(admin) = state.config.admin_token.as_ref() else {
+        return Err(err(StatusCode::NOT_FOUND, "管理接口未启用"));
+    };
+    let given = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
+    if given.map(|g| sha256_hex(g) != sha256_hex(admin)).unwrap_or(true) {
+        return Err(err(StatusCode::UNAUTHORIZED, "管理令牌不正确"));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodesInput {
+    plan: String,
+    days: u32,
+    quota_mb: Option<u64>,
+    count: u32,
+    #[serde(default)]
+    note: String,
+}
+
+/// 批量生成激活码（官网发货 / 卡密平台导入用）
+async fn admin_create_codes(State(state): State<AppState>, headers: HeaderMap, Json(c): Json<CodesInput>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers) {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match create_codes(&conn, &c.plan, c.days, c.quota_mb, c.count, &c.note) {
+        Ok(codes) => Json(json!({ "codes": codes })).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -428,12 +583,8 @@ struct PlanInput {
 
 /// 由支付系统的回调（或运维脚本）调用：`Authorization: Bearer <XYNOTE_ADMIN_TOKEN>`
 async fn admin_set_plan(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PlanInput>) -> Response {
-    let Some(admin) = state.config.admin_token.as_ref() else {
-        return err(StatusCode::NOT_FOUND, "管理接口未启用");
-    };
-    let given = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
-    if given.map(|g| sha256_hex(g) != sha256_hex(admin)).unwrap_or(true) {
-        return err(StatusCode::UNAUTHORIZED, "管理令牌不正确");
+    if let Err(r) = admin_ok(&state, &headers) {
+        return r;
     }
     if let Some(t) = &p.expires_at {
         if chrono::DateTime::parse_from_rfc3339(t).is_err() {
@@ -536,6 +687,43 @@ mod tests {
         assert_eq!(s, StatusCode::OK);
         let (s, _) = call(&app, "POST", "/api/v1/auth/login", None, json!({"email": "a@example.com", "password": "wrong-pass"}).to_string().into_bytes(), true).await;
         assert_eq!(s, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn activation_codes_extend_subscription_once() {
+        let state = test_state(true);
+        let codes = create_codes(&state.conn.lock().unwrap(), "pro", 30, Some(10), 2, "测试").unwrap();
+        assert!(codes[0].starts_with("XYN-") && codes[0].len() == 23);
+        let app = router(state);
+        let t = register_user(&app, "code@example.com").await;
+        let (s, _) = call(&app, "POST", "/api/v1/redeem", Some(&t), json!({"code": "XYN-0000-0000-0000-0000"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+
+        // 大小写、空格不敏感
+        let messy = codes[0].to_lowercase().replace('-', " ");
+        let (s, b) = call(&app, "POST", "/api/v1/redeem", Some(&t), json!({"code": messy}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["subscriptionActive"], true);
+        assert_eq!(v["quotaBytes"], 10 * 1024 * 1024);
+        let first = chrono::DateTime::parse_from_rfc3339(v["planExpiresAt"].as_str().unwrap()).unwrap();
+
+        let (s, _) = call(&app, "POST", "/api/v1/redeem", Some(&t), json!({"code": codes[0]}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::CONFLICT, "同一激活码只能用一次");
+
+        // 第二张顺延 30 天
+        let (_, b) = call(&app, "POST", "/api/v1/redeem", Some(&t), json!({"code": codes[1]}).to_string().into_bytes(), true).await;
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        let second = chrono::DateTime::parse_from_rfc3339(v["planExpiresAt"].as_str().unwrap()).unwrap();
+        assert_eq!((second - first).num_days(), 30);
+
+        let (s, _) = call(&app, "PUT", "/api/v1/files/a.json", Some(&t), b"x".to_vec(), false).await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+
+        // 管理接口批量生成
+        let (s, b) = call(&app, "POST", "/api/v1/admin/codes", Some("admin-token-0123456789"), json!({"plan": "pro", "days": 365, "count": 3}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["codes"].as_array().unwrap().len(), 3);
     }
 
     #[tokio::test]

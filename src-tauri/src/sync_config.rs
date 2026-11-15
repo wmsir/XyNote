@@ -11,10 +11,10 @@ pub const SECRET_PREFIX: &str = "sync.secret.";
 
 /// 官方同步服务地址与订阅页面，可在构建时用环境变量覆盖
 pub fn official_server_url() -> &'static str {
-    option_env!("XYNOTE_OFFICIAL_SYNC_URL").unwrap_or("https://sync.xynote.app")
+    option_env!("XYNOTE_OFFICIAL_SYNC_URL").unwrap_or("https://sync.fwpt.cn")
 }
 pub fn official_pricing_url() -> &'static str {
-    option_env!("XYNOTE_PRICING_URL").unwrap_or("https://xynote.app/pricing")
+    option_env!("XYNOTE_PRICING_URL").unwrap_or("https://fwpt.cn")
 }
 
 const K_MODE: &str = "sync.mode";
@@ -240,6 +240,21 @@ pub fn account(db: &Database, official: bool) -> Result<AccountInfo, AppError> {
         (get(db, K_SERVER_URL)?, get(db, S_SERVER_TOKEN)?)
     };
     ServerRemote::new(&url, &token)?.account()
+}
+
+pub fn redeem(db: &Database, official: bool, code: &str) -> Result<AccountInfo, AppError> {
+    if code.trim().is_empty() {
+        return Err(AppError::Validation("请输入激活码".into()));
+    }
+    let (url, token) = if official {
+        (official_server_url().to_string(), get(db, S_OFFICIAL_TOKEN)?)
+    } else {
+        (get(db, K_SERVER_URL)?, get(db, S_SERVER_TOKEN)?)
+    };
+    if token.is_empty() {
+        return Err(AppError::Validation("请先登录".into()));
+    }
+    ServerRemote::new(&url, &token)?.redeem(code)
 }
 
 fn device_name() -> String {

@@ -497,6 +497,17 @@ pub async fn sync_account(app: AppHandle, official: bool) -> Result<crate::sync_
 }
 
 #[tauri::command]
+pub async fn sync_redeem(app: AppHandle, official: bool, code: String) -> Result<crate::sync_remote::AccountInfo, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::sync_config::redeem(&db, official, &code).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn sync_logout(db: State<'_, Database>, official: bool) -> Result<(), String> {
     crate::sync_config::logout(&db, official).map_err(Into::into)
 }
