@@ -1,3 +1,4 @@
 # 永久版授权公钥（十六进制，64 个字符）。
 # 用 tools/license 的 `xynote-license keygen` 生成，把输出的公钥填在下面一行。
 # 公钥可以公开提交；私钥务必自己保管，不要提交。
+f307088a57cf90e798c70e85fce0f08037deff429dcab1be4cc7467abf8109a3

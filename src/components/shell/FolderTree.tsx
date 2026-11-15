@@ -35,6 +35,8 @@ export interface FolderTreeProps {
   folders: WorkspaceFolder[];
   activeFilePath: string | null;
   isTauri: boolean;
+  /** 嵌在「工作区」里：没有文件夹时不显示占位 */
+  embedded?: boolean;
   onAddFolder: () => void;
   onRemoveFolder: (path: string) => void;
   onOpenFile: (path: string) => void;
@@ -108,6 +110,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   folders,
   activeFilePath,
   isTauri,
+  embedded,
   onAddFolder,
   onRemoveFolder,
   onOpenFile,
@@ -550,6 +553,8 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
       </div>
     );
   };
+
+  if (embedded && (!isTauri || folders.length === 0)) return null;
 
   if (!isTauri) {
     return (

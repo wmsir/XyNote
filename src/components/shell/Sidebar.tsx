@@ -65,6 +65,11 @@ export interface SidebarProps {
   notify: (message: string, durationMs?: number) => void;
 }
 
+const SIDEBAR_WIDTH_KEY = "xynote.sidebarWidth";
+const SIDEBAR_DEFAULT = 256;
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 480;
+
 const DEFAULT_DOC_ICONS = new Set(["", "📄"]);
 const DEFAULT_DB_ICONS = new Set(["", "📄", "🗃️"]);
 
@@ -140,7 +145,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [favOpen, setFavOpen] = useState(true);
   const [wsOpen, setWsOpen] = useState(true);
   const [localMdOpen, setLocalMdOpen] = useState(true);
-  const [foldersOpen, setFoldersOpen] = useState(true);
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+      return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : SIDEBAR_DEFAULT;
+    } catch {
+      return SIDEBAR_DEFAULT;
+    }
+  });
+  const [resizing, setResizing] = useState(false);
+
+  const applyWidth = (w: number, persist: boolean) => {
+    const next = Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w)));
+    setWidth(next);
+    if (persist) {
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+      } catch {
+        // 忽略
+      }
+    }
+  };
+
+  /** 拖动右边缘调整侧栏宽度 */
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const left = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+    let latest = width;
+    setResizing(true);
+    const onMove = (ev: PointerEvent) => {
+      latest = ev.clientX - left;
+      applyWidth(latest, false);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      setResizing(false);
+      applyWidth(latest, true);
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
   const [menuState, setMenuState] = useState<{
     page: Page;
     top: number;
@@ -311,7 +358,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       ref={sidebarRef}
-      className={`nb-sidebar${collapsed ? " is-collapsed" : ""}`}
+      className={`nb-sidebar${collapsed ? " is-collapsed" : ""}${resizing ? " is-resizing" : ""}`}
+      style={collapsed ? undefined : { width, minWidth: width, maxWidth: width }}
     >
       {/* Workspace Brand Header */}
       <div className="nb-sidebar-workspace">
@@ -442,8 +490,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
+        {/* 工作区：页面、数据库和打开的磁盘文件夹都在这里 */}
         <div className="nb-sidebar-section nb-ws-section">
-          <div className="nb-sidebar-section-header">
+          <div className="nb-sidebar-section-header nb-ws-header">
             <button
               type="button"
               className="nb-sidebar-section-toggle"
@@ -455,155 +504,148 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 strokeWidth={1.6}
                 className={`nb-section-chevron${wsOpen ? " is-expanded" : ""}`}
               />
-              <span>工作区页面</span>
+              <span>工作区</span>
             </button>
 
-            <div className="nb-section-actions">
+            <div className="nb-section-actions nb-ws-actions">
               <button
                 type="button"
-                className="nb-section-action-btn nb-ws-db-btn"
-                title="新建多维数据库"
-                aria-label="新建多维数据库"
-                onClick={() => onCreateDatabase(null)}
-              >
-                <Database size={16} strokeWidth={1.6} />
-              </button>
-              <button
-                type="button"
-                className="nb-section-action-btn"
+                className="nb-section-action-btn is-lg"
                 title="新建页面 (Ctrl+N)"
                 aria-label="新建页面"
                 onClick={() => onCreateDoc(null)}
               >
-                <Plus size={16} strokeWidth={1.6} />
+                <Plus size={19} strokeWidth={1.7} />
               </button>
-            </div>
-          </div>
-
-          {wsOpen &&
-            (rootPages.length === 0 ? (
-              <div className="nb-tree-empty">
-                点击右上角 + 创建第一篇笔记
-              </div>
-            ) : (
-              rootPages.map((page) => renderTreeNode(page, 0))
-            ))}
-        </div>
-
-        {/* 磁盘文件夹：可挂载多个，树形浏览，点击笔记直接编辑磁盘文件 */}
-        <div className="nb-sidebar-section nb-folders-section">
-          <div className="nb-sidebar-section-header">
-            <button
-              type="button"
-              className="nb-sidebar-section-toggle"
-              onClick={() => setFoldersOpen((v) => !v)}
-              aria-expanded={foldersOpen}
-            >
-              <ChevronRight
-                size={16}
-                strokeWidth={1.6}
-                className={`nb-section-chevron${foldersOpen ? " is-expanded" : ""}`}
-              />
-              <span>文件夹</span>
-            </button>
-            <div className="nb-section-actions nb-folder-section-actions">
               <button
                 type="button"
-                className="nb-section-action-btn"
-                title="新建单个 .md 文件"
-                aria-label="新建单个 .md 文件"
+                className="nb-section-action-btn is-lg nb-ws-db-btn"
+                title="新建多维数据库"
+                aria-label="新建多维数据库"
+                onClick={() => onCreateDatabase(null)}
+              >
+                <Database size={18} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                className="nb-section-action-btn is-lg"
+                title="新建 .md 文件"
+                aria-label="新建 .md 文件"
                 onClick={onCreateLocalMdFile}
               >
-                <FilePlus2 size={16} strokeWidth={1.6} />
-              </button>
-              <button
-                type="button"
-                className="nb-section-action-btn"
-                title="打开单个 .md 文件 (Ctrl+O)"
-                aria-label="打开单个 .md 文件"
-                onClick={onOpenLocalMdDialog}
-              >
-                <FileCode2 size={16} strokeWidth={1.6} />
+                <FilePlus2 size={18} strokeWidth={1.7} />
               </button>
               {isTauri && (
                 <button
                   type="button"
-                  className="nb-section-action-btn"
+                  className="nb-section-action-btn is-lg"
                   title="打开文件夹"
                   aria-label="打开文件夹"
                   onClick={onAddWorkspaceFolder}
                 >
-                  <FolderPlus size={16} strokeWidth={1.6} />
+                  <FolderPlus size={18} strokeWidth={1.7} />
                 </button>
               )}
             </div>
           </div>
-          {foldersOpen && (
-            <FolderTree
-              folders={workspaceFolders}
-              activeFilePath={activeLocalMdPath}
-              isTauri={isTauri}
-              onAddFolder={onAddWorkspaceFolder}
-              onRemoveFolder={onRemoveWorkspaceFolder}
-              onOpenFile={onSelectLocalMdFile}
-              onEntryRenamed={onFolderEntryRenamed}
-              onBeforeRename={onBeforeFolderRename}
-              onEntryRemoved={onFolderEntryRemoved}
-              notify={notify}
-            />
-          )}
 
-          {/* 最近打开的单个文件（原「本地 .md 直编」），与文件夹放在一起 */}
-          {foldersOpen && hasLocalMdFiles && (
-            <div className="nb-recent-files">
-              <button
-                type="button"
-                className="nb-recent-toggle"
-                onClick={() => setLocalMdOpen((v) => !v)}
-                aria-expanded={localMdOpen}
-              >
-                <ChevronRight
-                  size={14}
-                  strokeWidth={1.8}
-                  className={`nb-section-chevron${localMdOpen ? " is-expanded" : ""}`}
+          {wsOpen && (
+            <>
+              {rootPages.map((page) => renderTreeNode(page, 0))}
+
+              {workspaceFolders.length > 0 && (
+                <FolderTree
+                  folders={workspaceFolders}
+                  activeFilePath={activeLocalMdPath}
+                  isTauri={isTauri}
+                  embedded
+                  onAddFolder={onAddWorkspaceFolder}
+                  onRemoveFolder={onRemoveWorkspaceFolder}
+                  onOpenFile={onSelectLocalMdFile}
+                  onEntryRenamed={onFolderEntryRenamed}
+                  onBeforeRename={onBeforeFolderRename}
+                  onEntryRemoved={onFolderEntryRemoved}
+                  notify={notify}
                 />
-                <span>最近打开</span>
-              </button>
-              {localMdOpen &&
-                recentLocalMdFiles.slice(0, 8).map((item) => {
-                  const isCurrent = activeLocalMdPath === item.filePath;
-                  return (
-                    <div
-                      key={item.filePath}
-                      className={`nb-tree-row${isCurrent ? " is-active" : ""}`}
-                      style={{ paddingLeft: "8px" }}
-                      onClick={() => onSelectLocalMdFile(item.filePath)}
-                      title={item.filePath}
+              )}
+
+              {rootPages.length === 0 && workspaceFolders.length === 0 && !hasLocalMdFiles && (
+                <div className="nb-tree-empty">
+                  点上方的 + 新建页面{isTauri ? "，或打开一个放笔记的文件夹" : ""}
+                </div>
+              )}
+
+              {/* 最近打开的单个 .md 文件 */}
+              {hasLocalMdFiles && (
+                <div className="nb-recent-files">
+                  <button
+                    type="button"
+                    className="nb-recent-toggle"
+                    onClick={() => setLocalMdOpen((v) => !v)}
+                    aria-expanded={localMdOpen}
+                  >
+                    <ChevronRight
+                      size={14}
+                      strokeWidth={1.8}
+                      className={`nb-section-chevron${localMdOpen ? " is-expanded" : ""}`}
+                    />
+                    <span>最近打开的文件</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="nb-recent-open"
+                      title="打开 .md 文件 (Ctrl+O)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenLocalMdDialog();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          onOpenLocalMdDialog();
+                        }
+                      }}
                     >
-                      <div className="nb-tree-leading">
-                        <span className="nb-tree-glyph">
-                          <FileCode2 size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />
-                        </span>
-                      </div>
-                      <span className="nb-tree-title">{item.fileName || item.title}</span>
-                      <div className="nb-tree-actions">
-                        <button
-                          type="button"
-                          className="nb-tree-action-btn"
-                          title="从最近列表移除"
-                          aria-label="从最近列表移除"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRemoveRecentLocalMdFile(item.filePath);
-                          }}
+                      打开…
+                    </span>
+                  </button>
+                  {localMdOpen &&
+                    recentLocalMdFiles.slice(0, 8).map((item) => {
+                      const isCurrent = activeLocalMdPath === item.filePath;
+                      return (
+                        <div
+                          key={item.filePath}
+                          className={`nb-tree-row${isCurrent ? " is-active" : ""}`}
+                          style={{ paddingLeft: "8px" }}
+                          onClick={() => onSelectLocalMdFile(item.filePath)}
+                          title={item.filePath}
                         >
-                          <X size={16} strokeWidth={1.6} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
+                          <div className="nb-tree-leading">
+                            <span className="nb-tree-glyph">
+                              <FileCode2 size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />
+                            </span>
+                          </div>
+                          <span className="nb-tree-title">{item.fileName || item.title}</span>
+                          <div className="nb-tree-actions">
+                            <button
+                              type="button"
+                              className="nb-tree-action-btn"
+                              title="从最近列表移除"
+                              aria-label="从最近列表移除"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRemoveRecentLocalMdFile(item.filePath);
+                              }}
+                            >
+                              <X size={16} strokeWidth={1.6} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -733,6 +775,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
           </button>
         </div>
+      )}
+      {!collapsed && (
+        <div
+          className="nb-sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          aria-valuemin={SIDEBAR_MIN}
+          aria-valuemax={SIDEBAR_MAX}
+          aria-valuenow={width}
+          tabIndex={0}
+          title="拖动调整宽度，双击恢复默认"
+          onPointerDown={startResize}
+          onDoubleClick={() => applyWidth(SIDEBAR_DEFAULT, true)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") applyWidth(width - 16, true);
+            if (e.key === "ArrowRight") applyWidth(width + 16, true);
+          }}
+        />
       )}
     </aside>
   );
