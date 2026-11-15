@@ -11,8 +11,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -22,10 +24,21 @@ pub struct Config {
     pub require_subscription: bool,
     pub default_quota_bytes: u64,
     pub admin_token: Option<String>,
+    /// FWPT 通行证后端（官方部署），例如 http://127.0.0.1:8088；为空时使用本服务自己的账号
+    pub oneid_base: Option<String>,
+    /// 允许跨域调用的网站，例如 https://fwpt.cn
+    pub cors_origins: Vec<String>,
+    /// 永久版签名私钥文件（tools/license keygen 生成）
+    pub license_key_file: Option<PathBuf>,
+    pub price_sync_year_cents: i64,
+    pub price_lifetime_cents: i64,
+    /// 购买云同步后的空间（至少）
+    pub sync_quota_bytes: u64,
 }
 
 impl Config {
     pub fn from_env() -> Self {
+        let num = |k: &str, d: i64| std::env::var(k).ok().and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(d);
         let flag = |k: &str, d: bool| std::env::var(k).map(|v| matches!(v.as_str(), "1" | "true" | "yes")).unwrap_or(d);
         Self {
             bind: std::env::var("XYNOTE_BIND").unwrap_or_else(|_| "0.0.0.0:8787".into()),
@@ -39,6 +52,17 @@ impl Config {
                 * 1024
                 * 1024,
             admin_token: std::env::var("XYNOTE_ADMIN_TOKEN").ok().filter(|t| t.len() >= 16),
+            oneid_base: std::env::var("XYNOTE_ONEID_BASE").ok().map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()),
+            cors_origins: std::env::var("XYNOTE_CORS_ORIGINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            license_key_file: std::env::var("XYNOTE_LICENSE_KEY_FILE").ok().filter(|v| !v.trim().is_empty()).map(PathBuf::from),
+            price_sync_year_cents: num("XYNOTE_PRICE_SYNC_YEAR_CENTS", 990),
+            price_lifetime_cents: num("XYNOTE_PRICE_LIFETIME_CENTS", 9900),
+            sync_quota_bytes: num("XYNOTE_SYNC_QUOTA_MB", 10240) as u64 * 1024 * 1024,
         }
     }
 }
@@ -46,7 +70,12 @@ impl Config {
 pub struct Inner {
     pub config: Config,
     pub conn: Mutex<Connection>,
+    /// 通行证令牌校验结果缓存（令牌哈希 → 过期时间与资料）
+    pub oneid_cache: Mutex<HashMap<String, (Instant, crate::oneid::OneIdUser)>>,
+    pub signing_key: Option<ed25519_dalek::SigningKey>,
 }
+
+const ONEID_CACHE_TTL: Duration = Duration::from_secs(300);
 
 pub type AppState = Arc<Inner>;
 
@@ -94,7 +123,33 @@ impl OpenState for AppState {
              );",
         )
         .map_err(|e| e.to_string())?;
-        Ok(Arc::new(Inner { config, conn: Mutex::new(conn) }))
+        // 旧库升级：通行证账号字段
+        let has_col = |name: &str| -> bool {
+            conn.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = ?1")
+                .and_then(|mut s| s.exists(params![name]))
+                .unwrap_or(false)
+        };
+        for (col, ddl) in [
+            ("oneid_key", "ALTER TABLE users ADD COLUMN oneid_key TEXT NULL"),
+            ("display_name", "ALTER TABLE users ADD COLUMN display_name TEXT NULL"),
+            ("role", "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT ''"),
+        ] {
+            if !has_col(col) {
+                conn.execute_batch(ddl).map_err(|e| e.to_string())?;
+            }
+        }
+        conn.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oneid ON users(oneid_key) WHERE oneid_key IS NOT NULL;")
+            .map_err(|e| e.to_string())?;
+        conn.execute_batch(crate::store::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        let signing_key = match &config.license_key_file {
+            Some(path) => {
+                let raw = std::fs::read_to_string(path).map_err(|e| format!("读取永久版签名私钥失败：{}", e))?;
+                let bytes = crate::license_format::parse_hex32(&raw).ok_or("永久版签名私钥格式不正确")?;
+                Some(ed25519_dalek::SigningKey::from_bytes(&bytes))
+            }
+            None => None,
+        };
+        Ok(Arc::new(Inner { config, conn: Mutex::new(conn), oneid_cache: Mutex::new(HashMap::new()), signing_key }))
     }
 }
 
@@ -107,10 +162,29 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/files", get(list_files))
         .route("/api/v1/files/*key", get(read_file).put(write_file).delete(delete_file))
         .route("/api/v1/redeem", post(redeem))
+        .route("/api/v1/licenses", get(my_licenses))
+        .route("/api/v1/store/products", get(store_products))
+        .route("/api/v1/store/orders", get(my_orders).post(create_order))
+        .route("/api/v1/store/orders/:id/cancel", post(cancel_order))
+        .route("/api/v1/admin/orders", get(admin_list_orders))
+        .route("/api/v1/admin/orders/:id/confirm", post(admin_confirm_order))
+        .route("/api/v1/admin/orders/:id/reject", post(admin_reject_order))
         .route("/api/v1/admin/users/plan", post(admin_set_plan))
         .route("/api/v1/admin/codes", post(admin_create_codes))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .layer(cors_layer(&state.config.cors_origins))
         .with_state(state)
+}
+
+fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
+    use axum::http::{header, HeaderValue, Method};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+    let list: Vec<HeaderValue> = origins.iter().filter_map(|o| HeaderValue::from_str(o).ok()).collect();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(list))
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .max_age(Duration::from_secs(3600))
 }
 
 /* ---------------- 工具 ---------------- */
@@ -154,6 +228,14 @@ struct User {
     plan: String,
     plan_expires_at: Option<String>,
     quota_bytes: u64,
+    display_name: Option<String>,
+    role: String,
+}
+
+impl User {
+    fn display(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.email)
+    }
 }
 
 fn subscription_active(u: &User) -> bool {
@@ -173,7 +255,7 @@ fn used_bytes(conn: &Connection, user_id: i64) -> u64 {
 
 fn account_json(state: &AppState, conn: &Connection, u: &User) -> serde_json::Value {
     json!({
-        "email": u.email,
+        "email": u.display(),
         "plan": u.plan,
         "planExpiresAt": u.plan_expires_at,
         "quotaBytes": u.quota_bytes,
@@ -185,7 +267,10 @@ fn account_json(state: &AppState, conn: &Connection, u: &User) -> serde_json::Va
 
 fn load_user(conn: &Connection, where_sql: &str, arg: &dyn rusqlite::ToSql) -> Option<(User, String)> {
     conn.query_row(
-        &format!("SELECT id, email, plan, plan_expires_at, quota_bytes, password_hash FROM users WHERE {}", where_sql),
+        &format!(
+            "SELECT id, email, plan, plan_expires_at, quota_bytes, password_hash, display_name, role FROM users WHERE {}",
+            where_sql
+        ),
         [arg],
         |r| {
             Ok((
@@ -195,6 +280,8 @@ fn load_user(conn: &Connection, where_sql: &str, arg: &dyn rusqlite::ToSql) -> O
                     plan: r.get(2)?,
                     plan_expires_at: r.get(3)?,
                     quota_bytes: r.get::<_, i64>(4)? as u64,
+                    display_name: r.get(6)?,
+                    role: r.get(7)?,
                 },
                 r.get::<_, String>(5)?,
             ))
@@ -205,23 +292,83 @@ fn load_user(conn: &Connection, where_sql: &str, arg: &dyn rusqlite::ToSql) -> O
     .flatten()
 }
 
-fn authed(state: &AppState, headers: &HeaderMap) -> Result<User, Response> {
-    let token = headers
+fn bearer(headers: &HeaderMap) -> Option<String> {
+    headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "请先登录"))?;
+        .map(str::to_string)
+}
+
+/// 本服务签发的令牌
+fn local_user(state: &AppState, token: &str) -> Result<Option<User>, Response> {
     let conn = state.conn.lock().map_err(internal)?;
     let hash = sha256_hex(token);
     let user_id: Option<i64> = conn
         .query_row("SELECT user_id FROM tokens WHERE token_hash = ?1", params![hash], |r| r.get(0))
         .optional()
         .map_err(internal)?;
-    let user_id = user_id.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "登录已失效，请重新登录"))?;
+    let Some(user_id) = user_id else { return Ok(None) };
     let _ = conn.execute("UPDATE tokens SET last_used_at = ?1 WHERE token_hash = ?2", params![now(), hash]);
-    load_user(&conn, "id = ?1", &user_id).map(|(u, _)| u).ok_or_else(|| err(StatusCode::UNAUTHORIZED, "账号不存在"))
+    Ok(load_user(&conn, "id = ?1", &user_id).map(|(u, _)| u))
+}
+
+/// 通行证用户第一次出现时建档，之后同步昵称和角色
+fn upsert_oneid_user(state: &AppState, o: &crate::oneid::OneIdUser) -> Result<User, Response> {
+    let conn = state.conn.lock().map_err(internal)?;
+    if let Some((u, _)) = load_user(&conn, "oneid_key = ?1", &o.key) {
+        if u.display_name.as_deref() != Some(o.display.as_str()) || u.role != o.role {
+            let _ = conn.execute(
+                "UPDATE users SET display_name = ?1, role = ?2 WHERE id = ?3",
+                params![o.display, o.role, u.id],
+            );
+        }
+        return Ok(User { display_name: Some(o.display.clone()), role: o.role.clone(), ..u });
+    }
+    conn.execute(
+        "INSERT INTO users (email, password_hash, plan, quota_bytes, created_at, oneid_key, display_name, role)
+         VALUES (?1, '!', 'free', ?2, ?3, ?1, ?4, ?5)",
+        params![o.key, state.config.default_quota_bytes as i64, now(), o.display, o.role],
+    )
+    .map_err(internal)?;
+    load_user(&conn, "oneid_key = ?1", &o.key).map(|(u, _)| u).ok_or_else(|| internal("user missing"))
+}
+
+async fn oneid_user(state: &AppState, token: &str) -> Result<Option<crate::oneid::OneIdUser>, Response> {
+    let Some(base) = state.config.oneid_base.clone() else { return Ok(None) };
+    let hash = sha256_hex(token);
+    if let Ok(cache) = state.oneid_cache.lock() {
+        if let Some((exp, u)) = cache.get(&hash) {
+            if *exp > Instant::now() {
+                return Ok(Some(u.clone()));
+            }
+        }
+    }
+    let token = token.to_string();
+    let verified = tokio::task::spawn_blocking(move || crate::oneid::verify(&base, &token))
+        .await
+        .map_err(internal)?
+        .map_err(|m| err(StatusCode::BAD_GATEWAY, &m))?;
+    if let (Some(u), Ok(mut cache)) = (&verified, state.oneid_cache.lock()) {
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        cache.insert(hash, (Instant::now() + ONEID_CACHE_TTL, u.clone()));
+    }
+    Ok(verified)
+}
+
+async fn authed(state: &AppState, headers: &HeaderMap) -> Result<User, Response> {
+    let token = bearer(headers).ok_or_else(|| err(StatusCode::UNAUTHORIZED, "请先登录"))?;
+    if let Some(u) = local_user(state, &token)? {
+        return Ok(u);
+    }
+    match oneid_user(state, &token).await? {
+        Some(o) => upsert_oneid_user(state, &o),
+        None => Err(err(StatusCode::UNAUTHORIZED, "登录已失效，请重新登录")),
+    }
 }
 
 fn issue_token(conn: &Connection, user_id: i64) -> Result<String, Response> {
@@ -245,6 +392,9 @@ struct Credentials {
 }
 
 async fn register(State(state): State<AppState>, Json(c): Json<Credentials>) -> Response {
+    if state.config.oneid_base.is_some() {
+        return err(StatusCode::FORBIDDEN, "请到 fwpt.cn 注册 FWPT 通行证，然后用通行证账号登录");
+    }
     if !state.config.allow_registration {
         return err(StatusCode::FORBIDDEN, "该服务器未开放注册");
     }
@@ -278,6 +428,9 @@ async fn register(State(state): State<AppState>, Json(c): Json<Credentials>) -> 
 }
 
 async fn login(State(state): State<AppState>, Json(c): Json<Credentials>) -> Response {
+    if let Some(base) = state.config.oneid_base.clone() {
+        return login_oneid(state, base, c).await;
+    }
     let email = c.email.trim().to_lowercase();
     let conn = match state.conn.lock() {
         Ok(c) => c,
@@ -298,8 +451,31 @@ async fn login(State(state): State<AppState>, Json(c): Json<Credentials>) -> Res
     }
 }
 
+/// 官方部署：用 FWPT 通行证账号密码登录，返回通行证令牌（软件之后直接用它访问）
+async fn login_oneid(state: AppState, base: String, c: Credentials) -> Response {
+    let account = c.email.trim().to_string();
+    let token = match tokio::task::spawn_blocking(move || crate::oneid::login(&base, &account, &c.password)).await {
+        Ok(Ok(t)) => t,
+        Ok(Err(m)) => return err(StatusCode::UNAUTHORIZED, &m),
+        Err(e) => return internal(e),
+    };
+    let user = match oneid_user(&state, &token).await {
+        Ok(Some(o)) => match upsert_oneid_user(&state, &o) {
+            Ok(u) => u,
+            Err(r) => return r,
+        },
+        Ok(None) => return err(StatusCode::UNAUTHORIZED, "通行证登录失败，请稍后重试"),
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    Json(json!({ "token": token, "account": account_json(&state, &conn, &user) })).into_response()
+}
+
 async fn account(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -327,7 +503,7 @@ struct FileItem {
 }
 
 async fn list_files(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ListQuery>) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -350,7 +526,7 @@ async fn list_files(State(state): State<AppState>, headers: HeaderMap, Query(q):
 }
 
 async fn read_file(State(state): State<AppState>, headers: HeaderMap, Path(key): Path<String>) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -364,7 +540,7 @@ async fn read_file(State(state): State<AppState>, headers: HeaderMap, Path(key):
 }
 
 async fn write_file(State(state): State<AppState>, headers: HeaderMap, Path(key): Path<String>, body: Bytes) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -409,7 +585,7 @@ async fn write_file(State(state): State<AppState>, headers: HeaderMap, Path(key)
 }
 
 async fn delete_file(State(state): State<AppState>, headers: HeaderMap, Path(key): Path<String>) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -476,7 +652,7 @@ struct RedeemInput {
 
 /// 兑换激活码：在当前有效期（未过期时）之后顺延天数；空间取两者较大值
 async fn redeem(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<RedeemInput>) -> Response {
-    let user = match authed(&state, &headers) {
+    let user = match authed(&state, &headers).await {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -534,15 +710,26 @@ async fn redeem(State(state): State<AppState>, headers: HeaderMap, Json(input): 
 
 /* ---------------- 管理（开通 / 续费套餐） ---------------- */
 
-fn admin_ok(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
-    let Some(admin) = state.config.admin_token.as_ref() else {
-        return Err(err(StatusCode::NOT_FOUND, "管理接口未启用"));
+/// 管理权限：管理令牌，或角色为 ADMIN 的通行证账号（网站管理页使用）
+async fn admin_ok(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    let Some(given) = bearer(headers) else {
+        return Err(err(StatusCode::UNAUTHORIZED, "请先登录管理员账号"));
     };
-    let given = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
-    if given.map(|g| sha256_hex(g) != sha256_hex(admin)).unwrap_or(true) {
-        return Err(err(StatusCode::UNAUTHORIZED, "管理令牌不正确"));
+    if let Some(admin) = state.config.admin_token.as_ref() {
+        if sha256_hex(&given) == sha256_hex(admin) {
+            return Ok(());
+        }
     }
-    Ok(())
+    if let Some(o) = oneid_user(state, &given).await? {
+        if o.role == "ADMIN" || o.role == "SUPER_ADMIN" {
+            return Ok(());
+        }
+        return Err(err(StatusCode::FORBIDDEN, "需要管理员权限"));
+    }
+    if state.config.admin_token.is_none() && state.config.oneid_base.is_none() {
+        return Err(err(StatusCode::NOT_FOUND, "管理接口未启用"));
+    }
+    Err(err(StatusCode::UNAUTHORIZED, "管理令牌不正确"))
 }
 
 #[derive(Deserialize)]
@@ -558,7 +745,7 @@ struct CodesInput {
 
 /// 批量生成激活码（官网发货 / 卡密平台导入用）
 async fn admin_create_codes(State(state): State<AppState>, headers: HeaderMap, Json(c): Json<CodesInput>) -> Response {
-    if let Err(r) = admin_ok(&state, &headers) {
+    if let Err(r) = admin_ok(&state, &headers).await {
         return r;
     }
     let conn = match state.conn.lock() {
@@ -583,7 +770,7 @@ struct PlanInput {
 
 /// 由支付系统的回调（或运维脚本）调用：`Authorization: Bearer <XYNOTE_ADMIN_TOKEN>`
 async fn admin_set_plan(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PlanInput>) -> Response {
-    if let Err(r) = admin_ok(&state, &headers) {
+    if let Err(r) = admin_ok(&state, &headers).await {
         return r;
     }
     if let Some(t) = &p.expires_at {
@@ -610,6 +797,146 @@ async fn admin_set_plan(State(state): State<AppState>, headers: HeaderMap, Json(
     }
 }
 
+/* ---------------- 官网购买 ---------------- */
+
+async fn store_products(State(state): State<AppState>) -> Response {
+    let c = &state.config;
+    Json(json!({
+        "products": crate::store::products(c.price_sync_year_cents, c.price_lifetime_cents),
+        "lifetimeAvailable": state.signing_key.is_some(),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateOrderInput {
+    product: String,
+}
+
+async fn create_order(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<CreateOrderInput>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    if input.product == "lifetime" && state.signing_key.is_none() {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "永久版暂未开放购买");
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let catalog = crate::store::products(state.config.price_sync_year_cents, state.config.price_lifetime_cents);
+    match crate::store::create_order(&conn, user.id, &input.product, &catalog) {
+        Ok(o) => Json(o).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+async fn my_orders(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::store::list_user_orders(&conn, user.id) {
+        Ok(orders) => Json(json!({ "orders": orders, "account": account_json(&state, &conn, &user) })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn cancel_order(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::store::cancel_order(&conn, &id, user.id) {
+        Ok(o) => Json(o).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+async fn my_licenses(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::store::user_licenses(&conn, user.id) {
+        Ok(list) => Json(json!({ "licenses": list })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminOrdersQuery {
+    status: Option<String>,
+}
+
+async fn admin_list_orders(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<AdminOrdersQuery>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let status = q.status.filter(|s| !s.is_empty() && s != "all");
+    match crate::store::list_orders_admin(&conn, status.as_deref()) {
+        Ok(orders) => Json(json!({ "orders": orders })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn admin_confirm_order(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let mut conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::store::confirm_order(&mut conn, &id, state.signing_key.as_ref(), state.config.sync_quota_bytes) {
+        Ok(o) => Json(o).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct RejectInput {
+    #[serde(default)]
+    note: String,
+}
+
+async fn admin_reject_order(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Option<Json<RejectInput>>,
+) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let note = body.map(|Json(b)| b.note).unwrap_or_default();
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::store::reject_order(&conn, &id, note.trim()) {
+        Ok(o) => Json(o).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,17 +945,214 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    fn test_state(require_subscription: bool) -> AppState {
-        let dir = std::env::temp_dir().join(format!("xynote-server-test-{}", rand::random::<u64>()));
-        AppState::open(Config {
+    fn test_config(require_subscription: bool) -> Config {
+        Config {
             bind: String::new(),
-            data_dir: dir,
+            data_dir: std::env::temp_dir().join(format!("xynote-server-test-{}", rand::random::<u64>())),
             allow_registration: true,
             require_subscription,
             default_quota_bytes: 1024,
             admin_token: Some("admin-token-0123456789".into()),
-        })
-        .unwrap()
+            oneid_base: None,
+            cors_origins: vec!["https://fwpt.cn".into()],
+            license_key_file: None,
+            price_sync_year_cents: 990,
+            price_lifetime_cents: 9900,
+            sync_quota_bytes: 10 * 1024 * 1024,
+        }
+    }
+
+    fn test_state(require_subscription: bool) -> AppState {
+        AppState::open(test_config(require_subscription)).unwrap()
+    }
+
+    /// 带永久版签名私钥的状态，返回对应公钥
+    fn test_state_with_license(require_subscription: bool) -> (AppState, [u8; 32]) {
+        let mut cfg = test_config(require_subscription);
+        std::fs::create_dir_all(&cfg.data_dir).unwrap();
+        let key_path = cfg.data_dir.join("license.key");
+        let key = ed25519_dalek::SigningKey::from_bytes(&[5u8; 32]);
+        std::fs::write(&key_path, crate::license_format::hex(&key.to_bytes())).unwrap();
+        cfg.license_key_file = Some(key_path);
+        (AppState::open(cfg).unwrap(), key.verifying_key().to_bytes())
+    }
+
+    fn val(b: &[u8]) -> serde_json::Value {
+        serde_json::from_slice(b).unwrap_or(serde_json::Value::Null)
+    }
+
+    const ADMIN: &str = "admin-token-0123456789";
+
+    #[tokio::test]
+    async fn store_orders_are_confirmed_and_delivered() {
+        let (state, pubkey) = test_state_with_license(true);
+        let app = router(state);
+        let t = register_user(&app, "buyer@example.com").await;
+        let other = register_user(&app, "other@example.com").await;
+
+        let (_, b) = call(&app, "GET", "/api/v1/store/products", None, vec![], false).await;
+        let v = val(&b);
+        assert_eq!(v["products"][0]["amountCents"], 990);
+        assert_eq!(v["products"][1]["amountCents"], 9900);
+        assert_eq!(v["lifetimeAvailable"], true);
+
+        // 下单：云同步一年 + 永久版
+        let (s, b) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let sync_order = val(&b);
+        assert_eq!(sync_order["status"], "pending");
+        assert_eq!(sync_order["payRef"].as_str().unwrap().len(), 4);
+        let (_, b) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "lifetime"}).to_string().into_bytes(), true).await;
+        let life_order = val(&b);
+        let (s, _) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "nope"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+
+        // 普通用户不能确认、也看不到别人的订单
+        let sid = sync_order["id"].as_str().unwrap();
+        let lid = life_order["id"].as_str().unwrap();
+        let (s, _) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", sid), Some(&t), vec![], false).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED);
+        let (_, b) = call(&app, "GET", "/api/v1/store/orders", Some(&other), vec![], false).await;
+        assert_eq!(val(&b)["orders"].as_array().unwrap().len(), 0);
+        let (s, _) = call(&app, "POST", &format!("/api/v1/store/orders/{}/cancel", sid), Some(&other), vec![], false).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+
+        // 管理员看到待确认订单并确认
+        let (_, b) = call(&app, "GET", "/api/v1/admin/orders?status=pending", Some(ADMIN), vec![], false).await;
+        let pending = val(&b);
+        assert_eq!(pending["orders"].as_array().unwrap().len(), 2);
+        assert_eq!(pending["orders"][0]["account"], "buyer@example.com");
+        let (s, b) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", sid), Some(ADMIN), vec![], false).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        assert_eq!(val(&b)["status"], "paid");
+        let (s, _) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", sid), Some(ADMIN), vec![], false).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "不会重复交付");
+
+        // 云同步开通：可以上传，有效期约一年
+        let (_, b) = call(&app, "GET", "/api/v1/account", Some(&t), vec![], false).await;
+        let acct = val(&b);
+        assert_eq!(acct["subscriptionActive"], true);
+        assert_eq!(acct["quotaBytes"], 10 * 1024 * 1024);
+        let until = chrono::DateTime::parse_from_rfc3339(acct["planExpiresAt"].as_str().unwrap()).unwrap();
+        assert_eq!((until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_days(), 364);
+        let (s, _) = call(&app, "PUT", "/api/v1/files/a.json", Some(&t), b"x".to_vec(), false).await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+
+        // 永久版：签发授权码，软件可以用内置公钥校验
+        call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", lid), Some(ADMIN), vec![], false).await;
+        let (_, b) = call(&app, "GET", "/api/v1/licenses", Some(&t), vec![], false).await;
+        let lic = val(&b)["licenses"][0].as_str().unwrap().to_string();
+        let payload = crate::license_format::verify(&lic, &pubkey).unwrap();
+        assert_eq!((payload.id.as_str(), payload.name.as_str()), (lid, "buyer@example.com"));
+        let (_, b) = call(&app, "GET", "/api/v1/store/orders", Some(&t), vec![], false).await;
+        let mine = val(&b);
+        assert!(mine["orders"].as_array().unwrap().iter().all(|o| o["status"] == "paid"));
+        assert!(mine["orders"].as_array().unwrap().iter().any(|o| o["license"] == lic.as_str()));
+
+        // 取消与未到账
+        let (_, b) = call(&app, "POST", "/api/v1/store/orders", Some(&other), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        let oid = val(&b)["id"].as_str().unwrap().to_string();
+        let (s, b) = call(&app, "POST", &format!("/api/v1/store/orders/{}/cancel", oid), Some(&other), vec![], false).await;
+        assert_eq!((s, val(&b)["status"].clone()), (StatusCode::OK, json!("cancelled")));
+        let (_, b) = call(&app, "POST", "/api/v1/store/orders", Some(&other), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        let oid = val(&b)["id"].as_str().unwrap().to_string();
+        let (_, b) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/reject", oid), Some(ADMIN), json!({"note": "未查到付款"}).to_string().into_bytes(), true).await;
+        assert_eq!(val(&b)["status"], "rejected");
+        assert_eq!(val(&b)["adminNote"], "未查到付款");
+
+        // 待确认订单数量上限
+        for _ in 0..crate::store::MAX_PENDING {
+            call(&app, "POST", "/api/v1/store/orders", Some(&other), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        }
+        let (s, _) = call(&app, "POST", "/api/v1/store/orders", Some(&other), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn lifetime_needs_signing_key() {
+        let app = router(test_state(true));
+        let t = register_user(&app, "x@example.com").await;
+        let (_, b) = call(&app, "GET", "/api/v1/store/products", None, vec![], false).await;
+        assert_eq!(val(&b)["lifetimeAvailable"], false);
+        let (s, _) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "lifetime"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// 模拟 FWPT 通行证服务：账号 wm / pass1234，令牌 jwt-wm（ADMIN）与 jwt-amy（普通用户）
+    async fn mock_oneid() -> String {
+        async fn profile(headers: HeaderMap) -> Response {
+            match bearer(&headers).as_deref() {
+                Some("jwt-wm") => Json(json!({"code": "00000", "data": {"id": 7, "username": "wm", "nickname": "王先生", "role": "ADMIN"}})).into_response(),
+                Some("jwt-amy") => Json(json!({"code": "00000", "data": {"id": 8, "username": "amy", "role": "USER"}})).into_response(),
+                _ => (StatusCode::UNAUTHORIZED, Json(json!({"code": "A0301", "message": "token invalid"}))).into_response(),
+            }
+        }
+        async fn login(Json(b): Json<serde_json::Value>) -> Response {
+            if b["account"] == "wm" && b["password"] == "pass1234" {
+                Json(json!({"code": "00000", "data": {"token": "jwt-wm"}})).into_response()
+            } else {
+                Json(json!({"code": "A0210", "message": "账号或密码错误"})).into_response()
+            }
+        }
+        let app = Router::new().route("/api/v1/user/profile", get(profile)).route("/api/v1/auth/login", post(login));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fwpt_accounts_login_buy_and_administer() {
+        let mut cfg = test_config(true);
+        cfg.oneid_base = Some(mock_oneid().await);
+        cfg.admin_token = None;
+        let app = router(AppState::open(cfg).unwrap());
+
+        // 软件里用通行证账号密码登录
+        let (s, b) = call(&app, "POST", "/api/v1/auth/login", None, json!({"email": "wm", "password": "pass1234"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        assert_eq!(val(&b)["token"], "jwt-wm");
+        assert_eq!(val(&b)["account"]["email"], "王先生");
+        let (s, b) = call(&app, "POST", "/api/v1/auth/login", None, json!({"email": "wm", "password": "bad"}).to_string().into_bytes(), true).await;
+        assert_eq!((s, val(&b)["message"].clone()), (StatusCode::UNAUTHORIZED, json!("账号或密码错误")));
+        let (s, _) = call(&app, "POST", "/api/v1/auth/register", None, json!({"email": "a@b.cn", "password": "password123"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "官方部署在 fwpt.cn 注册");
+
+        // 网站直接用通行证令牌下单；同一通行证始终是同一个账号
+        let (s, b) = call(&app, "POST", "/api/v1/store/orders", Some("jwt-amy"), json!({"product": "sync_year"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let oid = val(&b)["id"].as_str().unwrap().to_string();
+        let (s, _) = call(&app, "GET", "/api/v1/admin/orders", Some("jwt-amy"), vec![], false).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "普通通行证不是管理员");
+        let (s, _) = call(&app, "GET", "/api/v1/account", Some("jwt-bad"), vec![], false).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+        // 通行证管理员在网站后台确认
+        let (_, b) = call(&app, "GET", "/api/v1/admin/orders", Some("jwt-wm"), vec![], false).await;
+        assert_eq!(val(&b)["orders"][0]["account"], "amy");
+        let (s, _) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", oid), Some("jwt-wm"), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let (_, b) = call(&app, "GET", "/api/v1/account", Some("jwt-amy"), vec![], false).await;
+        assert_eq!(val(&b)["subscriptionActive"], true);
+    }
+
+    #[tokio::test]
+    async fn cors_allows_the_official_site_only() {
+        let app = router(test_state(false));
+        let req = |origin: &str| {
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/store/orders")
+                .header("origin", origin)
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "authorization,content-type")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let ok = app.clone().oneshot(req("https://fwpt.cn")).await.unwrap();
+        assert_eq!(ok.headers().get("access-control-allow-origin").unwrap(), "https://fwpt.cn");
+        let bad = app.clone().oneshot(req("https://evil.example")).await.unwrap();
+        assert!(bad.headers().get("access-control-allow-origin").is_none());
     }
 
     async fn call(app: &Router, method: &str, uri: &str, token: Option<&str>, body: Vec<u8>, json_body: bool) -> (StatusCode, Vec<u8>) {

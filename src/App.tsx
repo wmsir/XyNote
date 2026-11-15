@@ -449,7 +449,10 @@ export const App: React.FC = () => {
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
-    getLicenseStatus().then(setLicense).catch(() => {});
+    const load = () => getLicenseStatus().then(setLicense).catch(() => {});
+    load();
+    window.addEventListener("xynote:license-changed", load);
+    return () => window.removeEventListener("xynote:license-changed", load);
   }, []);
 
   const handleVersionRestored = useCallback(
