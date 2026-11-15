@@ -22,6 +22,7 @@ import {
   listTrashedPages,
   openLocalMarkdownFile,
   openPathInExplorer,
+  pickFolderDialog,
   pickMarkdownFileDialog,
   registerBrowserLocalMarkdownFile,
   restorePage,
@@ -42,6 +43,7 @@ import type {
   EditorViewMode,
   KeybindingMap,
   LocalMarkdownDocument,
+  WorkspaceFolder,
   MarkdownExport,
   Page,
   PageDetail,
@@ -156,6 +158,8 @@ export const App: React.FC = () => {
   const [recentLocalMdFiles, setRecentLocalMdFiles] = useState<
     RecentLocalMdItem[]
   >([]);
+  // 侧栏「文件夹」里挂载的磁盘文件夹
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
 
   // Appearance & Layout
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -426,6 +430,79 @@ export const App: React.FC = () => {
       }
     },
     [flushPendingBlockSave, pushRecentLocalMd, showToast]
+  );
+
+  const persistWorkspaceFolders = useCallback((next: WorkspaceFolder[]) => {
+    setSetting("workspaceFolders", JSON.stringify(next)).catch(() => {});
+  }, []);
+
+  const handleAddWorkspaceFolder = useCallback(async () => {
+    let chosen: string | null = null;
+    try {
+      chosen = await pickFolderDialog(undefined, "选择要在侧栏打开的文件夹");
+    } catch (err) {
+      showToast(`无法打开文件夹：${err instanceof Error ? err.message : String(err)}`, 3600);
+      return;
+    }
+    if (!chosen) return;
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const name = chosen.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || chosen;
+    setWorkspaceFolders((prev) => {
+      if (prev.some((f) => norm(f.path) === norm(chosen as string))) {
+        showToast(`「${name}」已在侧栏中`);
+        return prev;
+      }
+      const next = [...prev, { path: chosen as string, name }];
+      persistWorkspaceFolders(next);
+      return next;
+    });
+  }, [persistWorkspaceFolders, showToast]);
+
+  const handleRemoveWorkspaceFolder = useCallback(
+    (path: string) => {
+      setWorkspaceFolders((prev) => {
+        const next = prev.filter((f) => f.path !== path);
+        persistWorkspaceFolders(next);
+        return next;
+      });
+    },
+    [persistWorkspaceFolders]
+  );
+
+  // 文件或文件夹改名后：正在编辑的文件换到新路径，最近列表同步更新
+  const handleFolderEntryRenamed = useCallback(
+    (oldPath: string, newPath: string) => {
+      const remap = (p: string): string | null => {
+        const a = p.replace(/\\/g, "/");
+        const o = oldPath.replace(/\\/g, "/");
+        if (a.toLowerCase() === o.toLowerCase()) return newPath;
+        if (a.toLowerCase().startsWith(o.toLowerCase() + "/")) {
+          const sep = newPath.includes("\\") ? "\\" : "/";
+          return newPath + sep + a.slice(o.length + 1).split("/").join(sep);
+        }
+        return null;
+      };
+      setRecentLocalMdFiles((prev) => {
+        let changed = false;
+        const next = prev.map((item) => {
+          const moved = remap(item.filePath);
+          if (!moved) return item;
+          changed = true;
+          const fileName = moved.split(/[\\/]/).pop() || item.fileName;
+          return { ...item, filePath: moved, fileName };
+        });
+        if (changed) setSetting("recentLocalMdFiles", JSON.stringify(next)).catch(() => {});
+        return changed ? next : prev;
+      });
+      const current = activeLocalMdRef.current;
+      const movedActive = current ? remap(current.filePath) : null;
+      if (movedActive) {
+        openLocalMarkdownFile(movedActive)
+          .then((doc) => setActiveLocalMd(doc))
+          .catch(() => {});
+      }
+    },
+    []
   );
 
   const handleOpenLocalMdDialog = useCallback(async () => {
@@ -807,6 +884,19 @@ export const App: React.FC = () => {
             ...prev,
             imageSaveMode: initialStorage.imageSaveMode,
           }));
+        }
+
+        if (settings.workspaceFolders) {
+          try {
+            const parsedFolders = JSON.parse(settings.workspaceFolders) as WorkspaceFolder[];
+            if (Array.isArray(parsedFolders)) {
+              setWorkspaceFolders(
+                parsedFolders.filter((f) => f && typeof f.path === "string" && f.path)
+              );
+            }
+          } catch {
+            // Ignore
+          }
         }
 
         if (settings.recentLocalMdFiles) {
@@ -1685,6 +1775,14 @@ export const App: React.FC = () => {
         onOpenTrash={() => setTrashOpen(true)}
         onOpenImportMarkdown={() => setMarkdownModalMode("import")}
         onOpenSettings={() => handleOpenSettingsAtTab("storage")}
+        workspaceFolders={workspaceFolders}
+        onAddWorkspaceFolder={() => {
+          handleAddWorkspaceFolder().catch(() => {});
+        }}
+        onRemoveWorkspaceFolder={handleRemoveWorkspaceFolder}
+        onFolderEntryRenamed={handleFolderEntryRenamed}
+        onBeforeFolderRename={flushPendingBlockSave}
+        notify={showToast}
       />
 
       <main className="nb-main-area">

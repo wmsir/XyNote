@@ -364,3 +364,30 @@ export interface SavedAssetResult {
   filePath: string;
   assetUrl: string;
 }
+
+/* ============================================================================
+ * 侧栏「文件夹」：磁盘文件夹树
+ * ========================================================================== */
+
+export interface FolderEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  /** 小写扩展名，不含点；文件夹为空字符串 */
+  ext: string;
+  size: number;
+  modifiedMs: number;
+}
+
+export interface FolderListing {
+  path: string;
+  entries: FolderEntry[];
+  /** 条目太多被截断 */
+  truncated: boolean;
+}
+
+/** 侧栏里挂载的一个根文件夹 */
+export interface WorkspaceFolder {
+  path: string;
+  name: string;
+}

@@ -8,6 +8,7 @@ import {
   FilePlus2,
   FileText,
   FolderOpen,
+  FolderPlus,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
@@ -20,8 +21,9 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { Page } from "../../types/notion";
+import type { Page, WorkspaceFolder } from "../../types/notion";
 import { XyLogoIcon } from "./XyLogoIcon";
+import { FolderTree } from "./FolderTree";
 
 export interface RecentLocalMdItem {
   filePath: string;
@@ -54,6 +56,13 @@ export interface SidebarProps {
   onOpenTrash: () => void;
   onOpenImportMarkdown: () => void;
   onOpenSettings: () => void;
+  /** 侧栏挂载的磁盘文件夹 */
+  workspaceFolders: WorkspaceFolder[];
+  onAddWorkspaceFolder: () => void;
+  onRemoveWorkspaceFolder: (path: string) => void;
+  onFolderEntryRenamed: (oldPath: string, newPath: string) => void;
+  onBeforeFolderRename: () => Promise<void>;
+  notify: (message: string, durationMs?: number) => void;
 }
 
 const DEFAULT_DOC_ICONS = new Set(["", "📄"]);
@@ -117,6 +126,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenTrash,
   onOpenImportMarkdown,
   onOpenSettings,
+  workspaceFolders,
+  onAddWorkspaceFolder,
+  onRemoveWorkspaceFolder,
+  onFolderEntryRenamed,
+  onBeforeFolderRename,
+  notify,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({
     "page-welcome": true,
@@ -124,6 +139,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [favOpen, setFavOpen] = useState(true);
   const [wsOpen, setWsOpen] = useState(true);
   const [localMdOpen, setLocalMdOpen] = useState(true);
+  const [foldersOpen, setFoldersOpen] = useState(true);
   const [menuState, setMenuState] = useState<{
     page: Page;
     top: number;
@@ -471,6 +487,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ) : (
               rootPages.map((page) => renderTreeNode(page, 0))
             ))}
+        </div>
+
+        {/* 磁盘文件夹：可挂载多个，树形浏览，点击笔记直接编辑磁盘文件 */}
+        <div className="nb-sidebar-section nb-folders-section">
+          <div className="nb-sidebar-section-header">
+            <button
+              type="button"
+              className="nb-sidebar-section-toggle"
+              onClick={() => setFoldersOpen((v) => !v)}
+              aria-expanded={foldersOpen}
+            >
+              <ChevronRight
+                size={16}
+                strokeWidth={1.6}
+                className={`nb-section-chevron${foldersOpen ? " is-expanded" : ""}`}
+              />
+              <span>文件夹</span>
+            </button>
+            {isTauri && (
+              <div className="nb-section-actions">
+                <button
+                  type="button"
+                  className="nb-section-action-btn"
+                  title="打开文件夹"
+                  aria-label="打开文件夹"
+                  onClick={onAddWorkspaceFolder}
+                >
+                  <FolderPlus size={16} strokeWidth={1.6} />
+                </button>
+              </div>
+            )}
+          </div>
+          {foldersOpen && (
+            <FolderTree
+              folders={workspaceFolders}
+              activeFilePath={activeLocalMdPath}
+              isTauri={isTauri}
+              onAddFolder={onAddWorkspaceFolder}
+              onRemoveFolder={onRemoveWorkspaceFolder}
+              onOpenFile={onSelectLocalMdFile}
+              onEntryRenamed={onFolderEntryRenamed}
+              onBeforeRename={onBeforeFolderRename}
+              notify={notify}
+            />
+          )}
         </div>
       </div>
 

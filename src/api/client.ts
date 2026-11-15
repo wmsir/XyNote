@@ -33,6 +33,8 @@ import type {
   UpsertDbColumnInput,
   UpsertDbRowInput,
   UrlMetadata,
+  FolderEntry,
+  FolderListing,
 } from "../types/notion";
 
 export function isTauriRuntime(): boolean {
@@ -450,11 +452,9 @@ function rebuildAllLinksForSource(store: LocalStore, sourcePageId: string): void
 }
 
 function createInitialSeedStore(): LocalStore {
+  // 新工作区只带一篇使用说明，其余内容由用户自己创建
   const ts = nowIso();
   const welcomeId = "page-welcome";
-  const roadmapId = "page-roadmap";
-  const archId = "page-arch";
-  const journalId = "page-journal";
 
   const pages: Page[] = [
     {
@@ -462,345 +462,40 @@ function createInitialSeedStore(): LocalStore {
       parentId: null,
       title: "欢迎使用 小悦 (XyNote)",
       icon: "🏠",
-      cover: "linear-gradient(120deg, #f6efe2 0%, #e9dfd0 52%, #dce5ea 100%)",
-      pageType: "doc",
-      isFavorite: true,
-      isTrashed: false,
-      sortOrder: 0,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: roadmapId,
-      parentId: null,
-      title: "产品路线图 Product Roadmap",
-      icon: "🗺️",
-      cover: null,
-      pageType: "database",
-      isFavorite: true,
-      isTrashed: false,
-      sortOrder: 1,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: archId,
-      parentId: welcomeId,
-      title: "工程架构设计 Engineering Architecture",
-      icon: "🏗️",
       cover: null,
       pageType: "doc",
       isFavorite: false,
       isTrashed: false,
       sortOrder: 0,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: journalId,
-      parentId: null,
-      title: "每周工作复盘与思考",
-      icon: "📓",
-      cover: null,
-      pageType: "doc",
-      isFavorite: false,
-      isTrashed: false,
-      sortOrder: 2,
       createdAt: ts,
       updatedAt: ts,
     },
   ];
 
   const blocks: Block[] = [
-    makeBlock(
-      welcomeId,
-      0,
-      "callout",
-      "欢迎来到本地优先的桌面端 <b>小悦 (XyNote)</b> 工作区！所有笔记、块结构、公式图片、双向链接与多维数据库均实时保存在本地 SQLite 数据库中。",
-      { calloutIcon: "💡", color: "amber" }
-    ),
-    makeBlock(welcomeId, 1, "heading2", "快速上手指南"),
-    makeBlock(
-      welcomeId,
-      2,
-      "todo",
-      "输入 <code>/</code> 唤出斜杠命令菜单，插入标题、代码块、KaTeX 公式、图片、书签卡片或内嵌视频",
-      { checked: true }
-    ),
-    makeBlock(
-      welcomeId,
-      3,
-      "todo",
-      "直接将本地 <code>.md</code> 文件、整个文件夹或 Notion 官方导出的 <code>.zip</code> 拖入窗口完成批量迁移",
-      { checked: false }
-    ),
-    makeBlock(
-      welcomeId,
-      4,
-      "todo",
-      "输入 <code>[[</code> 建立双向页面引用，例如前往 <a href=\"#\" data-page-id=\"page-roadmap\" class=\"nb-wiki-link\">🗺️ 产品路线图 Product Roadmap</a>",
-      { checked: false }
-    ),
-    makeBlock(
-      welcomeId,
-      5,
-      "math",
-      "\\mathcal{L}(\\theta) = \\frac{1}{N}\\sum_{i=1}^{N} \\left\\| f_\\theta(x_i) - y_i \\right\\|_2^2"
-    ),
-    makeBlock(
-      welcomeId,
-      6,
-      "toggle",
-      "常用键盘快捷键速查",
-      {
-        collapsed: false,
-        childrenText:
-          "• Ctrl + K：全局搜索与快速跳转\n• Ctrl + N：快速新建文档页面\n• Ctrl + \\：折叠或展开左侧边栏\n• 行内 Markdown：输入 **加粗**、*斜体*、`代码`、$$ 公式实时转换",
-      }
-    ),
-    makeBlock(
-      welcomeId,
-      7,
-      "table",
-      "",
-      {
-        headers: ["核心模块", "技术实现", "当前状态"],
-        rows: [
-          ["块级富文本编辑器", "17 种块类型 + KaTeX 公式 + 行内 Markdown", "✅ 已就绪"],
-          ["批量导入与迁移", "拖拽 .md 文件夹 + Notion .zip 全量解析", "✅ 已就绪"],
-          ["本地存储引擎", "Rust + Tauri v2 + SQLite WAL / FTS5", "✅ 已就绪"],
-        ],
-      }
-    ),
-    makeBlock(
-      welcomeId,
-      8,
-      "quote",
-      "保持工具安静、克制与迅捷，让注意力回到思考与创作本身。"
-    ),
-    makeBlock(
-      welcomeId,
-      9,
-      "paragraph",
-      "深入了解底层实现请参阅子页面：<a href=\"#\" data-page-id=\"page-arch\" class=\"nb-wiki-link\">🏗️ 工程架构设计 Engineering Architecture</a>。"
-    ),
-
-    // Engineering Architecture child page blocks
-    makeBlock(
-      archId,
-      0,
-      "callout",
-      "本文档梳理小悦 (XyNote) 的前后端分层架构，并与 <a href=\"#\" data-page-id=\"page-welcome\" class=\"nb-wiki-link\">🏠 欢迎使用 小悦 (XyNote)</a> 及 <a href=\"#\" data-page-id=\"page-roadmap\" class=\"nb-wiki-link\">🗺️ 产品路线图 Product Roadmap</a> 自动建立反向链接。",
-      { calloutIcon: "🧭", color: "blue" }
-    ),
-    makeBlock(archId, 1, "heading2", "存储层与全文检索设计"),
-    makeBlock(
-      archId,
-      2,
-      "bullet",
-      "启用 <code>PRAGMA journal_mode = WAL</code> 与外键级联删除，保障高并发读写安全。"
-    ),
-    makeBlock(
-      archId,
-      3,
-      "bullet",
-      "结合 SQLite FTS5 倒排索引与中文子串匹配，实现毫秒级中英双语搜索。"
-    ),
-    makeBlock(
-      archId,
-      4,
-      "code",
-      "SELECT p.id, p.title, snippet(blocks_fts, 0, '[', ']', '...', 16)\nFROM blocks_fts\nJOIN pages p ON p.id = blocks_fts.page_id\nWHERE blocks_fts MATCH ?1 AND p.is_trashed = 0;",
-      { language: "sql" }
-    ),
-
-    // Weekly Journal starter blocks
-    makeBlock(journalId, 0, "heading2", "本周核心目标 Focus"),
-    makeBlock(journalId, 1, "numbered", "完成桌面端 17 种块类型与数据库三视图打磨"),
-    makeBlock(journalId, 2, "numbered", "验证 Notion .zip 导出包与多级 Markdown 目录树一键迁移"),
-    makeBlock(journalId, 3, "divider", ""),
-    makeBlock(journalId, 4, "paragraph", "随时记录灵感与会议要点，使用 <code>[[</code> 关联项目页面。"),
-  ];
-
-  // Product Roadmap Database columns & rows
-  const colTitleId = "col-roadmap-title";
-  const colStatusId = "col-roadmap-status";
-  const colPriorityId = "col-roadmap-priority";
-  const colTagsId = "col-roadmap-tags";
-  const colDateId = "col-roadmap-date";
-  const colShippedId = "col-roadmap-shipped";
-
-  const statusOptions: SelectOption[] = [
-    { id: "opt-todo", label: "待规划 Todo", color: "gray" },
-    { id: "opt-doing", label: "进行中 In Progress", color: "blue" },
-    { id: "opt-done", label: "已完成 Done", color: "green" },
-  ];
-
-  const priorityOptions: SelectOption[] = [
-    { id: "opt-p0", label: "P0 核心", color: "red" },
-    { id: "opt-p1", label: "P1 重要", color: "amber" },
-    { id: "opt-p2", label: "P2 常规", color: "blue" },
-  ];
-
-  const tagOptions: SelectOption[] = [
-    { id: "tag-rust", label: "Rust", color: "amber" },
-    { id: "tag-sqlite", label: "SQLite", color: "green" },
-    { id: "tag-editor", label: "Editor", color: "purple" },
-    { id: "tag-ui", label: "Design", color: "blue" },
-  ];
-
-  const dbColumns: DbColumn[] = [
-    {
-      id: colTitleId,
-      pageId: roadmapId,
-      name: "功能事项",
-      colType: "title",
-      options: [],
-      width: 260,
-      sortOrder: 0,
-    },
-    {
-      id: colStatusId,
-      pageId: roadmapId,
-      name: "状态",
-      colType: "status",
-      options: statusOptions,
-      width: 160,
-      sortOrder: 1,
-    },
-    {
-      id: colPriorityId,
-      pageId: roadmapId,
-      name: "优先级",
-      colType: "select",
-      options: priorityOptions,
-      width: 130,
-      sortOrder: 2,
-    },
-    {
-      id: colTagsId,
-      pageId: roadmapId,
-      name: "模块标签",
-      colType: "multi_select",
-      options: tagOptions,
-      width: 200,
-      sortOrder: 3,
-    },
-    {
-      id: colDateId,
-      pageId: roadmapId,
-      name: "目标日期",
-      colType: "date",
-      options: [],
-      width: 145,
-      sortOrder: 4,
-    },
-    {
-      id: colShippedId,
-      pageId: roadmapId,
-      name: "已上线",
-      colType: "checkbox",
-      options: [],
-      width: 100,
-      sortOrder: 5,
-    },
-  ];
-
-  const dbRows: DbRow[] = [
-    {
-      id: "row-rm-1",
-      pageId: roadmapId,
-      cells: {
-        [colTitleId]: "SQLite WAL 存储引擎与 FTS5 全文检索",
-        [colStatusId]: "opt-done",
-        [colPriorityId]: "opt-p0",
-        [colTagsId]: ["tag-rust", "tag-sqlite"],
-        [colDateId]: "2026-11-10",
-        [colShippedId]: true,
-      },
-      linkedPageId: archId,
-      sortOrder: 0,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: "row-rm-2",
-      pageId: roadmapId,
-      cells: {
-        [colTitleId]: "块级富文本编辑器（KaTeX 公式 + 行内 Markdown）",
-        [colStatusId]: "opt-done",
-        [colPriorityId]: "opt-p0",
-        [colTagsId]: ["tag-editor", "tag-ui"],
-        [colDateId]: "2026-11-12",
-        [colShippedId]: true,
-      },
-      linkedPageId: null,
-      sortOrder: 1,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: "row-rm-3",
-      pageId: roadmapId,
-      cells: {
-        [colTitleId]: "多维数据库（表格 / 看板拖拽 / 画廊卡片）",
-        [colStatusId]: "opt-doing",
-        [colPriorityId]: "opt-p0",
-        [colTagsId]: ["tag-ui", "tag-sqlite"],
-        [colDateId]: "2026-11-16",
-        [colShippedId]: false,
-      },
-      linkedPageId: null,
-      sortOrder: 2,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: "row-rm-4",
-      pageId: roadmapId,
-      cells: {
-        [colTitleId]: "双向页面链接 [[WikiLink]] 与反向链接面板",
-        [colStatusId]: "opt-doing",
-        [colPriorityId]: "opt-p1",
-        [colTagsId]: ["tag-editor"],
-        [colDateId]: "2026-11-18",
-        [colShippedId]: false,
-      },
-      linkedPageId: null,
-      sortOrder: 3,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: "row-rm-5",
-      pageId: roadmapId,
-      cells: {
-        [colTitleId]: "Notion .zip 导出包与 Markdown 文件夹批量迁移",
-        [colStatusId]: "opt-done",
-        [colPriorityId]: "opt-p0",
-        [colTagsId]: ["tag-rust", "tag-ui"],
-        [colDateId]: "2026-11-24",
-        [colShippedId]: true,
-      },
-      linkedPageId: null,
-      sortOrder: 4,
-      createdAt: ts,
-      updatedAt: ts,
-    },
+    makeBlock(welcomeId, 0, "callout", "小悦是本地优先的桌面笔记：工作区页面保存在本机数据库里，侧栏「文件夹」可以直接打开并编辑磁盘上的 Markdown 文件。", { calloutIcon: "💡", color: "gray" }),
+    makeBlock(welcomeId, 1, "heading2", "开始使用"),
+    makeBlock(welcomeId, 2, "bullet", "<strong>新建页面</strong>：点侧栏「工作区页面」右侧的 +，或按 <code>Ctrl + N</code>。"),
+    makeBlock(welcomeId, 3, "bullet", "<strong>打开文件夹</strong>：点侧栏「文件夹」右侧的按钮选择目录，可以同时打开多个；点击笔记即可编辑，改动直接保存回原文件。"),
+    makeBlock(welcomeId, 4, "bullet", "<strong>插入内容</strong>：在空行输入 <code>/</code>，选择标题、待办、表格、代码、公式或 Mermaid 图表。"),
+    makeBlock(welcomeId, 5, "bullet", "<strong>关联页面</strong>：输入 <code>[[</code> 引用其他页面，被引用的页面底部会显示反向链接。"),
+    makeBlock(welcomeId, 6, "bullet", "<strong>搜索</strong>：按 <code>Ctrl + K</code> 全文搜索，并快速跳转到页面或命令。"),
+    makeBlock(welcomeId, 7, "heading2", "侧栏文件夹"),
+    makeBlock(welcomeId, 8, "bullet", "右键文件夹：新建笔记、新建文件夹、刷新、在文件管理器中显示、复制路径。"),
+    makeBlock(welcomeId, 9, "bullet", "右键笔记：重命名（也可以按 <code>F2</code>）、在文件管理器中显示、复制路径。"),
+    makeBlock(welcomeId, 10, "bullet", "只显示子文件夹和 .md / .markdown / .txt 笔记；隐藏文件、node_modules 等目录不会出现。"),
+    makeBlock(welcomeId, 11, "bullet", "从侧栏移除文件夹只是不再显示，不会删除磁盘上的任何文件。"),
+    makeBlock(welcomeId, 12, "toggle", "常用快捷键", { collapsed: true, childrenText: "Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）" }),
+    makeBlock(welcomeId, 13, "paragraph", "这篇文档可以随意修改或删除。"),
   ];
 
   const store: LocalStore = {
     pages,
     blocks,
     pageLinks: [],
-    dbMeta: {
-      [roadmapId]: {
-        activeView: "table",
-        groupByColId: colStatusId,
-      },
-    },
-    dbColumns,
-    dbRows,
+    dbMeta: {},
+    dbColumns: [],
+    dbRows: [],
     settings: {
       theme: "light",
       fontStyle: "sans",
@@ -808,12 +503,6 @@ function createInitialSeedStore(): LocalStore {
       "appearance.adaptiveWidth": "true",
     },
   };
-
-  for (const p of pages) {
-    if (p.pageType === "doc") {
-      rebuildAllLinksForSource(store, p.id);
-    }
-  }
   return store;
 }
 
@@ -3604,6 +3293,40 @@ export async function saveAssetImage(
     filePath: joinWinPath(joinWinPath(cfg.activeDataDir, "assets"), uniqueName),
     assetUrl: `data:${safeMime};base64,${cleanB64}`,
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * 侧栏「文件夹」：读取磁盘文件夹（仅桌面端；浏览器无法直接访问本地路径）
+ * ------------------------------------------------------------------------- */
+
+const FOLDER_DESKTOP_ONLY = "打开本地文件夹仅支持桌面客户端";
+
+export async function listFolderEntries(path: string): Promise<FolderListing> {
+  if (isTauriRuntime()) {
+    return invoke<FolderListing>("list_folder_entries", { path });
+  }
+  throw new Error(FOLDER_DESKTOP_ONLY);
+}
+
+export async function createFolderEntry(
+  parent: string,
+  name: string,
+  isDir: boolean
+): Promise<FolderEntry> {
+  if (isTauriRuntime()) {
+    return invoke<FolderEntry>("create_folder_entry", { parent, name, isDir });
+  }
+  throw new Error(FOLDER_DESKTOP_ONLY);
+}
+
+export async function renameFolderEntry(
+  path: string,
+  newName: string
+): Promise<FolderEntry> {
+  if (isTauriRuntime()) {
+    return invoke<FolderEntry>("rename_folder_entry", { path, newName });
+  }
+  throw new Error(FOLDER_DESKTOP_ONLY);
 }
 
 export async function openPathInExplorer(path: string): Promise<void> {
