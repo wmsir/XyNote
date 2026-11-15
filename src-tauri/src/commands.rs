@@ -439,8 +439,8 @@ pub fn set_watched_paths(
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
     let u = url.trim();
-    if !(u.starts_with("https://") || u.starts_with("http://")) || u.chars().any(|c| c.is_whitespace() || c == '"') {
-        return Err("只能打开 http / https 网址".into());
+    if !(u.starts_with("https://") || u.starts_with("http://") || u.starts_with("mailto:")) || u.chars().any(|c| c.is_whitespace() || c == '"') {
+        return Err("只能打开 http / https / mailto 链接".into());
     }
     #[cfg(target_os = "windows")]
     let res = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", u]).spawn();
@@ -671,22 +671,107 @@ pub fn license_status(db: State<'_, Database>) -> Result<crate::license::License
     crate::license::status(&db).map_err(Into::into)
 }
 
-#[tauri::command]
-pub fn license_activate(db: State<'_, Database>, license: String) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::activate(&db, &license).map_err(Into::into)
+/// 授权相关的网络操作放在后台线程，避免卡住界面
+async fn license_blocking<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(&Database) -> Result<T, crate::models::AppError> + Send + 'static,
+) -> Result<T, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        f(&db).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn license_deactivate(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
-    crate::license::deactivate(&db).map_err(Into::into)
+pub async fn license_login(app: AppHandle, account: String, password: String) -> Result<crate::license::LicenseStatus, String> {
+    license_blocking(app, move |db| crate::license::login(db, &account, &password)).await
+}
+
+#[tauri::command]
+pub async fn license_refresh(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    license_blocking(app, crate::license::refresh).await
+}
+
+#[tauri::command]
+pub async fn license_activate(app: AppHandle, license: String) -> Result<crate::license::LicenseStatus, String> {
+    license_blocking(app, move |db| crate::license::activate(db, &license)).await
+}
+
+#[tauri::command]
+pub async fn license_deactivate(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    license_blocking(app, crate::license::deactivate).await
+}
+
+#[tauri::command]
+pub fn license_logout(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::logout(&db).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn license_create_order(app: AppHandle) -> Result<serde_json::Value, String> {
+    license_blocking(app, crate::license::create_order).await
 }
 
 fn require_pro(db: &Database) -> Result<(), String> {
+    require_pro_for(db, "页面历史")
+}
+
+fn require_pro_for(db: &Database, feature: &str) -> Result<(), String> {
     if crate::license::is_pro(db) {
         Ok(())
     } else {
-        Err("页面历史是永久版功能".into())
+        Err(format!("{}是永久版功能，登录通行证可免费使用一年", feature))
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HtmlExport {
+    pub filename: String,
+    pub html: String,
+}
+
+/// 页面导出为 HTML（也用于打印成 PDF）
+#[tauri::command]
+pub fn export_page_html(db: State<'_, Database>, page_id: String) -> Result<HtmlExport, String> {
+    require_pro_for(&db, "导出 HTML / PDF")?;
+    let md = db.export_page_markdown(&page_id).map_err(String::from)?;
+    let base = crate::export_formats::base_filename(&md.filename);
+    Ok(HtmlExport { html: crate::export_formats::markdown_to_html_document(&base, &md.markdown), filename: base })
+}
+
+/// 页面导出为 HTML 或 Word 文件：弹出另存为对话框，返回保存路径（取消时为 null）
+#[tauri::command]
+pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let (base, bytes, ext, label, title) = {
+        let db = app.state::<Database>();
+        let feature = if format == "docx" { "导出 Word" } else { "导出 HTML" };
+        require_pro_for(&db, feature)?;
+        let md = db.export_page_markdown(&page_id).map_err(String::from)?;
+        let base = crate::export_formats::base_filename(&md.filename);
+        match format.as_str() {
+            "docx" => {
+                let bytes = crate::export_formats::markdown_to_docx(&base, &md.markdown).map_err(String::from)?;
+                (base, bytes, "docx", "Word 文档", "导出为 Word 文档")
+            }
+            "html" => {
+                let html = crate::export_formats::markdown_to_html_document(&base, &md.markdown);
+                (base, html.into_bytes(), "html", "网页文件", "导出为 HTML")
+            }
+            other => return Err(format!("不支持的导出格式：{}", other)),
+        }
+    };
+    let picked = run_dialog(&app, move || {
+        crate::win_dialogs::pick_save_path_dialog_sync(title.to_string(), base, ext.to_string(), label.to_string())
+    })
+    .await?;
+    let Some(path) = picked else { return Ok(None) };
+    std::fs::write(&path, bytes).map_err(|e| format!("保存失败：{}", e))?;
+    Ok(Some(path))
 }
 
 #[tauri::command]

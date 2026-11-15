@@ -19,8 +19,15 @@ pub struct LicensePayload {
     pub id: String,
     /// 授权给（姓名、昵称或订单号）
     pub name: String,
+    /// lifetime 永久版 / trial 注册赠送的一年
     pub edition: String,
     pub issued_at: String,
+    /// 到期时间；永久版为空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// 绑定的机器指纹；为空表示不绑定（发码工具签发的离线授权）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 pub fn sign(payload: &LicensePayload, key: &SigningKey) -> String {
@@ -79,7 +86,15 @@ mod tests {
     use super::*;
 
     fn payload() -> LicensePayload {
-        LicensePayload { v: 1, id: "L-0001".into(), name: "张三".into(), edition: "lifetime".into(), issued_at: "2026-11-15T00:00:00Z".into() }
+        LicensePayload {
+            v: 1,
+            id: "L-0001".into(),
+            name: "张三".into(),
+            edition: "lifetime".into(),
+            issued_at: "2026-11-15T00:00:00Z".into(),
+            expires_at: None,
+            machine: None,
+        }
     }
 
     #[test]

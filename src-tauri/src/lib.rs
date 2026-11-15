@@ -6,6 +6,7 @@ pub mod sync_config;
 pub mod license_format;
 pub mod license;
 pub mod versions;
+pub mod export_formats;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
@@ -106,6 +107,12 @@ pub fn run() {
             commands::license_status,
             commands::license_activate,
             commands::license_deactivate,
+            commands::license_login,
+            commands::license_refresh,
+            commands::license_logout,
+            commands::license_create_order,
+            commands::export_page_html,
+            commands::export_page_file,
             commands::page_versions_list,
             commands::page_version_get,
             commands::page_version_restore,

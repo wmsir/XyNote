@@ -68,6 +68,9 @@ export interface TopbarProps {
   onImportLocalMdToWorkspace: () => void;
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
+  /** 永久版导出：html / pdf / docx */
+  onExportAs: (format: "html" | "pdf" | "docx") => void;
+  proActive: boolean;
   onOpenHistory: () => void;
   onOpenImportMarkdown: () => void;
   onTrashPage: () => void;
@@ -107,6 +110,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   onImportLocalMdToWorkspace,
   onDuplicatePage,
   onExportMarkdown,
+  onExportAs,
+  proActive,
   onOpenHistory,
   onOpenImportMarkdown,
   onTrashPage,
@@ -527,6 +532,29 @@ export const Topbar: React.FC<TopbarProps> = ({
                         <Download size={14} /> 导出 Markdown
                       </span>
                     </button>
+
+                    {(
+                      [
+                        ["html", "导出 HTML"],
+                        ["pdf", "导出 PDF"],
+                        ["docx", "导出 Word"],
+                      ] as const
+                    ).map(([fmt, label]) => (
+                      <button
+                        key={fmt}
+                        type="button"
+                        className="nb-menu-item"
+                        onClick={() => {
+                          onExportAs(fmt);
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span className="nb-menu-item-left">
+                          <Download size={14} /> {label}
+                        </span>
+                        {!proActive && <span className="nb-pro-tag">永久版</span>}
+                      </button>
+                    ))}
 
                     <button
                       type="button"

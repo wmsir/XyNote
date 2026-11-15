@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Cloud, FolderOpen, HardDrive, KeyRound, LogOut, RefreshCw, Server, Globe } from "lucide-react";
+import { FolderOpen, HardDrive, KeyRound, LogOut, RefreshCw, Server, Globe } from "lucide-react";
 import { pickFolderDialog } from "../../api/client";
 import {
   formatBytes,
@@ -30,7 +30,6 @@ const MODES: { id: SyncMode; label: string; desc: string; icon: React.ReactNode 
   { id: "folder", label: "网盘文件夹", desc: "坚果云、OneDrive、iCloud 等同步盘里的文件夹", icon: <FolderOpen size={16} /> },
   { id: "webdav", label: "WebDAV", desc: "坚果云、Nextcloud、群晖等 WebDAV 服务", icon: <Globe size={16} /> },
   { id: "server", label: "自建服务器", desc: "部署 XyNote 同步服务器，数据完全自己掌握", icon: <Server size={16} /> },
-  { id: "official", label: "官方云同步", desc: "开箱即用，¥9.9 / 年", icon: <Cloud size={16} /> },
 ];
 
 export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotify }: SyncSettingsPanelProps) {
@@ -177,7 +176,7 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
       <div>
         <h3 className="nb-settings-heading">同步</h3>
         <p className="nb-settings-desc">
-          默认只保存在本机。需要多台设备使用时，选一种同步方式；同时修改同一篇笔记不会丢内容，另一份会保存为「冲突副本」。
+          默认只保存在本机。需要多台设备使用时，用自己的网盘、WebDAV 或服务器同步；同时修改同一篇笔记不会丢内容，另一份会保存为「冲突副本」。
         </p>
       </div>
 

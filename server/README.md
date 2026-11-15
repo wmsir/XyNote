@@ -31,40 +31,42 @@ cargo run --release
 | `XYNOTE_DEFAULT_QUOTA_MB` | `2048` | 新用户的空间配额（MB） |
 | `XYNOTE_ONEID_BASE` | 空 | FWPT 通行证后端（官方部署，如 `http://127.0.0.1:8088`）。设置后网站和软件都用通行证登录，本服务不再开放注册 |
 | `XYNOTE_CORS_ORIGINS` | 空 | 允许调用接口的网站，逗号分隔，官方填 `https://fwpt.cn` |
-| `XYNOTE_LICENSE_KEY_FILE` | 空 | 永久版签名私钥文件（`tools/license keygen` 生成）；未设置时永久版不开放购买 |
-| `XYNOTE_PRICE_SYNC_YEAR_CENTS` | `990` | 官方云同步一年的价格（分） |
-| `XYNOTE_PRICE_LIFETIME_CENTS` | `9900` | 永久版价格（分） |
-| `XYNOTE_SYNC_QUOTA_MB` | `10240` | 购买云同步后的空间 |
+| `XYNOTE_LICENSE_KEY_FILE` | 空 | 永久版签名私钥文件（`tools/license keygen` 生成）；未设置时无法登录激活永久版 |
+| `XYNOTE_PRICE_LIFETIME_CENTS` | `990` | 永久版价格（分） |
 | `XYNOTE_ADMIN_TOKEN` | 空 | 管理接口令牌（至少 16 位），为空时管理接口关闭；命令行 `gen-codes` 不需要 |
 
-## 官网购买（fwpt.cn）
+## 永久版授权与官网购买（fwpt.cn）
 
-官方部署时，购买在网站完成，软件内不做支付：
+官方部署时，本服务同时负责小悦笔记永久版的授权：
 
-1. 用户在 `fwpt.cn/xynote.html` 登录 FWPT 通行证，选择「官方云同步 · 一年 ¥9.9」或「永久版 · 终生 ¥99」下单。
-2. 页面显示金额、收款码和 4 位**付款码**，用户付款时把付款码写在备注里。
-3. 管理员打开 `fwpt.cn/xynote-admin.html`（通行证角色为 ADMIN，或输入 `XYNOTE_ADMIN_TOKEN`），核对到账后点「确认到账」：
-   - 云同步：该账号有效期顺延 365 天（未过期时接在原有效期之后），空间提升到 `XYNOTE_SYNC_QUOTA_MB`；
-   - 永久版：用 `XYNOTE_LICENSE_KEY_FILE` 签发授权码，显示在用户的「我的订单」里。
-4. 用户在软件「设置 → 同步 → 官方云同步」用同一个通行证登录，云同步生效，永久版自动激活。
+- **免费一年**：通行证账号第一次在软件里登录（`POST /api/v1/license/activate`），自动获得一年永久版权限。
+- **购买**：用户在软件或 `fwpt.cn/xynote.html` 下单（永久版 ¥9.9，`XYNOTE_PRICE_LIFETIME_CENTS` 可调），扫码付款后把付款截图和订单信息发到 admin@fwpt.cn。
+- **发码**：管理员在 `fwpt.cn/xynote-admin.html` 核对无误后点「确认到账」，系统生成绑定购买账号的激活码 `XYP-…`（最多 3 台电脑），再点「发送邮件」把激活码发给用户；激活码也显示在用户的「我的订单」。
+- **激活**：软件登录通行证后输入激活码。每次登录 / 激活都会记录机器指纹、名称、系统和版本（`devices` 表），管理页可以看到统计、每个激活码已激活的电脑，并可「清空电脑」或停用激活码。
+- 授权令牌用 `XYNOTE_LICENSE_KEY_FILE` 的私钥签名（绑定机器，免费期带到期时间），软件内置对应公钥离线校验。
 
-官方部署示例（同步服务放在 `sync.fwpt.cn`，通行证后端在本机 8088）：
+官方部署示例（服务放在 `sync.fwpt.cn`，通行证后端在本机 8088）：
 
 ```bash
 docker run -d --name xynote-sync -p 127.0.0.1:8787:8787 \
   -v xynote-data:/data -v /etc/xynote/license.key:/keys/license.key:ro \
-  -e XYNOTE_REQUIRE_SUBSCRIPTION=true \
   -e XYNOTE_ONEID_BASE=http://host.docker.internal:8088 --add-host=host.docker.internal:host-gateway \
   -e XYNOTE_CORS_ORIGINS=https://fwpt.cn \
   -e XYNOTE_LICENSE_KEY_FILE=/keys/license.key \
   xynote-sync-server
 ```
 
-接口：`GET /api/v1/store/products`、`GET|POST /api/v1/store/orders`、`POST /api/v1/store/orders/{id}/cancel`、`GET /api/v1/licenses`；管理：`GET /api/v1/admin/orders?status=pending`、`POST /api/v1/admin/orders/{id}/confirm|reject`。
+手动生成激活码（赠送、活动）：
 
-## 激活码（批量发放、活动赠送）
+```bash
+docker exec xynote-sync xynote-sync-server gen-license-codes --count 10 --note "活动赠送"
+```
 
-除了官网下单，也可以生成激活码用于赠送或批量发放：用户在客户端「设置 → 同步 → 官方云同步」登录后输入激活码即可开通；续期时天数接在当前有效期之后。激活码形如 `XYN-7K2M-Q9TP-4HXW-RC3D`，每个只能使用一次，数据库只保存其哈希。
+接口：`POST /api/v1/license/activate`（`{machineId, machineName, os, appVersion, code?}`）、`POST /api/v1/license/deactivate`、`GET /api/v1/store/products`、`GET|POST /api/v1/store/orders`、`POST /api/v1/store/orders/{id}/cancel`；管理：`GET /api/v1/admin/stats`、`GET /api/v1/admin/orders`、`POST /api/v1/admin/orders/{id}/confirm|reject`、`GET|POST /api/v1/admin/license-codes`、`POST /api/v1/admin/license-codes/{code}/reset|revoke`。
+
+## 同步订阅激活码（自建服务器）
+
+自建服务器开启 `XYNOTE_REQUIRE_SUBSCRIPTION=true` 时，可以用同步订阅激活码给用户开通云同步：用户在客户端「设置 → 同步 → 自建服务器」登录后输入激活码，续期时天数接在当前有效期之后。激活码形如 `XYN-7K2M-Q9TP-4HXW-RC3D`，每个只能使用一次，数据库只保存其哈希。（与永久版激活码 `XYP-…` 不同。）
 
 批量生成（每行一个，可直接导入官网的发卡系统）：
 

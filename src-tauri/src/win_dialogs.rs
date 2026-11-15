@@ -664,6 +664,40 @@ pub fn save_markdown_file_dialog_sync(
     }
 }
 
+/// 通用「另存为」：只选路径，不写文件
+pub fn pick_save_path_dialog_sync(title: String, default_name: String, ext: String, label: String) -> Result<Option<String>, AppError> {
+    let exts = [ext.as_str()];
+    let clean_name = {
+        let trimmed = default_name.trim();
+        if trimmed.is_empty() {
+            format!("Untitled.{}", ext)
+        } else {
+            ensure_default_extension(trimmed, &exts, &ext)
+        }
+    };
+    #[cfg(target_os = "windows")]
+    {
+        let picked = imp::execute_file_dialog_sta(
+            imp::DialogSpec {
+                is_save: true,
+                pick_folders: false,
+                title: Some(title),
+                default_dir: None,
+                default_filename: Some(clean_name),
+                default_ext: Some(ext.clone()),
+                filters: vec![(format!("{} (*.{})", label, ext), format!("*.{}", ext))],
+            },
+            true,
+        )?;
+        Ok(picked.map(|p| ensure_default_extension(&p, &exts, &ext)))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let picked = rfd::FileDialog::new().set_title(&title).set_file_name(&clean_name).add_filter(&label, &exts).save_file();
+        Ok(picked.map(|p| ensure_default_extension(&normalize_win32_path_str(&p.to_string_lossy()), &exts, &ext)))
+    }
+}
+
 pub fn pick_save_zip_path_dialog_sync(default_name: String) -> Result<Option<String>, AppError> {
     let clean_name = {
         let trimmed = default_name.trim();

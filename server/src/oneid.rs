@@ -15,6 +15,8 @@ pub struct OneIdUser {
     /// 展示用：昵称 / 用户名 / 邮箱
     pub display: String,
     pub role: String,
+    /// 通行证绑定的邮箱（用于发送激活码）
+    pub email: Option<String>,
 }
 
 fn agent() -> ureq::Agent {
@@ -46,7 +48,12 @@ pub fn parse_profile(body: &Value) -> Option<OneIdUser> {
         _ => format!("oneid_user:{}", text("username")?.to_lowercase()),
     };
     let display = text("nickname").or_else(|| text("username")).or_else(|| text("email")).unwrap_or_else(|| key.clone());
-    Some(OneIdUser { key, display, role: text("role").unwrap_or_default().to_uppercase() })
+    Some(OneIdUser {
+        key,
+        display,
+        role: text("role").unwrap_or_default().to_uppercase(),
+        email: text("email").filter(|e| e.contains('@')),
+    })
 }
 
 /// 用 JWT 换取通行证资料；Ok(None) 表示令牌无效
@@ -99,9 +106,10 @@ mod tests {
     #[test]
     fn parses_profiles() {
         let u = parse_profile(&json!({"code":"00000","data":{"id":42,"username":"wm","nickname":"小王","role":"admin"}})).unwrap();
-        assert_eq!(u, OneIdUser { key: "oneid:42".into(), display: "小王".into(), role: "ADMIN".into() });
+        assert_eq!(u, OneIdUser { key: "oneid:42".into(), display: "小王".into(), role: "ADMIN".into(), email: None });
         let u = parse_profile(&json!({"success":true,"data":{"username":"Bob","email":"b@x.cn"}})).unwrap();
         assert_eq!(u.key, "oneid_user:bob");
+        assert_eq!(u.email.as_deref(), Some("b@x.cn"));
         assert!(parse_profile(&json!({"code":"A0301","message":"token expired"})).is_none());
     }
 }

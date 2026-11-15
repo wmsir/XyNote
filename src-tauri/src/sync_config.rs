@@ -216,7 +216,6 @@ pub fn auth(db: &Database, official: bool, action: &str, email: &str, password: 
     if official {
         db.set_setting(S_OFFICIAL_TOKEN, &res.token)?;
         db.set_setting(K_OFFICIAL_EMAIL, &res.account.email)?;
-        pickup_licenses(db, &url, &res.token);
     } else {
         db.set_setting(S_SERVER_TOKEN, &res.token)?;
         db.set_setting(K_SERVER_EMAIL, &res.account.email)?;
@@ -240,26 +239,9 @@ pub fn account(db: &Database, official: bool) -> Result<AccountInfo, AppError> {
     } else {
         (get(db, K_SERVER_URL)?, get(db, S_SERVER_TOKEN)?)
     };
-    let remote = ServerRemote::new(&url, &token)?;
-    let info = remote.account()?;
-    if official {
-        pickup_licenses(db, &url, &token);
-    }
-    Ok(info)
+    ServerRemote::new(&url, &token)?.account()
 }
 
-/// 官网用同一通行证买过永久版时，登录后自动激活（失败不影响登录）
-fn pickup_licenses(db: &Database, url: &str, token: &str) {
-    if crate::license::is_pro(db) {
-        return;
-    }
-    let Ok(list) = ServerRemote::new(url, token).and_then(|r| r.licenses()) else { return };
-    for lic in list {
-        if crate::license::activate(db, &lic).is_ok() {
-            break;
-        }
-    }
-}
 
 pub fn redeem(db: &Database, official: bool, code: &str) -> Result<AccountInfo, AppError> {
     if code.trim().is_empty() {
