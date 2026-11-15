@@ -424,6 +424,83 @@ pub fn set_watched_paths(
     })
 }
 
+/// 用系统默认浏览器打开网址（只允许 http / https）
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let u = url.trim();
+    if !(u.starts_with("https://") || u.starts_with("http://")) || u.chars().any(|c| c.is_whitespace() || c == '"') {
+        return Err("只能打开 http / https 网址".into());
+    }
+    #[cfg(target_os = "windows")]
+    let res = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", u]).spawn();
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(u).spawn();
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let res = std::process::Command::new("xdg-open").arg(u).spawn();
+    res.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/* ---------------- 同步 ---------------- */
+
+#[tauri::command]
+pub fn sync_get_config(db: State<'_, Database>) -> Result<crate::sync_config::SyncConfigView, String> {
+    crate::sync_config::load_view(&db).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn sync_save_config(
+    db: State<'_, Database>,
+    input: crate::sync_config::SyncConfigInput,
+) -> Result<crate::sync_config::SyncConfigView, String> {
+    crate::sync_config::save_config(&db, input).map_err(Into::into)
+}
+
+/// 立即同步（在后台线程执行，不阻塞界面）；本地模式返回 null
+#[tauri::command]
+pub async fn sync_run(app: AppHandle) -> Result<Option<crate::sync::SyncReport>, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::sync_config::sync_now(&db).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 登录或注册同步服务器（official = true 时为官方服务；action = "login" | "register"）
+#[tauri::command]
+pub async fn sync_auth(
+    app: AppHandle,
+    official: bool,
+    action: String,
+    email: String,
+    password: String,
+) -> Result<crate::sync_remote::AccountInfo, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::sync_config::auth(&db, official, &action, &email, &password).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn sync_account(app: AppHandle, official: bool) -> Result<crate::sync_remote::AccountInfo, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::sync_config::account(&db, official).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn sync_logout(db: State<'_, Database>, official: bool) -> Result<(), String> {
+    crate::sync_config::logout(&db, official).map_err(Into::into)
+}
+
 #[tauri::command]
 pub fn list_backups(db: State<'_, Database>) -> Result<Vec<BackupEntry>, String> {
     db.list_backups().map_err(Into::into)

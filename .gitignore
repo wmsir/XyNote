@@ -34,3 +34,5 @@ notion-config.json
 *.db
 *.db-wal
 *.db-shm
+/server/target
+/server/data

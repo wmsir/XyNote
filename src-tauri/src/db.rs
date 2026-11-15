@@ -350,6 +350,8 @@ impl Database {
             END;
             ",
         )?;
+        // 同步基线与删除墓碑（见 sync.rs）
+        conn.execute_batch(crate::sync::SCHEMA_SQL)?;
 
         // Seed default settings if absent
         let default_settings = [
@@ -2610,9 +2612,27 @@ impl Database {
         let mut out = HashMap::new();
         for r in rows {
             let (k, v) = r?;
+            // 同步密码、令牌等只在后端使用，不返回给界面
+            if k.starts_with(crate::sync_config::SECRET_PREFIX) {
+                continue;
+            }
             out.insert(k, v);
         }
         Ok(out)
+    }
+
+    /// 读取单个设置（含后端专用的密钥类设置）
+    pub fn get_setting_raw(&self, key: &str) -> Result<Option<String>, AppError> {
+        let conn = self.lock()?;
+        Ok(conn
+            .query_row("SELECT value FROM app_settings WHERE key = ?1", params![key], |r| r.get::<_, String>(0))
+            .optional()?)
+    }
+
+    pub fn delete_setting(&self, key: &str) -> Result<(), AppError> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+        Ok(())
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
