@@ -3,6 +3,7 @@ import {
   AlignCenter,
   Archive,
   BadgeCheck,
+  MessageSquareText,
   Cloud,
   BookOpen,
   CheckCircle2,
@@ -55,6 +56,7 @@ import { ThemeStudioPanel } from "./ThemeStudioPanel";
 import { XyLogoIcon } from "./XyLogoIcon";
 import { SyncSettingsPanel } from "./SyncSettingsPanel";
 import { ProSettingsPanel } from "./ProSettingsPanel";
+import { FeedbackPanel } from "./FeedbackPanel";
 import type { LicenseStatus } from "../../api/pro";
 import type { SyncConfig } from "../../api/sync";
 
@@ -62,6 +64,7 @@ export type SettingsTabId =
   | "storage"
   | "sync"
   | "pro"
+  | "feedback"
   | "themes"
   | "appearance"
   | "shortcuts"
@@ -521,6 +524,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: "appearance", label: "外观与排版", icon: <Palette size={15} /> },
     { id: "backup", label: "备份与数据安全", icon: <ShieldCheck size={15} /> },
     { id: "pro", label: "永久版", icon: <BadgeCheck size={15} /> },
+    { id: "feedback", label: "意见反馈", icon: <MessageSquareText size={15} /> },
     { id: "about", label: "关于软件", icon: <Info size={15} /> },
   ];
 
@@ -1474,6 +1478,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === "pro" && (
               <ProSettingsPanel onLicenseChanged={onLicenseChanged} onNotify={onNotify} />
             )}
+
+            {activeTab === "feedback" && <FeedbackPanel onNotify={onNotify} />}
 
             {activeTab === "themes" && !proActive && (
               <div className="nb-settings-section-stack">

@@ -111,6 +111,7 @@ pub fn run() {
             commands::license_refresh,
             commands::license_logout,
             commands::license_create_order,
+            commands::feedback_submit,
             commands::export_page_html,
             commands::export_page_file,
             commands::page_versions_list,

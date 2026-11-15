@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小悦笔记 · 用户中心</title>
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1f2328; --ink-2: #57606a; --ink-3: #8c959f;
+    --line: #e6e6e3; --accent: #2383e2; --accent-ink: #1b6ec2; --accent-wash: rgba(35,131,226,.08);
+    --ok: #0f8a5f; --warn: #b26a00; --bad: #c43c3c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #191919; --card: #202020; --ink: #e8e8e6; --ink-2: #a6a6a3; --ink-3: #7c7c79; --line: #2f2f2f;
+      --accent: #529cca; --accent-ink: #7ab6dc; --accent-wash: rgba(82,156,202,.14); --ok: #34c38f; --warn: #f0b04a; --bad: #f07878; }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  a { color: var(--accent-ink); }
+  header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 880px; margin: 0 auto; padding: 0 20px; height: 56px; display: flex; align-items: center; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; color: var(--ink); }
+  .mark { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 800; }
+  .brand small { font-weight: 500; color: var(--ink-3); }
+  .who { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
+  main { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; display: flex; flex-direction: column; gap: 18px; }
+  section.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+  h2 { font-size: 16px; margin-bottom: 4px; }
+  .sub { color: var(--ink-2); font-size: 13.5px; }
+  .muted { color: var(--ink-3); font-size: 12.5px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .spread { justify-content: space-between; }
+  .btn { font: inherit; font-size: 14px; font-weight: 600; padding: 8px 16px; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-ink); color: #fff; }
+  .btn.danger { color: var(--bad); }
+  .btn.sm { font-size: 12.5px; padding: 5px 11px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); flex: 1; min-width: 180px; }
+  input, textarea, select { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
+  textarea { min-height: 110px; resize: vertical; }
+  .status { display: flex; gap: 14px; align-items: flex-start; }
+  .badge { flex-shrink: 0; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-wash); color: var(--accent-ink); font-weight: 800; }
+  .status strong { font-size: 18px; display: block; }
+  .list { display: flex; flex-direction: column; margin-top: 14px; border-top: 1px solid var(--line); }
+  .item { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .item .grow { flex: 1; min-width: 200px; }
+  .tag { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); } .tag.dim { color: var(--ink-3); }
+  code { font-family: var(--mono); font-size: 13px; }
+  .code { font-family: var(--mono); font-size: 13.5px; padding: 6px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); word-break: break-all; }
+  .products { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }
+  .product { border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .product .price { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+  .alert { padding: 10px 12px; border-radius: 10px; font-size: 13.5px; background: rgba(196,60,60,.1); color: var(--bad); }
+  .note { padding: 10px 12px; border-radius: 10px; font-size: 13.5px; background: var(--accent-wash); color: var(--ink-2); }
+  .reply { margin-top: 6px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--accent-wash); border-radius: 0 8px 8px 0; font-size: 13.5px; }
+  dialog { border: none; border-radius: 18px; padding: 0; width: min(460px, 94vw); background: var(--card); color: var(--ink); margin: auto; max-height: 94vh; overflow-y: auto; }
+  dialog::backdrop { background: rgba(15,23,42,.55); }
+  .dlg { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+  .amount { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; border-radius: 12px; background: var(--accent-wash); }
+  .amount strong { font-size: 24px; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button { flex: 1; }
+  .tabs button[aria-selected="true"] { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-wash); }
+  .qr { display: grid; place-items: center; }
+  .qr img { width: 200px; max-height: 260px; object-fit: contain; border-radius: 12px; background: #fff; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13.5px; }
+  dt { color: var(--ink-3); } dd { margin: 0; word-break: break-all; }
+  .ref { font-family: var(--mono); font-weight: 700; letter-spacing: .15em; color: var(--accent-ink); }
+  ol { padding-left: 18px; font-size: 13.5px; color: var(--ink-2); line-height: 1.75; }
+  .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); background: #1d1d1f; color: #fff; padding: 9px 18px; border-radius: 999px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
+  .toast.show { opacity: 1; }
+  [hidden] { display: none !important; }
+  @media (max-width: 560px) { section.card { padding: 18px; } .bar { padding: 0 14px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="brand" href="./"><span class="mark" aria-hidden="true">Y</span>小悦笔记 <small>用户中心</small></a>
+    <div class="who" id="who"></div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="card" id="loginCard" hidden>
+    <h2>登录 FWPT 通行证</h2>
+    <p class="sub">在软件里第一次登录送一年永久版（1 台电脑）；购买的激活码也绑定在通行证账号上。</p>
+    <form id="loginForm" class="row" style="margin-top:16px; align-items:flex-end">
+      <label>通行证账号<input id="lAccount" autocomplete="username" placeholder="手机号 / 邮箱 / 用户名" required></label>
+      <label>密码<input id="lPassword" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit" id="lSubmit">登录</button>
+    </form>
+    <p class="muted" style="margin-top:10px" id="registerHint">还没有通行证？<a href="/?action=register">去注册</a></p>
+    <div class="alert" id="loginError" hidden style="margin-top:12px"></div>
+  </section>
+
+  <div id="app" hidden style="display:flex; flex-direction:column; gap:18px">
+    <section class="card" id="licenseCard" aria-labelledby="licTitle">
+      <div class="status">
+        <div class="badge" id="licBadge" aria-hidden="true">Y</div>
+        <div style="flex:1">
+          <strong id="licTitle"></strong>
+          <div class="sub" id="licSub"></div>
+        </div>
+      </div>
+      <div id="codes"></div>
+    </section>
+
+    <section class="card" id="devicesCard" aria-labelledby="devTitle">
+      <div class="row spread">
+        <div>
+          <h2 id="devTitle">我的电脑</h2>
+          <p class="sub" id="devSub"></p>
+        </div>
+      </div>
+      <div class="list" id="devices"></div>
+    </section>
+
+    <section class="card" id="buyCard" aria-labelledby="buyTitle">
+      <h2 id="buyTitle">购买</h2>
+      <p class="sub">扫码付款后，把付款截图和订单信息发到 <a href="mailto:admin@fwpt.cn">admin@fwpt.cn</a>，核对无误后激活码会发到你的邮箱，也会显示在下面的订单里。</p>
+      <div class="products" id="products"></div>
+    </section>
+
+    <section class="card" id="ordersCard" aria-labelledby="ordTitle">
+      <h2 id="ordTitle">我的订单</h2>
+      <div class="list" id="orders"></div>
+    </section>
+
+    <section class="card" id="feedbackCard" aria-labelledby="fbTitle">
+      <h2 id="fbTitle">意见反馈</h2>
+      <p class="sub">遇到问题或有想法，都可以告诉我们。处理后的回复会显示在这里。</p>
+      <form id="fbForm" style="display:flex; flex-direction:column; gap:12px; margin-top:14px">
+        <div class="row">
+          <label style="max-width:160px">类型
+            <select id="fbCategory"><option value="idea">建议</option><option value="bug">问题</option><option value="other">其他</option></select>
+          </label>
+          <label>联系方式（选填）<input id="fbContact" placeholder="邮箱或微信，方便我们回复你"></label>
+        </div>
+        <label>内容<textarea id="fbContent" maxlength="5000" placeholder="写下你的问题或建议" required></textarea></label>
+        <div class="row"><button class="btn primary" type="submit" id="fbSubmit">提交反馈</button></div>
+      </form>
+      <div class="list" id="fbList"></div>
+    </section>
+
+    <p class="muted" style="text-align:center">
+      <a href="https://github.com/wmsir/XyNote/releases/latest" target="_blank" rel="noopener">下载小悦笔记</a> ·
+      <a href="/xynote.html">产品介绍</a> · 客服邮箱 <a href="mailto:admin@fwpt.cn">admin@fwpt.cn</a>
+    </p>
+  </div>
+</main>
+
+<dialog id="payDlg" aria-labelledby="payTitle">
+  <div class="dlg">
+    <div class="row spread"><h2 id="payTitle">扫码付款</h2><button class="btn sm" type="button" data-close>关闭</button></div>
+    <div class="amount"><span id="payName"></span><strong id="payAmount"></strong></div>
+    <div class="tabs" role="tablist">
+      <button class="btn sm" type="button" role="tab" data-pay="wechat" aria-selected="true">微信</button>
+      <button class="btn sm" type="button" role="tab" data-pay="alipay" aria-selected="false">支付宝</button>
+    </div>
+    <div class="qr"><img id="payQr" alt="收款码"></div>
+    <dl id="payInfo"></dl>
+    <ol>
+      <li>扫码付款，备注填写付款码</li>
+      <li>截图付款记录和上面的订单信息，发送到 <b>admin@fwpt.cn</b></li>
+      <li>核对无误后，激活码会发到你的邮箱，也会显示在「我的订单」</li>
+    </ol>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" type="button" id="payCopy">复制订单信息</button>
+      <a class="btn primary" id="payMail" href="mailto:admin@fwpt.cn">发送邮件</a>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  'use strict';
+  // 页面挂在 /xynote/ 下时，接口在 /xynote/api/v1/…
+  if (!location.pathname.endsWith('/')) { location.replace(location.pathname + '/' + location.search + location.hash); return; }
+  var BASE = location.pathname.replace(/\/$/, '');
+  var SUPPORT = 'admin@fwpt.cn';
+  var QR = { wechat: '/images/donate_wechat.png', alipay: '/images/donate_alipay.png' };
+  var STATUS = { pending: ['待确认', 'warn'], paid: ['已交付', 'ok'], cancelled: ['已取消', 'dim'], rejected: ['未到账', 'bad'] };
+  var $ = function (id) { return document.getElementById(id); };
+  var me = null, orders = [];
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function day(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }); }
+  function time(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function yuan(c) { return '¥' + (c / 100).toFixed(2); }
+  var tt;
+  function toast(m) { var t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); }, 2600); }
+
+  // 登录令牌：本页登录的、或 fwpt.cn 首页已登录的通行证
+  function token() {
+    try { return localStorage.getItem('xynote_token') || localStorage.getItem('fwpt_auth_token') || localStorage.getItem('fwpt_token'); } catch (e) { return null; }
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    var h = { 'Accept': 'application/json' };
+    var t = token(); if (t) h.Authorization = 'Bearer ' + t;
+    if (opts.body) h['Content-Type'] = 'application/json';
+    return fetch(BASE + path, { method: opts.method || 'GET', headers: h, body: opts.body ? JSON.stringify(opts.body) : undefined })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) { var e = new Error(d.message || ('服务暂时不可用（' + r.status + '）')); e.status = r.status; throw e; }
+          return d;
+        });
+      }, function () { throw new Error('无法连接小悦笔记服务，请稍后再试'); });
+  }
+
+  function showLogin(msg) {
+    $('app').hidden = true; $('loginCard').hidden = false; $('who').innerHTML = '';
+    $('registerHint').hidden = !/fwpt\.cn$/.test(location.hostname);
+    if (msg) { $('loginError').textContent = msg; $('loginError').hidden = false; }
+  }
+
+  $('loginForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('lSubmit').disabled = true; $('loginError').hidden = true;
+    api('/api/v1/auth/login', { method: 'POST', body: { email: $('lAccount').value.trim(), password: $('lPassword').value } })
+      .then(function (d) { localStorage.setItem('xynote_token', d.token); $('lPassword').value = ''; load(); })
+      .catch(function (err) { $('loginError').textContent = err.message; $('loginError').hidden = false; })
+      .then(function () { $('lSubmit').disabled = false; });
+  });
+
+  function logout() { try { localStorage.removeItem('xynote_token'); } catch (e) {} showLogin(); }
+
+  function renderLicense() {
+    var lic = me.license, codes = lic.codes.filter(function (c) { return !c.revoked; });
+    var title, sub, badge;
+    if (codes.length) {
+      var max = codes.reduce(function (s, c) { return s + c.maxDevices; }, 0);
+      title = '永久版'; badge = '✓'; sub = '可在 ' + max + ' 台电脑上使用，已用 ' + lic.devices.filter(function (d) { return d.kind === 'lifetime'; }).length + ' 台。';
+    } else if (lic.trialActive) {
+      title = '免费使用中，到 ' + day(lic.trialUntil); badge = '1';
+      sub = '免费账号可在 1 台电脑上使用永久版功能。购买永久版后可用 3 台，不够还能单独增加。';
+    } else if (lic.trialUntil) {
+      title = '一年免费期已结束'; badge = '!'; sub = '购买永久版后，在软件「设置 → 永久版」输入激活码即可继续使用。';
+    } else {
+      title = '还没有开始使用'; badge = 'Y'; sub = '在小悦笔记「设置 → 永久版」登录这个通行证，即可免费使用一年。';
+    }
+    $('licTitle').textContent = title; $('licSub').textContent = sub; $('licBadge').textContent = badge;
+    $('codes').innerHTML = codes.length ? '<div class="list">' + codes.map(function (c) {
+      return '<div class="item"><span class="code">' + esc(c.code) + '</span><span class="muted grow">已用 ' + c.devicesUsed + ' / ' + c.maxDevices + ' 台</span>' +
+        '<button class="btn sm" type="button" data-copy="' + esc(c.code) + '">复制激活码</button></div>';
+    }).join('') + '</div>' : '';
+  }
+
+  function renderDevices() {
+    var lic = me.license, list = lic.devices;
+    $('devSub').textContent = list.length
+      ? '换电脑或电脑丢失时，可以在这里解绑，空出位置给新电脑。'
+      : '在软件里登录或激活后，电脑会出现在这里。';
+    $('devices').innerHTML = list.map(function (d) {
+      return '<div class="item"><div class="grow"><b>' + esc(d.machineName || '未知电脑') + '</b> <span class="tag ' + (d.kind === 'lifetime' ? 'ok' : 'warn') + '">' + (d.kind === 'lifetime' ? '永久版' : '免费账号') + '</span>' +
+        '<div class="muted">' + esc(d.os) + (d.appVersion ? ' · v' + esc(d.appVersion) : '') + ' · 最近使用 ' + esc(time(d.lastAt)) + '</div></div>' +
+        '<button class="btn sm danger" type="button" data-unbind="' + esc(d.machineId) + '">解绑</button></div>';
+    }).join('');
+  }
+
+  function renderProducts() {
+    var hasCode = me.license.codes.some(function (c) { return !c.revoked; });
+    $('products').innerHTML = me.prices.map(function (p) {
+      var can = p.id === 'lifetime' ? !hasCode : hasCode;
+      var why = p.id === 'lifetime' ? (hasCode ? '你已经是永久版' : '') : (hasCode ? '' : '购买永久版后可用');
+      return '<div class="product"><b>' + esc(p.name) + '</b><div class="price">' + yuan(p.amountCents).replace('.00', '') + '</div>' +
+        '<div class="sub" style="flex:1">' + esc(p.desc) + '</div>' +
+        '<button class="btn ' + (can ? 'primary' : '') + '" type="button" data-buy="' + esc(p.id) + '"' + (can ? '' : ' disabled') + '>' + (can ? '购买' : esc(why)) + '</button></div>';
+    }).join('');
+  }
+
+  function renderOrders() {
+    if (!orders.length) { $('orders').innerHTML = '<p class="muted" style="padding:12px 0">还没有订单。</p>'; return; }
+    $('orders').innerHTML = orders.map(function (o) {
+      var s = STATUS[o.status] || [o.status, 'dim'];
+      var body = '';
+      if (o.status === 'pending') body = '付款 ' + yuan(o.amountCents) + '，备注付款码 <b class="ref">' + esc(o.payRef) + '</b>，再把付款截图和订单信息发到 ' + SUPPORT + '。';
+      else if (o.status === 'paid' && o.product === 'device_slot') body = esc(o.adminNote || '已增加 1 台电脑');
+      else if (o.status === 'paid' && o.license) body = '激活码 <span class="code">' + esc(o.license) + '</span> <button class="btn sm" type="button" data-copy="' + esc(o.license) + '">复制</button><div class="muted">在软件「设置 → 永久版」登录此通行证后输入，可在 3 台电脑使用。</div>';
+      else if (o.status === 'rejected') body = '没有核对到这笔付款' + (o.adminNote ? '：' + esc(o.adminNote) : '') + '。如已付款，请发邮件到 ' + SUPPORT + '。';
+      var actions = o.status === 'pending' ? '<button class="btn sm primary" type="button" data-pay-order="' + esc(o.id) + '">去付款</button><button class="btn sm" type="button" data-cancel="' + esc(o.id) + '">取消</button>' : '';
+      return '<div class="item"><div class="grow"><b>' + esc(o.productName) + ' · ' + yuan(o.amountCents) + '</b> <span class="tag ' + s[1] + '">' + s[0] + '</span>' +
+        '<div class="muted">订单号 ' + esc(o.id) + ' · ' + esc(time(o.createdAt)) + '</div><div class="sub" style="margin-top:4px">' + body + '</div></div>' + actions + '</div>';
+    }).join('');
+  }
+
+  function renderFeedback(list) {
+    $('fbList').innerHTML = list.length ? list.map(function (f) {
+      return '<div class="item"><div class="grow"><span class="tag ' + (f.status === 'done' ? 'ok' : 'dim') + '">' + (f.status === 'done' ? '已处理' : '待处理') + '</span> <span class="muted">' + esc(time(f.createdAt)) + '</span>' +
+        '<div style="white-space:pre-wrap; margin-top:4px">' + esc(f.content) + '</div>' + (f.reply ? '<div class="reply">回复：' + esc(f.reply) + '</div>' : '') + '</div></div>';
+    }).join('') : '';
+  }
+
+  function load() {
+    if (!token()) { showLogin(); return; }
+    Promise.all([api('/api/v1/me'), api('/api/v1/store/orders'), api('/api/v1/feedback/mine')]).then(function (r) {
+      me = r[0]; orders = r[1].orders || [];
+      $('loginCard').hidden = true; $('app').hidden = false;
+      $('who').innerHTML = '<span>' + esc(me.account) + '</span>' + (me.isAdmin ? '<a class="btn sm" href="admin/">管理后台</a>' : '') + '<button class="btn sm" type="button" id="logoutBtn">退出</button>';
+      $('logoutBtn').addEventListener('click', logout);
+      if (me.email && !$('fbContact').value) $('fbContact').value = me.email;
+      renderLicense(); renderDevices(); renderProducts(); renderOrders(); renderFeedback(r[2].feedback || []);
+    }).catch(function (e) {
+      if (e.status === 401) { try { localStorage.removeItem('xynote_token'); } catch (x) {} showLogin('登录已过期，请重新登录'); }
+      else showLogin(e.message);
+    });
+  }
+
+  // 付款对话框
+  var dlg = $('payDlg'), payText = '';
+  function setPay(kind) {
+    $('payQr').src = QR[kind];
+    dlg.querySelectorAll('[data-pay]').forEach(function (b) { b.setAttribute('aria-selected', String(b.getAttribute('data-pay') === kind)); });
+  }
+  dlg.querySelectorAll('[data-pay]').forEach(function (b) { b.addEventListener('click', function () { setPay(b.getAttribute('data-pay')); }); });
+  dlg.querySelector('[data-close]').addEventListener('click', function () { dlg.close(); });
+  $('payQr').addEventListener('error', function () { $('payQr').alt = '收款码加载失败，请发邮件到 ' + SUPPORT + ' 获取付款方式'; });
+  function openPay(o) {
+    $('payName').textContent = o.productName; $('payAmount').textContent = yuan(o.amountCents);
+    var rows = [['订单号', o.id], ['商品', o.productName], ['金额', yuan(o.amountCents)], ['付款码', o.payRef], ['通行证账号', me.account], ['下单时间', time(o.createdAt)]];
+    $('payInfo').innerHTML = rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd' + (r[0] === '付款码' ? ' class="ref"' : '') + '>' + esc(r[1]) + '</dd>'; }).join('');
+    payText = rows.map(function (r) { return r[0] + '：' + r[1]; }).join('\n');
+    $('payMail').href = 'mailto:' + SUPPORT + '?subject=' + encodeURIComponent('小悦笔记购买 ' + o.id) + '&body=' + encodeURIComponent(payText + '\n\n（请附上付款截图）');
+    setPay('wechat'); dlg.showModal();
+  }
+  $('payCopy').addEventListener('click', function () {
+    navigator.clipboard.writeText(payText).then(function () { toast('订单信息已复制'); }, function () { toast('复制失败，请直接截图'); });
+  });
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.copy) { navigator.clipboard.writeText(b.dataset.copy).then(function () { toast('已复制'); }, function () { toast('复制失败'); }); return; }
+    if (b.dataset.buy) {
+      b.disabled = true;
+      api('/api/v1/store/orders', { method: 'POST', body: { product: b.dataset.buy } })
+        .then(function (o) { orders.unshift(o); renderOrders(); openPay(o); })
+        .catch(function (err) { toast(err.message); }).then(function () { b.disabled = false; });
+      return;
+    }
+    if (b.dataset.payOrder) { var o = orders.filter(function (x) { return x.id === b.dataset.payOrder; })[0]; if (o) openPay(o); return; }
+    var confirmKey = b.dataset.cancel || b.dataset.unbind;
+    if (confirmKey) {
+      if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '再点一次确认'; return; }
+      var req = b.dataset.cancel
+        ? api('/api/v1/store/orders/' + encodeURIComponent(b.dataset.cancel) + '/cancel', { method: 'POST' })
+        : api('/api/v1/me/devices/' + encodeURIComponent(b.dataset.unbind) + '/unbind', { method: 'POST' });
+      req.then(function () { toast(b.dataset.cancel ? '订单已取消' : '已解绑，这台电脑需要重新登录激活'); load(); }).catch(function (err) { toast(err.message); });
+    }
+  });
+
+  $('fbForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('fbSubmit').disabled = true;
+    api('/api/v1/feedback', { method: 'POST', body: { category: $('fbCategory').value, content: $('fbContent').value, contact: $('fbContact').value, source: 'web' } })
+      .then(function () { $('fbContent').value = ''; toast('感谢反馈，我们会尽快处理'); return api('/api/v1/feedback/mine'); })
+      .then(function (d) { renderFeedback(d.feedback || []); })
+      .catch(function (err) { toast(err.message); })
+      .then(function () { $('fbSubmit').disabled = false; });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

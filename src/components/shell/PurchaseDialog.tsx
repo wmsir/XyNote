@@ -3,26 +3,29 @@ import { Copy, Mail, X } from "lucide-react";
 import wechatQr from "../../assets/pay/wechat.png";
 import alipayQr from "../../assets/pay/alipay.png";
 import { openExternalUrl, syncErrorText } from "../../api/sync";
-import { createProOrder, PRO_PRICE, PRO_SUPPORT_EMAIL, type LicenseStatus, type StoreOrder } from "../../api/pro";
+import { createProOrder, PRODUCT_INFO, PRO_SUPPORT_EMAIL, type LicenseStatus, type ProProduct, type StoreOrder } from "../../api/pro";
 
 export interface PurchaseDialogProps {
   status: LicenseStatus;
+  /** lifetime 永久版 / device_slot 增加 1 台电脑 */
+  product?: ProProduct;
   onClose: () => void;
   onNotify: (msg: string) => void;
 }
 
 /** 购买永久版：创建订单 → 扫码付款 → 截图连同订单信息发邮件 → 核对后收到激活码 */
-export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProps) {
+export function PurchaseDialog({ status, product = "lifetime", onClose, onNotify }: PurchaseDialogProps) {
+  const info = PRODUCT_INFO[product];
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pay, setPay] = useState<"wechat" | "alipay">("wechat");
 
   useEffect(() => {
     if (!status.loggedIn) return;
-    createProOrder()
+    createProOrder(product)
       .then(setOrder)
       .catch((e) => setError(syncErrorText(e)));
-  }, [status.loggedIn]);
+  }, [status.loggedIn, product]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -30,7 +33,7 @@ export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProp
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const amount = order ? `¥${(order.amountCents / 100).toFixed(2)}` : PRO_PRICE;
+  const amount = order ? `¥${(order.amountCents / 100).toFixed(2)}` : info.price;
   const orderText = order
     ? [
         `订单号：${order.id}`,
@@ -50,7 +53,7 @@ export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProp
   };
 
   const mail = () => {
-    const subject = `小悦笔记永久版购买 ${order?.id ?? ""}`;
+    const subject = `小悦笔记购买 ${info.name} ${order?.id ?? ""}`;
     const body = `${orderText}\n\n（请附上付款截图）`;
     openExternalUrl(`mailto:${PRO_SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`).catch(() =>
       onNotify(`请发邮件到 ${PRO_SUPPORT_EMAIL}`)
@@ -63,12 +66,12 @@ export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProp
         className="nb-modal-card nb-purchase-card"
         role="dialog"
         aria-modal="true"
-        aria-label="购买永久版"
+        aria-label={`购买${info.name}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="nb-modal-header">
           <div className="nb-modal-title">
-            <span>购买永久版</span>
+            <span>购买{info.name}</span>
           </div>
           <button type="button" className="nb-icon-btn" aria-label="关闭" onClick={onClose}>
             <X size={16} />
@@ -83,7 +86,7 @@ export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProp
           ) : (
             <>
               <div className="nb-purchase-amount">
-                <span>小悦笔记永久版 · 一次购买</span>
+                <span>{product === "device_slot" ? "增加 1 台电脑 · 加到你的激活码上" : "小悦笔记永久版 · 一次购买"}</span>
                 <strong>{amount}</strong>
               </div>
 
@@ -118,7 +121,11 @@ export function PurchaseDialog({ status, onClose, onNotify }: PurchaseDialogProp
                     <li>
                       截图付款记录和本订单信息，发送到 <b>{PRO_SUPPORT_EMAIL}</b>
                     </li>
-                    <li>核对无误后，激活码会发到你的邮箱，在「永久版」页输入即可；一个激活码可在 3 台电脑使用</li>
+                    {product === "device_slot" ? (
+                      <li>核对无误后，你的激活码会多出 1 台电脑的位置，在新电脑上登录通行证即可</li>
+                    ) : (
+                      <li>核对无误后，激活码会发到你的邮箱，在「永久版」页输入即可；一个激活码可在 3 台电脑使用</li>
+                    )}
                   </ol>
                 </div>
               </div>

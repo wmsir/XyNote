@@ -32,6 +32,8 @@ pub struct Config {
     pub license_key_file: Option<PathBuf>,
     /// 永久版价格（分）
     pub price_lifetime_cents: i64,
+    /// 增加 1 台电脑的价格（分）
+    pub price_device_slot_cents: i64,
 }
 
 impl Config {
@@ -59,6 +61,7 @@ impl Config {
                 .collect(),
             license_key_file: std::env::var("XYNOTE_LICENSE_KEY_FILE").ok().filter(|v| !v.trim().is_empty()).map(PathBuf::from),
             price_lifetime_cents: num("XYNOTE_PRICE_LIFETIME_CENTS", 990),
+            price_device_slot_cents: num("XYNOTE_PRICE_DEVICE_SLOT_CENTS", 300),
         }
     }
 }
@@ -140,6 +143,7 @@ impl OpenState for AppState {
             .map_err(|e| e.to_string())?;
         conn.execute_batch(crate::store::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::licensing::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        conn.execute_batch(crate::feedback::SCHEMA_SQL).map_err(|e| e.to_string())?;
         let signing_key = match &config.license_key_file {
             Some(path) => {
                 let raw = std::fs::read_to_string(path).map_err(|e| format!("读取永久版签名私钥失败：{}", e))?;
@@ -155,6 +159,18 @@ impl OpenState for AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        // 小悦笔记用户中心与管理后台（官方部署在 https://fwpt.cn/xynote/ 与 /xynote/admin/）
+        .route("/", get(web_user))
+        .route("/admin", get(web_admin_redirect))
+        .route("/admin/", get(web_admin))
+        .route("/api/v1/me", get(me))
+        .route("/api/v1/me/devices/:machine/unbind", post(me_unbind_device))
+        .route("/api/v1/feedback", post(feedback_submit))
+        .route("/api/v1/feedback/mine", get(feedback_mine))
+        .route("/api/v1/admin/feedback", get(admin_feedback_list))
+        .route("/api/v1/admin/feedback/:id", post(admin_feedback_update))
+        .route("/api/v1/admin/users", get(admin_users))
+        .route("/api/v1/admin/users/:id/reset-trial-device", post(admin_reset_trial_device))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/account", get(account))
@@ -806,7 +822,7 @@ async fn admin_set_plan(State(state): State<AppState>, headers: HeaderMap, Json(
 async fn store_products(State(state): State<AppState>) -> Response {
     let c = &state.config;
     Json(json!({
-        "products": crate::store::products(c.price_lifetime_cents),
+        "products": crate::store::products(c.price_lifetime_cents, c.price_device_slot_cents),
         "lifetimeAvailable": state.signing_key.is_some(),
     }))
     .into_response()
@@ -829,7 +845,7 @@ async fn create_order(State(state): State<AppState>, headers: HeaderMap, Json(in
         Ok(c) => c,
         Err(e) => return internal(e),
     };
-    let catalog = crate::store::products(state.config.price_lifetime_cents);
+    let catalog = crate::store::products(state.config.price_lifetime_cents, state.config.price_device_slot_cents);
     match crate::store::create_order(&conn, user.id, &input.product, &catalog) {
         Ok(o) => Json(o).into_response(),
         Err(m) => err(StatusCode::BAD_REQUEST, &m),
@@ -965,6 +981,7 @@ async fn admin_stats(State(state): State<AppState>, headers: HeaderMap) -> Respo
     match crate::licensing::stats(&conn) {
         Ok(mut v) => {
             v["pendingOrders"] = json!(pending);
+            v["newFeedback"] = json!(crate::feedback::count_new(&conn));
             Json(v).into_response()
         }
         Err(e) => internal(e),
@@ -1105,6 +1122,245 @@ async fn admin_reject_order(
     }
 }
 
+/* ---------------- 用户中心与管理后台页面 ---------------- */
+
+const USER_PAGE: &str = include_str!("../web/index.html");
+const ADMIN_PAGE: &str = include_str!("../web/admin.html");
+
+fn html(body: &'static str) -> Response {
+    (
+        [
+            ("content-type", "text/html; charset=utf-8"),
+            ("cache-control", "no-cache"),
+            ("x-frame-options", "DENY"),
+            ("referrer-policy", "same-origin"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn web_user() -> Response {
+    html(USER_PAGE)
+}
+
+async fn web_admin() -> Response {
+    html(ADMIN_PAGE)
+}
+
+async fn web_admin_redirect() -> Response {
+    (StatusCode::MOVED_PERMANENTLY, [("location", "admin/")]).into_response()
+}
+
+/* ---------------- 用户中心 ---------------- */
+
+/// 账号、授权、激活码、已绑定的电脑
+async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let email: Option<String> = conn
+        .query_row("SELECT contact_email FROM users WHERE id = ?1", params![user.id], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten()
+        .flatten();
+    match crate::licensing::summary(&conn, user.id) {
+        Ok(lic) => Json(json!({
+            "account": user.display(),
+            "email": email,
+            "isAdmin": user.role == "ADMIN" || user.role == "SUPER_ADMIN",
+            "license": lic,
+            "prices": crate::store::products(state.config.price_lifetime_cents, state.config.price_device_slot_cents),
+        }))
+        .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// 在用户中心解绑一台电脑（换电脑、电脑丢失时）
+async fn me_unbind_device(State(state): State<AppState>, headers: HeaderMap, Path(machine): Path<String>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::licensing::deactivate(&conn, user.id, &machine) {
+        Ok(0) => err(StatusCode::NOT_FOUND, "这台电脑没有绑定在你的账号上"),
+        Ok(n) => Json(json!({ "released": n })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/* ---------------- 意见反馈 ---------------- */
+
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-real-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// 提交反馈：登录与否都可以，登录时关联账号
+async fn feedback_submit(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<crate::feedback::FeedbackInput>) -> Response {
+    let user = if bearer(&headers).is_some() { authed(&state, &headers).await.ok() } else { None };
+    let key = match &user {
+        Some(u) => format!("u:{}", u.id),
+        None => format!("ip:{}", client_ip(&headers)),
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::feedback::submit(&conn, user.map(|u| u.id), &key, &input) {
+        Ok(id) => Json(json!({ "id": id })).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+async fn feedback_mine(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::feedback::list_mine(&conn, user.id) {
+        Ok(list) => Json(json!({ "feedback": list })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct StatusQuery {
+    status: Option<String>,
+}
+
+async fn admin_feedback_list(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<StatusQuery>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let status = q.status.filter(|s| !s.is_empty() && s != "all");
+    match crate::feedback::list_admin(&conn, status.as_deref()) {
+        Ok(list) => Json(json!({ "feedback": list })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct FeedbackUpdate {
+    status: Option<String>,
+    reply: Option<String>,
+}
+
+async fn admin_feedback_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(u): Json<FeedbackUpdate>,
+) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::feedback::update(&conn, id, u.status.as_deref(), u.reply.as_deref()) {
+        Ok(f) => Json(f).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+/* ---------------- 管理：用户 ---------------- */
+
+#[derive(Deserialize)]
+struct UsersQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn admin_users(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<UsersQuery>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let like = format!("%{}%", q.q.trim().replace('%', "\\%").replace('_', "\\_"));
+    let sql = "SELECT u.id, COALESCE(u.display_name, u.email), u.contact_email, u.created_at, u.trial_until,
+                 (SELECT COUNT(*) FROM license_codes c WHERE c.owner_user_id = u.id),
+                 (SELECT COALESCE(SUM(c.max_devices), 0) FROM license_codes c WHERE c.owner_user_id = u.id AND c.revoked = 0),
+                 (SELECT COUNT(*) FROM license_activations a JOIN license_codes c ON c.code = a.code WHERE c.owner_user_id = u.id),
+                 (SELECT COUNT(*) FROM trial_bindings t WHERE t.user_id = u.id),
+                 (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id),
+                 (SELECT MAX(d.last_at) FROM devices d WHERE d.user_id = u.id),
+                 (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status = 'paid')
+               FROM users u
+               WHERE ?1 = '%%' OR COALESCE(u.display_name, '') LIKE ?1 ESCAPE '\\' OR u.email LIKE ?1 ESCAPE '\\'
+                  OR COALESCE(u.contact_email, '') LIKE ?1 ESCAPE '\\'
+               ORDER BY COALESCE((SELECT MAX(d.last_at) FROM devices d WHERE d.user_id = u.id), u.created_at) DESC
+               LIMIT 300";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => return internal(e),
+    };
+    let rows = stmt.query_map(params![like], |r| {
+        Ok(json!({
+            "id": r.get::<_, i64>(0)?,
+            "account": r.get::<_, String>(1)?,
+            "email": r.get::<_, Option<String>>(2)?,
+            "createdAt": r.get::<_, String>(3)?,
+            "trialUntil": r.get::<_, Option<String>>(4)?,
+            "codes": r.get::<_, i64>(5)?,
+            "maxDevices": r.get::<_, i64>(6)?,
+            "licensedDevices": r.get::<_, i64>(7)?,
+            "trialDevice": r.get::<_, i64>(8)? > 0,
+            "devicesSeen": r.get::<_, i64>(9)?,
+            "lastSeen": r.get::<_, Option<String>>(10)?,
+            "paidOrders": r.get::<_, i64>(11)?,
+        }))
+    });
+    match rows {
+        Ok(it) => Json(json!({ "users": it.filter_map(Result::ok).collect::<Vec<_>>() })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// 客服：清除免费账号绑定的电脑
+async fn admin_reset_trial_device(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match conn.execute("DELETE FROM trial_bindings WHERE user_id = ?1", params![id]) {
+        Ok(n) => Json(json!({ "released": n })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1125,6 +1381,7 @@ mod tests {
             cors_origins: vec!["https://fwpt.cn".into()],
             license_key_file: None,
             price_lifetime_cents: 990,
+            price_device_slot_cents: 300,
         }
     }
 
@@ -1171,8 +1428,11 @@ mod tests {
 
         let (_, b) = call(&app, "GET", "/api/v1/store/products", None, vec![], false).await;
         let v = val(&b);
-        assert_eq!(v["products"].as_array().unwrap().len(), 1, "只卖永久版");
+        assert_eq!(v["products"].as_array().unwrap().len(), 2, "永久版 + 加购电脑");
+        assert_eq!(v["products"][0]["id"], "lifetime");
         assert_eq!(v["products"][0]["amountCents"], 990);
+        assert_eq!(v["products"][1]["id"], "device_slot");
+        assert_eq!(v["products"][1]["amountCents"], 300);
 
         let (s, b) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "lifetime"}).to_string().into_bytes(), true).await;
         assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
@@ -1238,9 +1498,12 @@ mod tests {
         assert_eq!(payload.machine.as_deref(), Some("machine-0000-0001"));
         let until = chrono::DateTime::parse_from_rfc3339(payload.expires_at.as_deref().unwrap()).unwrap();
         assert_eq!((until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_days(), 364);
-        // 再登录不会重新计算一年
-        let (_, v2) = activate(&app, &t, "machine-0000-0002", None).await;
+        // 同一台再登录不会重新计算一年；免费账号只能绑定 1 台电脑
+        let (_, v2) = activate(&app, &t, "machine-0000-0001", None).await;
         assert_eq!(v2["entitlement"]["trialUntil"], v["entitlement"]["trialUntil"]);
+        assert_eq!(v2["entitlement"]["maxDevices"], 1);
+        let (s, v3) = activate(&app, &t, "machine-0000-0002", None).await;
+        assert_eq!(s, StatusCode::CONFLICT, "{}", v3);
 
         // 激活码：大小写、空格不敏感，最多 3 台
         let messy = code.to_lowercase().replace('-', " ");
@@ -1253,9 +1516,9 @@ mod tests {
         assert_eq!((s, v["entitlement"]["devicesUsed"].clone()), (StatusCode::OK, json!(3)), "已激活的电脑重复激活不占位置");
         let (s, v) = activate(&app, &t, "machine-0000-0004", Some(&code)).await;
         assert_eq!(s, StatusCode::CONFLICT, "{}", v);
-        // 第 4 台电脑登录时激活码已满，仍在免费期内则返回免费期
-        let (_, v) = activate(&app, &t, "machine-0000-0004", None).await;
-        assert_eq!(v["entitlement"]["edition"], "trial");
+        // 第 4 台电脑：激活码已满，免费账号又已绑定别的电脑
+        let (s, _) = activate(&app, &t, "machine-0000-0004", None).await;
+        assert_eq!(s, StatusCode::CONFLICT);
 
         // 在一台电脑上停用后，第 4 台可以激活；不带激活码登录也会自动用上空位
         let (s, b) = call(&app, "POST", "/api/v1/license/deactivate", Some(&t), json!({"machineId": "machine-0000-0003"}).to_string().into_bytes(), true).await;
@@ -1307,6 +1570,119 @@ mod tests {
         let (_, b) = call(&app, "GET", "/api/v1/admin/stats", Some(ADMIN), vec![], false).await;
         let st = val(&b);
         assert_eq!((st["codesTotal"].clone(), st["devices"].clone()), (json!(2), json!(1)));
+    }
+
+    #[tokio::test]
+    async fn device_slots_user_center_and_unbind() {
+        let (state, _) = test_state_with_license(false);
+        let app = router(state);
+        let t = register_user(&app, "slot@example.com").await;
+
+        // 没有永久版不能单独买电脑数量
+        let (s, _) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "device_slot"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        let (_, b) = call(&app, "GET", "/api/v1/store/products", None, vec![], false).await;
+        assert_eq!(val(&b)["products"][1]["amountCents"], 300);
+
+        // 买永久版 → 3 台；再买 1 台 → 4 台
+        let (_, b) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "lifetime"}).to_string().into_bytes(), true).await;
+        let o1 = val(&b)["id"].as_str().unwrap().to_string();
+        call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", o1), Some(ADMIN), vec![], false).await;
+        let (s, b) = call(&app, "POST", "/api/v1/store/orders", Some(&t), json!({"product": "device_slot"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let o2 = val(&b)["id"].as_str().unwrap().to_string();
+        let (s, b) = call(&app, "POST", &format!("/api/v1/admin/orders/{}/confirm", o2), Some(ADMIN), vec![], false).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        assert!(val(&b)["adminNote"].as_str().unwrap().contains("增加 1 台"));
+        for i in 1..=4 {
+            let (s, v) = activate(&app, &t, &format!("machine-slot-000{}", i), None).await;
+            assert_eq!((s, v["entitlement"]["edition"].clone()), (StatusCode::OK, json!("lifetime")), "第 {} 台", i);
+        }
+        let (s, _) = activate(&app, &t, "machine-slot-0005", None).await;
+        assert_eq!(s, StatusCode::CONFLICT, "第 5 台超出");
+
+        // 用户中心：授权与电脑列表，解绑后空出位置
+        let (s, b) = call(&app, "GET", "/api/v1/me", Some(&t), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let me = val(&b);
+        assert_eq!(me["license"]["codes"][0]["maxDevices"], 4);
+        assert_eq!(me["license"]["devices"].as_array().unwrap().len(), 4);
+        assert_eq!(me["license"]["devices"][0]["machineName"].as_str().unwrap().starts_with("PC-"), true);
+        let (s, _) = call(&app, "POST", "/api/v1/me/devices/machine-slot-0002/unbind", Some(&t), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = call(&app, "POST", "/api/v1/me/devices/machine-nope/unbind", Some(&t), vec![], false).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _) = activate(&app, &t, "machine-slot-0005", None).await;
+        assert_eq!(s, StatusCode::OK);
+
+        // 免费账号：解绑后可以换一台
+        let t2 = register_user(&app, "trial@example.com").await;
+        activate(&app, &t2, "machine-trial-0001", None).await;
+        let (s, _) = activate(&app, &t2, "machine-trial-0002", None).await;
+        assert_eq!(s, StatusCode::CONFLICT);
+        let (_, b) = call(&app, "GET", "/api/v1/me", Some(&t2), vec![], false).await;
+        assert_eq!(val(&b)["license"]["devices"][0]["kind"], "trial");
+        call(&app, "POST", "/api/v1/me/devices/machine-trial-0001/unbind", Some(&t2), vec![], false).await;
+        let (s, v) = activate(&app, &t2, "machine-trial-0002", None).await;
+        assert_eq!((s, v["entitlement"]["edition"].clone()), (StatusCode::OK, json!("trial")));
+
+        // 管理后台：用户列表、客服解绑免费电脑
+        let (_, b) = call(&app, "GET", "/api/v1/admin/users?q=trial", Some(ADMIN), vec![], false).await;
+        let users = val(&b);
+        assert_eq!(users["users"].as_array().unwrap().len(), 1);
+        assert_eq!(users["users"][0]["trialDevice"], true);
+        let uid = users["users"][0]["id"].as_i64().unwrap();
+        let (_, b) = call(&app, "POST", &format!("/api/v1/admin/users/{}/reset-trial-device", uid), Some(ADMIN), vec![], false).await;
+        assert_eq!(val(&b)["released"], 1);
+        let (s, _) = call(&app, "GET", "/api/v1/admin/users", Some(&t2), vec![], false).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn feedback_submit_reply_and_rate_limit() {
+        let app = router(test_state(false));
+        let t = register_user(&app, "fb@example.com").await;
+        let body = |c: &str| json!({"category": "idea", "content": c, "contact": "wx: fb", "appVersion": "0.4.2", "os": "windows x86_64", "source": "app"}).to_string().into_bytes();
+        let (s, _) = call(&app, "POST", "/api/v1/feedback", Some(&t), body("希望支持手机端同步"), true).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = call(&app, "POST", "/api/v1/feedback", None, body("没登录也能提"), true).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = call(&app, "POST", "/api/v1/feedback", None, body("短"), true).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+
+        let (_, b) = call(&app, "GET", "/api/v1/admin/feedback?status=new", Some(ADMIN), vec![], false).await;
+        let list = val(&b);
+        assert_eq!(list["feedback"].as_array().unwrap().len(), 2);
+        let mine = list["feedback"].as_array().unwrap().iter().find(|f| f["account"] == "fb@example.com").unwrap().clone();
+        assert_eq!((mine["appVersion"].clone(), mine["source"].clone()), (json!("0.4.2"), json!("app")));
+        let id = mine["id"].as_i64().unwrap();
+        let (s, b) = call(&app, "POST", &format!("/api/v1/admin/feedback/{}", id), Some(ADMIN), json!({"status": "done", "reply": "已经在计划里了"}).to_string().into_bytes(), true).await;
+        assert_eq!((s, val(&b)["status"].clone()), (StatusCode::OK, json!("done")));
+        let (_, b) = call(&app, "GET", "/api/v1/feedback/mine", Some(&t), vec![], false).await;
+        assert_eq!(val(&b)["feedback"][0]["reply"], "已经在计划里了");
+        let (_, b) = call(&app, "GET", "/api/v1/admin/stats", Some(ADMIN), vec![], false).await;
+        assert_eq!(val(&b)["newFeedback"], 1);
+
+        // 同一账号一小时最多 10 条
+        for i in 0..9 {
+            call(&app, "POST", "/api/v1/feedback", Some(&t), body(&format!("第 {} 条反馈内容", i)), true).await;
+        }
+        let (s, _) = call(&app, "POST", "/api/v1/feedback", Some(&t), body("第 11 条反馈"), true).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn web_pages_are_served() {
+        let app = router(test_state(false));
+        let (s, b) = call(&app, "GET", "/", None, vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&b).contains("小悦笔记 · 用户中心"));
+        let (s, b) = call(&app, "GET", "/admin/", None, vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&b).contains("管理后台"));
+        let resp = app.clone().oneshot(Request::builder().uri("/admin").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(resp.headers().get("location").unwrap(), "admin/");
     }
 
     #[tokio::test]

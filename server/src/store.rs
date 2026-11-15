@@ -1,9 +1,10 @@
 //! 官网购买：下单 → 用户扫码付款，把付款截图和订单信息（订单号、通行证账号）发到 admin@fwpt.cn
 //! → 管理员核对无误后确认 → 生成激活码（绑定购买账号，最多 3 台电脑），显示在用户「我的订单」并由管理员邮件发送。
 //!
-//! | 商品 | 价格 |
-//! |---|---|
-//! | `lifetime` 永久版 | ¥9.9（一次购买） |
+//! | 商品 | 价格 | 交付 |
+//! |---|---|---|
+//! | `lifetime` 永久版 | ¥9.9（一次购买） | 激活码，可在 3 台电脑使用 |
+//! | `device_slot` 增加 1 台电脑 | ¥3（可调） | 给账号名下的激活码多加 1 台 |
 
 use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -36,13 +37,21 @@ pub struct Product {
     pub amount_cents: i64,
 }
 
-pub fn products(lifetime_cents: i64) -> Vec<Product> {
-    vec![Product {
-        id: "lifetime",
-        name: "小悦笔记永久版",
-        desc: "一次购买永久使用：自定义主题样式、导出 HTML / PDF / Word、页面历史版本；一个激活码可在 3 台电脑使用",
-        amount_cents: lifetime_cents,
-    }]
+pub fn products(lifetime_cents: i64, device_slot_cents: i64) -> Vec<Product> {
+    vec![
+        Product {
+            id: "lifetime",
+            name: "小悦笔记永久版",
+            desc: "一次购买永久使用：自定义主题样式、导出 HTML / PDF / Word、页面历史版本；一个激活码可在 3 台电脑使用",
+            amount_cents: lifetime_cents,
+        },
+        Product {
+            id: "device_slot",
+            name: "增加 1 台电脑",
+            desc: "3 台电脑不够用时购买，给你的永久版激活码多加 1 台",
+            amount_cents: device_slot_cents,
+        },
+    ]
 }
 
 /// 同一账号最多同时保留的待付款订单
@@ -87,6 +96,7 @@ fn product_name(id: &str) -> String {
     match id {
         "sync_year" => "官方云同步 · 一年".into(),
         "lifetime" => "小悦笔记永久版".into(),
+        "device_slot" => "增加 1 台电脑".into(),
         other => other.into(),
     }
 }
@@ -114,6 +124,9 @@ fn order_from_row(r: &rusqlite::Row<'_>, with_account: bool) -> rusqlite::Result
 
 pub fn create_order(conn: &Connection, user_id: i64, product: &str, catalog: &[Product]) -> Result<Order, String> {
     let item = catalog.iter().find(|p| p.id == product).ok_or("没有这个商品")?;
+    if item.id == "device_slot" && !crate::licensing::owns_code(conn, user_id) {
+        return Err("请先购买永久版，3 台电脑不够用时再增加".into());
+    }
     let pending: i64 = conn
         .query_row("SELECT COUNT(*) FROM orders WHERE user_id = ?1 AND status = 'pending'", params![user_id], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -199,13 +212,21 @@ pub fn confirm_order(conn: &mut Connection, id: &str) -> Result<Order, String> {
     if status != "pending" {
         return Err(format!("订单当前状态是「{}」，不能再确认", status_label(&status)));
     }
-    if product != "lifetime" {
-        return Err(format!("该商品（{}）已停售，请标记为未到账并联系用户", product_name(&product)));
-    }
-    let codes = crate::licensing::create_codes(&tx, 1, crate::licensing::DEFAULT_MAX_DEVICES, "官网订单", Some(id), Some(user_id))?;
+    let (license, note) = match product.as_str() {
+        "lifetime" => {
+            let codes =
+                crate::licensing::create_codes(&tx, 1, crate::licensing::DEFAULT_MAX_DEVICES, "官网订单", Some(id), Some(user_id))?;
+            (codes[0].clone(), String::new())
+        }
+        "device_slot" => {
+            let code = crate::licensing::add_device_slot(&tx, user_id, 1)?;
+            (code.clone(), format!("已为激活码 {} 增加 1 台电脑", code))
+        }
+        other => return Err(format!("该商品（{}）已停售，请标记为未到账并联系用户", product_name(other))),
+    };
     tx.execute(
-        "UPDATE orders SET status = 'paid', license = ?1, updated_at = ?2 WHERE id = ?3",
-        params![codes[0], now(), id],
+        "UPDATE orders SET status = 'paid', license = ?1, admin_note = ?2, updated_at = ?3 WHERE id = ?4",
+        params![license, note, now(), id],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;

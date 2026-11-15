@@ -22,7 +22,13 @@ export interface LicenseStatus {
   devicesUsed: number | null;
   maxDevices: number | null;
   trialUntil: string | null;
+  /** 登录成功但授权服务给出的提示（如免费账号已绑定其他电脑） */
+  notice: string | null;
+  /** 用户中心：购买、管理电脑、查看订单 */
+  userCenterUrl: string;
 }
+
+export type ProProduct = "lifetime" | "device_slot";
 
 export interface StoreOrder {
   id: string;
@@ -70,6 +76,8 @@ const BROWSER_STATUS: LicenseStatus = {
   devicesUsed: null,
   maxDevices: null,
   trialUntil: null,
+  notice: null,
+  userCenterUrl: "https://fwpt.cn/xynote/",
 };
 
 export const PRO_PRICE = "¥9.9";
@@ -131,9 +139,22 @@ export async function licenseLogout(): Promise<LicenseStatus> {
   return remember(await invoke<LicenseStatus>("license_logout"));
 }
 
-export async function createProOrder(): Promise<StoreOrder> {
+export async function createProOrder(product: ProProduct = "lifetime"): Promise<StoreOrder> {
   if (!isTauriRuntime()) needDesktop();
-  return invoke<StoreOrder>("license_create_order");
+  return invoke<StoreOrder>("license_create_order", { product });
+}
+
+export const PRODUCT_INFO: Record<ProProduct, { name: string; price: string }> = {
+  lifetime: { name: "小悦笔记永久版", price: "¥9.9" },
+  device_slot: { name: "增加 1 台电脑", price: "¥3" },
+};
+
+export type FeedbackCategory = "idea" | "bug" | "other";
+
+/** 提交意见反馈（登录时关联通行证账号） */
+export async function submitFeedback(category: FeedbackCategory, content: string, contact: string): Promise<void> {
+  if (!isTauriRuntime()) needDesktop();
+  return invoke<void>("feedback_submit", { category, content, contact });
 }
 
 export async function exportPageHtml(pageId: string): Promise<{ filename: string; html: string }> {

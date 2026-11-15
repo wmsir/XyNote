@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小悦笔记 · 管理后台</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root {
+    --bg: #f5f6f7; --card: #ffffff; --ink: #1f2328; --ink-2: #57606a; --ink-3: #8c959f;
+    --line: #e3e5e8; --accent: #2383e2; --accent-ink: #1b6ec2; --accent-wash: rgba(35,131,226,.08);
+    --ok: #0f8a5f; --warn: #b26a00; --bad: #c43c3c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161718; --card: #1f2022; --ink: #e8e8e6; --ink-2: #a6a6a3; --ink-3: #7c7c79; --line: #2e3033;
+      --accent: #529cca; --accent-ink: #7ab6dc; --accent-wash: rgba(82,156,202,.14); --ok: #34c38f; --warn: #f0b04a; --bad: #f07878; }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  a { color: var(--accent-ink); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1180px; margin: 0 auto; padding: 0 20px; height: 54px; display: flex; align-items: center; gap: 18px; }
+  .brand { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .mark { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+  nav { display: flex; gap: 2px; height: 100%; }
+  nav button { font: inherit; border: none; background: none; color: var(--ink-2); padding: 0 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  nav button .count { font-size: 11px; background: var(--bad); color: #fff; border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+  .who { margin-left: auto; color: var(--ink-3); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 20px 60px; }
+  .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .btn { font: inherit; font-size: 13px; padding: 6px 13px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--bad); }
+  .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn:focus-visible, input:focus-visible, textarea:focus-visible, nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input, textarea { font: inherit; font-size: 13px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 24px; letter-spacing: -.02em; }
+  .stat span { color: var(--ink-3); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--ink-3); font-weight: 600; background: color-mix(in srgb, var(--bg) 50%, var(--card)); }
+  tr:last-child td { border-bottom: none; }
+  .muted { color: var(--ink-3); font-size: 12px; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .ref { font-family: var(--mono); font-weight: 700; letter-spacing: .12em; font-size: 14px; }
+  .tag { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); } .tag.dim { color: var(--ink-3); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+  .empty, .alert { padding: 30px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; color: var(--ink-3); background: var(--card); }
+  .alert { color: var(--bad); border-style: solid; }
+  .login { max-width: 420px; margin: 60px auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+  .login label { display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); font-size: 13px; }
+  .fb-content { white-space: pre-wrap; max-width: 520px; }
+  .reply-box { display: flex; gap: 6px; margin-top: 8px; }
+  .reply-box input { flex: 1; }
+  .gen-out { white-space: pre; font-family: var(--mono); font-size: 13px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); margin-bottom: 12px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1d1d1f; color: #fff; padding: 8px 16px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  [hidden] { display: none !important; }
+  @media (max-width: 820px) {
+    .bar { height: auto; flex-wrap: wrap; padding: 10px 14px; gap: 8px; } nav { height: 36px; overflow-x: auto; width: 100%; order: 3; }
+    thead { display: none; } table, tbody, tr, td { display: block; width: 100%; } tr { border-bottom: 1px solid var(--line); } td { border: none; padding: 5px 12px; }
+    .actions { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><span class="mark" aria-hidden="true">Y</span>小悦笔记 · 管理后台</div>
+    <nav id="nav" hidden aria-label="管理分区">
+      <button type="button" data-view="overview">概览</button>
+      <button type="button" data-view="orders">订单<span class="count" id="cPending" hidden></span></button>
+      <button type="button" data-view="codes">激活码</button>
+      <button type="button" data-view="users">用户</button>
+      <button type="button" data-view="feedback">反馈<span class="count" id="cFeedback" hidden></span></button>
+    </nav>
+    <div class="who" id="who"></div>
+  </div>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  'use strict';
+  if (!location.pathname.endsWith('/')) { location.replace(location.pathname + '/' + location.hash); return; }
+  // 后台在 …/admin/ 下，接口在上一级
+  var BASE = location.pathname.replace(/admin\/$/, '').replace(/\/$/, '');
+  var STATUS = { pending: ['待确认', 'warn'], paid: ['已交付', 'ok'], cancelled: ['已取消', 'dim'], rejected: ['未到账', 'bad'] };
+  var CATEGORY = { bug: '问题', idea: '建议', other: '其他' };
+  var SITE = location.origin + BASE + '/';
+  var $ = function (id) { return document.getElementById(id); };
+  var view = (location.hash || '#overview').slice(1);
+  var orderStatus = 'pending', fbStatus = 'new';
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function time(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('zh-CN', { year: '2-digit', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function day(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('zh-CN'); }
+  function yuan(c) { return '¥' + (c / 100).toFixed(2); }
+  var tt;
+  function toast(m) { var t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); }, 2600); }
+
+  function token() {
+    try { return sessionStorage.getItem('xynote_admin_token') || localStorage.getItem('xynote_token') || localStorage.getItem('fwpt_auth_token') || localStorage.getItem('fwpt_token'); } catch (e) { return null; }
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    var h = { 'Accept': 'application/json' }, t = token();
+    if (t) h.Authorization = 'Bearer ' + t;
+    if (opts.body) h['Content-Type'] = 'application/json';
+    return fetch(BASE + path, { method: opts.method || 'GET', headers: h, body: opts.body ? JSON.stringify(opts.body) : undefined })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) { var e = new Error(d.message || ('请求失败（' + r.status + '）')); e.status = r.status; throw e; }
+          return d;
+        });
+      }, function () { throw new Error('无法连接小悦笔记服务'); });
+  }
+
+  function showLogin(msg) {
+    $('nav').hidden = true; $('who').innerHTML = '';
+    $('main').innerHTML = '<form class="login" id="loginForm"><h2 style="font-size:17px">登录管理后台</h2>' +
+      (msg ? '<div class="alert" style="padding:10px">' + esc(msg) + '</div>' : '') +
+      '<label>管理员通行证<input id="lAcc" autocomplete="username" required></label>' +
+      '<label>密码<input id="lPwd" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn primary" type="submit">登录</button>' +
+      '<details><summary class="muted">使用服务器管理令牌</summary><div style="display:flex;gap:6px;margin-top:8px"><input id="lTok" type="password" placeholder="XYNOTE_ADMIN_TOKEN" style="flex:1"><button class="btn" type="button" id="lTokBtn">使用</button></div></details></form>';
+    $('loginForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      api('/api/v1/auth/login', { method: 'POST', body: { email: $('lAcc').value.trim(), password: $('lPwd').value } })
+        .then(function (d) { localStorage.setItem('xynote_token', d.token); boot(); })
+        .catch(function (err) { showLogin(err.message); });
+    });
+    $('lTokBtn').addEventListener('click', function () { var v = $('lTok').value.trim(); if (v) { sessionStorage.setItem('xynote_admin_token', v); boot(); } });
+  }
+
+  function setView(v) {
+    view = v; location.hash = v;
+    document.querySelectorAll('#nav [data-view]').forEach(function (b) { if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    ({ overview: overview, orders: loadOrders, codes: loadCodes, users: loadUsers, feedback: loadFeedback }[v] || overview)();
+  }
+  document.querySelectorAll('#nav [data-view]').forEach(function (b) { b.addEventListener('click', function () { setView(b.dataset.view); }); });
+
+  function refreshCounts(s) {
+    $('cPending').textContent = s.pendingOrders; $('cPending').hidden = !s.pendingOrders;
+    $('cFeedback').textContent = s.newFeedback; $('cFeedback').hidden = !s.newFeedback;
+  }
+
+  function overview() {
+    api('/api/v1/admin/stats').then(function (s) {
+      refreshCounts(s);
+      var items = [['待确认订单', s.pendingOrders, 'orders'], ['待处理反馈', s.newFeedback, 'feedback'], ['软件登录账号', s.appUsers, 'users'], ['免费期内账号', s.trialActive, 'users'],
+        ['已发激活码', s.codesTotal, 'codes'], ['已绑定激活码', s.codesBound, 'codes'], ['永久版激活的电脑', s.activations, 'codes'], ['30 天活跃电脑', s.devicesActive30d, 'users'], ['记录过的电脑', s.devices, 'users']];
+      $('main').innerHTML = '<div class="stats">' + items.map(function (i) {
+        return '<button type="button" class="stat" data-go="' + i[2] + '" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><b>' + esc(i[1] == null ? '-' : i[1]) + '</b><span>' + esc(i[0]) + '</span></button>';
+      }).join('') + '</div><p class="muted" style="margin-top:16px">用户中心：<a href="' + esc(SITE) + '">' + esc(SITE) + '</a></p>';
+    }).catch(fail);
+  }
+
+  function mailFor(o) {
+    var subject = '小悦笔记永久版激活码 ' + o.id;
+    var body = (o.account ? o.account + '，你好：\n\n' : '你好：\n\n') + '感谢购买小悦笔记永久版，你的激活码是：\n\n' + o.license + '\n\n' +
+      '使用方法：打开小悦笔记「设置 → 永久版」，登录购买时的 FWPT 通行证，输入激活码即可（可在 3 台电脑使用）。\n' +
+      '订单号：' + o.id + '\n用户中心：' + SITE + '\n\nFWPT.CN';
+    return 'mailto:' + encodeURIComponent(o.accountEmail || '') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
+
+  function loadOrders() {
+    var tabs = [['pending', '待确认'], ['paid', '已交付'], ['rejected', '未到账'], ['cancelled', '已取消'], ['all', '全部']];
+    api('/api/v1/admin/orders?status=' + orderStatus).then(function (d) {
+      var rows = (d.orders || []).map(function (o) {
+        var s = STATUS[o.status] || [o.status, 'dim'];
+        var act = '';
+        if (o.status === 'pending') act = '<input data-note="' + esc(o.id) + '" placeholder="未到账原因（选填）" style="width:140px"><button class="btn danger" type="button" data-reject="' + esc(o.id) + '">未到账</button><button class="btn primary" type="button" data-confirm="' + esc(o.id) + '">确认到账</button>';
+        else if (o.status === 'paid' && o.product === 'lifetime' && o.license) act = '<span class="mono">' + esc(o.license) + '</span><button class="btn" type="button" data-copy="' + esc(o.license) + '">复制</button><a class="btn primary" href="' + mailFor(o) + '">发送邮件</a>';
+        else if (o.adminNote) act = '<span class="muted">' + esc(o.adminNote) + '</span>';
+        return '<tr><td>' + esc(o.productName) + '<div class="muted mono">' + esc(o.id) + '</div></td><td>' + esc(o.account || '') + '<div class="muted">' + esc(o.accountEmail || '无邮箱') + '</div></td>' +
+          '<td>' + yuan(o.amountCents) + '</td><td class="ref">' + esc(o.payRef) + '</td><td>' + esc(time(o.createdAt)) + '</td><td><span class="tag ' + s[1] + '">' + s[0] + '</span></td><td><div class="actions">' + act + '</div></td></tr>';
+      }).join('');
+      $('main').innerHTML = '<div class="tools">' + tabs.map(function (t) { return '<button class="btn" type="button" data-ostatus="' + t[0] + '" aria-pressed="' + (t[0] === orderStatus) + '">' + t[1] + '</button>'; }).join('') +
+        '<span class="muted" style="margin-left:auto">对照付款截图核对金额、付款码和通行证账号</span></div>' +
+        (rows ? '<table><thead><tr><th>商品 / 订单号</th><th>通行证 / 邮箱</th><th>金额</th><th>付款码</th><th>下单时间</th><th>状态</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="empty">没有订单</div>');
+    }).catch(fail);
+  }
+
+  function loadCodes(generated) {
+    api('/api/v1/admin/license-codes').then(function (d) {
+      var rows = (d.codes || []).map(function (c) {
+        var devs = c.devices.map(function (x) { return esc(x.machineName || '未知电脑') + ' <span class="muted">' + esc(x.os) + ' · ' + esc(time(x.lastAt)) + '</span>'; }).join('<br>') || '<span class="muted">未激活</span>';
+        return '<tr><td class="mono">' + esc(c.code) + (c.revoked ? ' <span class="tag bad">已停用</span>' : '') + '<div class="muted">' + esc(c.orderId || c.note || '') + '</div></td>' +
+          '<td>' + esc(c.owner || '未绑定') + '<div class="muted">' + esc(c.ownerEmail || '') + '</div></td><td>' + c.devices.length + ' / ' + c.maxDevices + '</td><td>' + devs + '</td>' +
+          '<td><div class="actions">' + (c.devices.length ? '<button class="btn" type="button" data-reset="' + esc(c.code) + '">清空电脑</button>' : '') +
+          '<button class="btn ' + (c.revoked ? '' : 'danger') + '" type="button" data-revoke="' + esc(c.code) + '" data-to="' + (!c.revoked) + '">' + (c.revoked ? '恢复' : '停用') + '</button></div></td></tr>';
+      }).join('');
+      $('main').innerHTML = '<div class="tools"><input type="number" id="gCount" min="1" max="100" value="1" style="width:80px" aria-label="数量"><input id="gNote" placeholder="备注（赠送、活动等）" aria-label="备注"><button class="btn primary" type="button" id="gBtn">生成激活码</button><span class="muted">每个默认可用 3 台电脑</span></div>' +
+        (generated ? '<div class="gen-out">' + esc(generated.join('\n')) + '</div>' : '') +
+        (rows ? '<table><thead><tr><th>激活码</th><th>绑定账号</th><th>电脑</th><th>已激活的电脑</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="empty">还没有激活码</div>');
+      $('gBtn').addEventListener('click', function () {
+        api('/api/v1/admin/license-codes', { method: 'POST', body: { count: parseInt($('gCount').value, 10) || 1, note: $('gNote').value } })
+          .then(function (r) { loadCodes(r.codes); }).catch(function (e) { toast(e.message); });
+      });
+    }).catch(fail);
+  }
+
+  function loadUsers(q) {
+    q = q || '';
+    api('/api/v1/admin/users?q=' + encodeURIComponent(q)).then(function (d) {
+      var now = Date.now();
+      var rows = (d.users || []).map(function (u) {
+        var trial = u.trialUntil ? (new Date(u.trialUntil) > now ? '免费期至 ' + day(u.trialUntil) : '免费期已结束') : '未在软件登录';
+        var plan = u.codes ? '<span class="tag ok">永久版</span> ' + u.licensedDevices + ' / ' + u.maxDevices + ' 台' : '<span class="tag dim">' + esc(trial) + '</span>' + (u.trialDevice ? ' · 已绑定 1 台' : '');
+        return '<tr><td>' + esc(u.account) + '<div class="muted">' + esc(u.email || '') + '</div></td><td>' + plan + '</td><td>' + u.devicesSeen + '</td><td>' + esc(u.lastSeen ? time(u.lastSeen) : '-') + '</td><td>' + u.paidOrders + '</td><td>' + esc(day(u.createdAt)) + '</td>' +
+          '<td><div class="actions">' + (u.trialDevice ? '<button class="btn" type="button" data-trial="' + u.id + '">解绑免费电脑</button>' : '') + '</div></td></tr>';
+      }).join('');
+      $('main').innerHTML = '<div class="tools"><input id="uq" placeholder="搜索账号或邮箱" value="' + esc(q) + '" style="width:240px"><button class="btn" type="button" id="uqBtn">搜索</button></div>' +
+        (rows ? '<table><thead><tr><th>账号 / 邮箱</th><th>授权</th><th>用过的电脑</th><th>最近使用</th><th>已付订单</th><th>注册</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="empty">没有用户</div>');
+      $('uqBtn').addEventListener('click', function () { loadUsers($('uq').value.trim()); });
+      $('uq').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadUsers($('uq').value.trim()); });
+    }).catch(fail);
+  }
+
+  function loadFeedback() {
+    var tabs = [['new', '待处理'], ['done', '已处理'], ['all', '全部']];
+    api('/api/v1/admin/feedback?status=' + fbStatus).then(function (d) {
+      var rows = (d.feedback || []).map(function (f) {
+        return '<tr><td><span class="tag ' + (f.category === 'bug' ? 'bad' : f.category === 'idea' ? 'ok' : 'dim') + '">' + esc(CATEGORY[f.category] || f.category) + '</span><div class="muted">' + esc(time(f.createdAt)) + '</div></td>' +
+          '<td><div class="fb-content">' + esc(f.content) + '</div>' + (f.reply ? '<div class="muted" style="margin-top:6px">已回复：' + esc(f.reply) + '</div>' : '') +
+          '<div class="reply-box"><input data-reply="' + f.id + '" placeholder="回复（用户在用户中心能看到）" value=""><button class="btn" type="button" data-send="' + f.id + '">回复</button></div></td>' +
+          '<td>' + esc(f.account || '未登录') + '<div class="muted">' + esc(f.contact || f.accountEmail || '') + '</div></td><td class="muted">' + esc(f.source) + ' ' + esc(f.appVersion ? 'v' + f.appVersion : '') + '<br>' + esc(f.os) + '</td>' +
+          '<td><div class="actions"><button class="btn" type="button" data-fb="' + f.id + '" data-to="' + (f.status === 'done' ? 'new' : 'done') + '">' + (f.status === 'done' ? '重新打开' : '标记已处理') + '</button></div></td></tr>';
+      }).join('');
+      $('main').innerHTML = '<div class="tools">' + tabs.map(function (t) { return '<button class="btn" type="button" data-fstatus="' + t[0] + '" aria-pressed="' + (t[0] === fbStatus) + '">' + t[1] + '</button>'; }).join('') + '</div>' +
+        (rows ? '<table><thead><tr><th>类型</th><th>内容</th><th>用户 / 联系方式</th><th>来源</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="empty">没有反馈</div>');
+    }).catch(fail);
+  }
+
+  function fail(e) {
+    if (e.status === 401 || e.status === 403) { try { sessionStorage.removeItem('xynote_admin_token'); } catch (x) {} showLogin(e.status === 403 ? '这个通行证不是管理员' : '请先登录'); return; }
+    $('main').innerHTML = '<div class="alert">' + esc(e.message) + '</div>';
+  }
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.go) { setView(b.dataset.go); return; }
+    if (b.dataset.ostatus) { orderStatus = b.dataset.ostatus; loadOrders(); return; }
+    if (b.dataset.fstatus) { fbStatus = b.dataset.fstatus; loadFeedback(); return; }
+    if (b.dataset.copy) { navigator.clipboard.writeText(b.dataset.copy).then(function () { toast('已复制'); }); return; }
+    if (b.dataset.send) {
+      var input = document.querySelector('[data-reply="' + b.dataset.send + '"]');
+      if (!input || !input.value.trim()) return;
+      api('/api/v1/admin/feedback/' + b.dataset.send, { method: 'POST', body: { reply: input.value.trim(), status: 'done' } }).then(function () { toast('已回复'); loadFeedback(); boot(true); }).catch(function (x) { toast(x.message); });
+      return;
+    }
+    if (b.dataset.fb) { api('/api/v1/admin/feedback/' + b.dataset.fb, { method: 'POST', body: { status: b.dataset.to } }).then(function () { loadFeedback(); boot(true); }).catch(function (x) { toast(x.message); }); return; }
+    var key = b.dataset.confirm || b.dataset.reject || b.dataset.reset || b.dataset.revoke || b.dataset.trial;
+    if (!key) return;
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '再点一次确认'; return; }
+    b.disabled = true;
+    var req;
+    if (b.dataset.confirm) req = api('/api/v1/admin/orders/' + encodeURIComponent(key) + '/confirm', { method: 'POST' }).then(function (o) { if (o.license && o.product === 'lifetime') orderStatus = 'paid'; toast('已确认，' + (o.product === 'lifetime' ? '请发送激活码邮件' : '已增加电脑数量')); loadOrders(); });
+    else if (b.dataset.reject) { var n = document.querySelector('[data-note="' + key + '"]'); req = api('/api/v1/admin/orders/' + encodeURIComponent(key) + '/reject', { method: 'POST', body: { note: n ? n.value : '' } }).then(loadOrders); }
+    else if (b.dataset.reset) req = api('/api/v1/admin/license-codes/' + encodeURIComponent(key) + '/reset', { method: 'POST' }).then(function () { loadCodes(); });
+    else if (b.dataset.revoke) req = api('/api/v1/admin/license-codes/' + encodeURIComponent(key) + '/revoke', { method: 'POST', body: { revoked: b.dataset.to === 'true' } }).then(function () { loadCodes(); });
+    else req = api('/api/v1/admin/users/' + key + '/reset-trial-device', { method: 'POST' }).then(function () { toast('已解绑'); loadUsers($('uq') ? $('uq').value : ''); });
+    req.then(function () { boot(true); }).catch(function (x) { b.disabled = false; toast(x.message); });
+  });
+
+  function boot(countsOnly) {
+    if (!token()) { showLogin(); return; }
+    api('/api/v1/admin/stats').then(function (s) {
+      refreshCounts(s);
+      if (countsOnly) return;
+      $('nav').hidden = false;
+      $('who').innerHTML = '<a href="../">用户中心</a><button class="btn" type="button" id="logout">退出</button>';
+      $('logout').addEventListener('click', function () { try { sessionStorage.removeItem('xynote_admin_token'); localStorage.removeItem('xynote_token'); } catch (x) {} showLogin(); });
+      setView(view);
+    }).catch(fail);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

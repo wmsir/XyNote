@@ -3743,3 +3743,33 @@ a {
   background: var(--accent-bg);
   color: var(--accent-color);
 }
+
+/* ---------------- 意见反馈 ---------------- */
+.nb-feedback-cats {
+  display: flex;
+  gap: 6px;
+}
+.nb-feedback-cat {
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.nb-feedback-cat.is-active {
+  border-color: var(--accent-color);
+  background: var(--accent-bg);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+.nb-feedback-cat:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+.nb-feedback-text {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.6;
+}
