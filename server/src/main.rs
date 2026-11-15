@@ -15,6 +15,7 @@
 mod app;
 mod oneid;
 mod store;
+mod licensing;
 #[path = "../../src-tauri/src/license_format.rs"]
 #[allow(dead_code)]
 mod license_format;
@@ -40,9 +41,30 @@ fn gen_codes(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// 命令行：`xynote-sync-server gen-license-codes [--count 10] [--max-devices 3] [--note 备注]`
+/// 生成永久版激活码（XYP-…），每行一个，用于赠送或手动发放。
+fn gen_license_codes(args: &[String]) -> Result<(), String> {
+    let get = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let count: u32 = get("--count").unwrap_or_else(|| "1".into()).parse().map_err(|_| "--count 需要是数字")?;
+    let max: i64 = get("--max-devices").unwrap_or_else(|| "3".into()).parse().map_err(|_| "--max-devices 需要是数字")?;
+    let state = app::AppState::open(app::Config::from_env())?;
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    for code in licensing::create_codes(&conn, count, max, &get("--note").unwrap_or_default(), None, None)? {
+        println!("{}", code);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("gen-license-codes") {
+        if let Err(e) = gen_license_codes(&args[2..]) {
+            eprintln!("生成失败：{}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("gen-codes") {
         if let Err(e) = gen_codes(&args[2..]) {
             eprintln!("生成失败：{}", e);

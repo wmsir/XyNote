@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useSyncController } from "./hooks/useSyncController";
-import { getLicenseStatus, type LicenseStatus } from "./api/pro";
+import { cachedProActive, exportPageFile, exportPageHtml, getLicenseStatus, licenseRefresh, type LicenseStatus } from "./api/pro";
+import { printHtmlDocument } from "./utils/printHtml";
 import { PageHistoryModal } from "./components/shell/PageHistoryModal";
 import {
   convertMarkdownBlocks,
@@ -191,6 +192,9 @@ export const App: React.FC = () => {
   }));
   const [stylePluginState, setStylePluginState] =
     useState<StylePluginState | null>(null);
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  // 授权状态读取前先用上次的结果，避免自定义主题闪一下
+  const proActive = license ? license.active : cachedProActive();
   const [themePreviewOverride, setThemePreviewOverride] = useState<{
     baseMode?: ThemeMode;
     tokens?: ThemeTokens | null;
@@ -288,8 +292,9 @@ export const App: React.FC = () => {
     if (themePreviewOverride?.baseMode) {
       return themePreviewOverride.baseMode;
     }
-    return resolveEffectiveBaseMode(stylePluginState, themePref, systemDark);
-  }, [stylePluginState, themePref, systemDark, themePreviewOverride]);
+    // 自定义主题是永久版功能；授权到期后回到内置主题（已保存的主题不删除）
+    return resolveEffectiveBaseMode(proActive ? stylePluginState : null, themePref, systemDark);
+  }, [stylePluginState, themePref, systemDark, themePreviewOverride, proActive]);
 
   // Apply theme attribute & class to document root
   useEffect(() => {
@@ -299,8 +304,8 @@ export const App: React.FC = () => {
 
   // Inject custom ThemeTokens & active CSS Snippet Plugins into <head>
   useEffect(() => {
-    applyRuntimeStylePluginsToDom(stylePluginState, themePreviewOverride);
-  }, [stylePluginState, themePreviewOverride]);
+    applyRuntimeStylePluginsToDom(proActive ? stylePluginState : null, proActive ? themePreviewOverride : null);
+  }, [stylePluginState, themePreviewOverride, proActive]);
 
   // Apply dynamic CSS variables for editor typography
   useEffect(() => {
@@ -446,11 +451,11 @@ export const App: React.FC = () => {
     showToast,
   });
 
-  const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
     const load = () => getLicenseStatus().then(setLicense).catch(() => {});
-    load();
+    // 先用本地授权，再向服务器报到刷新（离线时保留本地授权）
+    load().then(() => licenseRefresh().then(setLicense).catch(() => {}));
     window.addEventListener("xynote:license-changed", load);
     return () => window.removeEventListener("xynote:license-changed", load);
   }, []);
@@ -1725,6 +1730,30 @@ export const App: React.FC = () => {
     [flushPendingBlockSave]
   );
 
+  /** 永久版导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
+  const handleExportAs = useCallback(
+    async (pageId: string, format: "html" | "pdf" | "docx") => {
+      if (!proActive) {
+        showToast("导出 HTML、PDF、Word 是永久版功能，登录通行证可免费使用一年");
+        handleOpenSettingsAtTab("pro");
+        return;
+      }
+      await flushPendingBlockSave();
+      try {
+        if (format === "pdf") {
+          const { filename, html } = await exportPageHtml(pageId);
+          await printHtmlDocument(html, filename);
+          return;
+        }
+        const saved = await exportPageFile(pageId, format);
+        if (saved) showToast(`已导出：${saved}`);
+      } catch (err) {
+        showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [proActive, flushPendingBlockSave, showToast, handleOpenSettingsAtTab]
+  );
+
   const handleImportMarkdownSubmit = useCallback(
     async (title: string, markdown: string, parentId: string | null) => {
       const imported = await importMarkdownPage(title, markdown, parentId);
@@ -1949,6 +1978,12 @@ export const App: React.FC = () => {
               handleExportMarkdown(detail.page.id).catch(() => {});
             }
           }}
+          onExportAs={(fmt) => {
+            if (detail?.page) {
+              handleExportAs(detail.page.id, fmt).catch(() => {});
+            }
+          }}
+          proActive={proActive}
           onOpenHistory={async () => {
             await flushPendingBlockSave();
             setHistoryOpen(true);
@@ -2325,6 +2360,7 @@ export const App: React.FC = () => {
         onRunSync={syncNow}
         onSyncConfigChanged={setSyncConfig}
         onLicenseChanged={setLicense}
+        proActive={proActive}
       />
 
       <PageHistoryModal

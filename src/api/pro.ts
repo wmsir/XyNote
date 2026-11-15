@@ -1,14 +1,38 @@
-/** 永久版：离线授权与页面历史版本 */
+/** 永久版：通行证登录、激活码激活（最多 3 台电脑）、页面历史与导出 */
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./client";
 
 export interface LicenseStatus {
+  /** 当前可以使用付费功能 */
   active: boolean;
+  /** lifetime 永久版 / trial 注册赠送的一年 */
+  edition: "lifetime" | "trial" | string | null;
   name: string | null;
   id: string | null;
   issuedAt: string | null;
+  expiresAt: string | null;
+  /** 有授权但已到期 */
+  expired: boolean;
   configured: boolean;
   purchaseUrl: string;
+  loggedIn: boolean;
+  account: string | null;
+  machineName: string;
+  code: string | null;
+  devicesUsed: number | null;
+  maxDevices: number | null;
+  trialUntil: string | null;
+}
+
+export interface StoreOrder {
+  id: string;
+  product: string;
+  productName: string;
+  amountCents: number;
+  payRef: string;
+  status: string;
+  createdAt: string;
+  license: string | null;
 }
 
 export interface PageVersionMeta {
@@ -31,25 +55,94 @@ export interface PageVersionView {
 
 const BROWSER_STATUS: LicenseStatus = {
   active: false,
+  edition: null,
   name: null,
   id: null,
   issuedAt: null,
+  expiresAt: null,
+  expired: false,
   configured: false,
   purchaseUrl: "https://fwpt.cn/xynote.html",
+  loggedIn: false,
+  account: null,
+  machineName: "浏览器预览",
+  code: null,
+  devicesUsed: null,
+  maxDevices: null,
+  trialUntil: null,
 };
+
+export const PRO_PRICE = "¥9.9";
+export const PRO_SUPPORT_EMAIL = "admin@fwpt.cn";
+export const FWPT_REGISTER_URL = "https://fwpt.cn/?action=register";
+const PRO_CACHE_KEY = "xynote.proCache";
+
+/** 上次的授权状态（启动时先用，避免自定义主题闪一下） */
+export function cachedProActive(): boolean {
+  try {
+    return localStorage.getItem(PRO_CACHE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function remember(s: LicenseStatus): LicenseStatus {
+  try {
+    localStorage.setItem(PRO_CACHE_KEY, s.active ? "1" : "0");
+  } catch {
+    // 忽略
+  }
+  return s;
+}
+
+function needDesktop(): never {
+  throw new Error("请在桌面客户端中使用");
+}
 
 export async function getLicenseStatus(): Promise<LicenseStatus> {
   if (!isTauriRuntime()) return BROWSER_STATUS;
-  return invoke<LicenseStatus>("license_status");
+  return remember(await invoke<LicenseStatus>("license_status"));
 }
 
+/** 用 FWPT 通行证登录；第一次登录赠送一年永久版权限 */
+export async function licenseLogin(account: string, password: string): Promise<LicenseStatus> {
+  if (!isTauriRuntime()) needDesktop();
+  return remember(await invoke<LicenseStatus>("license_login", { account, password }));
+}
+
+/** 启动时向服务器报到并刷新授权（离线时保留本地授权） */
+export async function licenseRefresh(): Promise<LicenseStatus> {
+  if (!isTauriRuntime()) return BROWSER_STATUS;
+  return remember(await invoke<LicenseStatus>("license_refresh"));
+}
+
+/** 输入激活码（XYP-…）；也接受离线授权（XYNOTE1.…） */
 export async function activateLicense(license: string): Promise<LicenseStatus> {
-  if (!isTauriRuntime()) throw new Error("请在桌面客户端中激活");
-  return invoke<LicenseStatus>("license_activate", { license });
+  if (!isTauriRuntime()) needDesktop();
+  return remember(await invoke<LicenseStatus>("license_activate", { license }));
 }
 
+/** 在本机停用授权，空出激活码的一个位置 */
 export async function deactivateLicense(): Promise<LicenseStatus> {
-  return invoke<LicenseStatus>("license_deactivate");
+  return remember(await invoke<LicenseStatus>("license_deactivate"));
+}
+
+export async function licenseLogout(): Promise<LicenseStatus> {
+  return remember(await invoke<LicenseStatus>("license_logout"));
+}
+
+export async function createProOrder(): Promise<StoreOrder> {
+  if (!isTauriRuntime()) needDesktop();
+  return invoke<StoreOrder>("license_create_order");
+}
+
+export async function exportPageHtml(pageId: string): Promise<{ filename: string; html: string }> {
+  return invoke<{ filename: string; html: string }>("export_page_html", { pageId });
+}
+
+/** 导出 HTML / Word 文件，返回保存路径；取消时为 null */
+export async function exportPageFile(pageId: string, format: "html" | "docx"): Promise<string | null> {
+  return invoke<string | null>("export_page_file", { pageId, format });
 }
 
 export async function listPageVersions(pageId: string): Promise<PageVersionMeta[]> {
@@ -65,7 +158,8 @@ export async function restorePageVersion(versionId: string): Promise<string> {
 }
 
 export const PRO_FEATURES: { title: string; desc: string }[] = [
-  { title: "页面历史版本", desc: "自动保存每篇笔记的历史，误删、改错或被同步覆盖都能找回" },
-  { title: "后续高级功能", desc: "之后新增的高级功能，买断后一并可用" },
-  { title: "支持持续开发", desc: "小悦笔记的基础功能会一直免费，你的购买让它走得更远" },
+  { title: "自定义主题与样式", desc: "可视化调配色、字体与圆角，安装或编写 CSS 样式插件" },
+  { title: "导出 HTML、PDF、Word", desc: "一键把笔记导出成网页、PDF 或 Word 文档，图片一并带上" },
+  { title: "页面历史版本", desc: "自动保存每篇笔记的历史，改错、误删都能找回" },
+  { title: "后续高级功能", desc: "之后新增的高级功能一并可用" },
 ];

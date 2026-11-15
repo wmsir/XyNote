@@ -66,6 +66,8 @@ fn issue(args: &[String]) -> Result<(), String> {
             name: name.clone(),
             edition: "lifetime".into(),
             issued_at: chrono::Utc::now().to_rfc3339(),
+            expires_at: None,
+            machine: None,
         };
         println!("{}", sign(&payload, &key));
     }

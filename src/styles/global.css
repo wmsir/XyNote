@@ -3557,3 +3557,115 @@ a {
   max-width: 460px;
   margin: 0 auto;
 }
+
+/* ---------------- 永久版：购买、锁定提示 ---------------- */
+.nb-pro-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--accent-color);
+  background: var(--accent-bg);
+  white-space: nowrap;
+}
+.nb-pro-lock {
+  border-color: var(--accent-color);
+}
+.nb-purchase-card {
+  width: min(620px, 94vw);
+}
+.nb-purchase-body {
+  padding: 4px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.nb-purchase-empty {
+  padding: 24px 0;
+}
+.nb-purchase-amount {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+.nb-purchase-amount strong {
+  font-size: 24px;
+}
+.nb-purchase-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 18px;
+  align-items: start;
+}
+.nb-purchase-qr {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nb-purchase-qr img {
+  width: 220px;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #fff;
+}
+.nb-purchase-tabs {
+  display: flex;
+  gap: 6px;
+}
+.nb-purchase-tabs button {
+  flex: 1;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.nb-purchase-tabs button[aria-selected="true"] {
+  border-color: var(--accent-color);
+  background: var(--accent-bg);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+.nb-purchase-order {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.nb-purchase-order dt {
+  color: var(--text-secondary);
+}
+.nb-purchase-order dd {
+  margin: 0;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.nb-purchase-ref {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--accent-color) !important;
+}
+.nb-purchase-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+.nb-purchase-actions {
+  justify-content: flex-end;
+}
+@media (max-width: 620px) {
+  .nb-purchase-grid {
+    grid-template-columns: 1fr;
+  }
+}

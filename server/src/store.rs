@@ -1,12 +1,10 @@
-//! 官网购买：下单 → 用户扫收款码付款并备注付款码 → 管理员核对到账后确认 → 自动交付。
+//! 官网购买：下单 → 用户扫码付款，把付款截图和订单信息（订单号、通行证账号）发到 admin@fwpt.cn
+//! → 管理员核对无误后确认 → 生成激活码（绑定购买账号，最多 3 台电脑），显示在用户「我的订单」并由管理员邮件发送。
 //!
-//! | 商品 | 价格 | 交付 |
-//! |---|---|---|
-//! | `sync_year` 官方云同步 · 一年 | ¥9.9 | 账号云同步有效期顺延 365 天 |
-//! | `lifetime` 永久版 · 终生 | ¥99 | 签发永久版授权码（软件登录同一账号后自动激活） |
+//! | 商品 | 价格 |
+//! |---|---|
+//! | `lifetime` 永久版 | ¥9.9（一次购买） |
 
-use crate::license_format::{sign, LicensePayload};
-use ed25519_dalek::SigningKey;
 use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -38,26 +36,17 @@ pub struct Product {
     pub amount_cents: i64,
 }
 
-pub fn products(sync_year_cents: i64, lifetime_cents: i64) -> Vec<Product> {
-    vec![
-        Product {
-            id: "sync_year",
-            name: "官方云同步 · 一年",
-            desc: "多台设备自动同步，可开启端到端加密；到期后仍可下载已有数据",
-            amount_cents: sync_year_cents,
-        },
-        Product {
-            id: "lifetime",
-            name: "永久版 · 终生",
-            desc: "一次购买终身使用：页面历史版本，以及之后新增的高级功能",
-            amount_cents: lifetime_cents,
-        },
-    ]
+pub fn products(lifetime_cents: i64) -> Vec<Product> {
+    vec![Product {
+        id: "lifetime",
+        name: "小悦笔记永久版",
+        desc: "一次购买永久使用：自定义主题样式、导出 HTML / PDF / Word、页面历史版本；一个激活码可在 3 台电脑使用",
+        amount_cents: lifetime_cents,
+    }]
 }
 
 /// 同一账号最多同时保留的待付款订单
 pub const MAX_PENDING: i64 = 3;
-pub const SYNC_YEAR_DAYS: i64 = 365;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,15 +58,18 @@ pub struct Order {
     /// 付款时填写在备注里的 4 位码，用于核对
     pub pay_ref: String,
     /// pending 待确认 / paid 已交付 / cancelled 已取消 / rejected 未收到款
+    /// 已交付的永久版订单在 license 中保存激活码
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
     pub license: Option<String>,
     pub sync_until: Option<String>,
     pub admin_note: String,
-    /// 仅管理接口返回：下单账号
+    /// 仅管理接口返回：下单账号与邮箱（用于发送激活码）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_email: Option<String>,
 }
 
 fn now() -> String {
@@ -94,12 +86,12 @@ fn random_ref(len: usize) -> String {
 fn product_name(id: &str) -> String {
     match id {
         "sync_year" => "官方云同步 · 一年".into(),
-        "lifetime" => "永久版 · 终生".into(),
+        "lifetime" => "小悦笔记永久版".into(),
         other => other.into(),
     }
 }
 
-const ORDER_COLS: &str = "o.id, o.product, o.amount_cents, o.pay_ref, o.status, o.created_at, o.updated_at, o.license, o.sync_until, o.admin_note, COALESCE(u.display_name, u.email)";
+const ORDER_COLS: &str = "o.id, o.product, o.amount_cents, o.pay_ref, o.status, o.created_at, o.updated_at, o.license, o.sync_until, o.admin_note, COALESCE(u.display_name, u.email), u.contact_email";
 
 fn order_from_row(r: &rusqlite::Row<'_>, with_account: bool) -> rusqlite::Result<Order> {
     let product: String = r.get(1)?;
@@ -116,6 +108,7 @@ fn order_from_row(r: &rusqlite::Row<'_>, with_account: bool) -> rusqlite::Result
         sync_until: r.get(8)?,
         admin_note: r.get(9)?,
         account: if with_account { r.get(10)? } else { None },
+        account_email: if with_account { r.get(11)? } else { None },
     })
 }
 
@@ -191,59 +184,30 @@ pub fn reject_order(conn: &Connection, id: &str, note: &str) -> Result<Order, St
     get_order(conn, id, None).map_err(|e| e.to_string())?.ok_or_else(|| "订单不存在".into())
 }
 
-/// 确认到账并交付。在一个事务里完成，重复确认不会重复交付。
-pub fn confirm_order(conn: &mut Connection, id: &str, signing_key: Option<&SigningKey>, sync_quota_bytes: u64) -> Result<Order, String> {
+/// 确认到账：生成绑定购买账号的激活码（最多 3 台电脑）。在一个事务里完成，重复确认不会重复发码。
+pub fn confirm_order(conn: &mut Connection, id: &str) -> Result<Order, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let row: Option<(i64, String, String, Option<String>, Option<String>, i64, String, Option<String>)> = tx
-        .query_row(
-            "SELECT o.user_id, o.product, o.status, u.plan_expires_at, u.plan, u.quota_bytes, COALESCE(u.display_name, u.email), u.oneid_key
-             FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, Some(r.get::<_, String>(4)?), r.get(5)?, r.get(6)?, r.get(7)?)),
-        )
+    let row: Option<(i64, String, String)> = tx
+        .query_row("SELECT user_id, product, status FROM orders WHERE id = ?1", params![id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some((user_id, product, status, expires, plan, quota, display, _oneid)) = row else {
+    let Some((user_id, product, status)) = row else {
         return Err("订单不存在".into());
     };
     if status != "pending" {
         return Err(format!("订单当前状态是「{}」，不能再确认", status_label(&status)));
     }
-    let at = now();
-    match product.as_str() {
-        "sync_year" => {
-            let active_until = expires
-                .as_deref()
-                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                .map(|t| t.with_timezone(&chrono::Utc))
-                .filter(|t| *t > chrono::Utc::now() && plan.as_deref() != Some("free"));
-            let until = (active_until.unwrap_or_else(chrono::Utc::now) + chrono::Duration::days(SYNC_YEAR_DAYS)).to_rfc3339();
-            let new_quota = (quota as u64).max(sync_quota_bytes) as i64;
-            tx.execute(
-                "UPDATE users SET plan = 'sync', plan_expires_at = ?1, quota_bytes = ?2 WHERE id = ?3",
-                params![until, new_quota, user_id],
-            )
-            .map_err(|e| e.to_string())?;
-            tx.execute(
-                "UPDATE orders SET status = 'paid', sync_until = ?1, updated_at = ?2 WHERE id = ?3",
-                params![until, at, id],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        "lifetime" => {
-            let key = signing_key.ok_or("服务器未配置永久版签名私钥（XYNOTE_LICENSE_KEY_FILE），无法签发授权码")?;
-            let license = sign(
-                &LicensePayload { v: 1, id: id.to_string(), name: display, edition: "lifetime".into(), issued_at: at.clone() },
-                key,
-            );
-            tx.execute(
-                "UPDATE orders SET status = 'paid', license = ?1, updated_at = ?2 WHERE id = ?3",
-                params![license, at, id],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        other => return Err(format!("未知商品 {}", other)),
+    if product != "lifetime" {
+        return Err(format!("该商品（{}）已停售，请标记为未到账并联系用户", product_name(&product)));
     }
+    let codes = crate::licensing::create_codes(&tx, 1, crate::licensing::DEFAULT_MAX_DEVICES, "官网订单", Some(id), Some(user_id))?;
+    tx.execute(
+        "UPDATE orders SET status = 'paid', license = ?1, updated_at = ?2 WHERE id = ?3",
+        params![codes[0], now(), id],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     get_order(conn, id, None).map_err(|e| e.to_string())?.ok_or_else(|| "订单不存在".into())
 }
@@ -256,13 +220,4 @@ pub fn status_label(s: &str) -> &'static str {
         "rejected" => "未到账",
         _ => "未知",
     }
-}
-
-/// 账号已购买的永久版授权码（软件登录后自动激活）
-pub fn user_licenses(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT license FROM orders WHERE user_id = ?1 AND status = 'paid' AND license IS NOT NULL ORDER BY updated_at",
-    )?;
-    let rows = stmt.query_map(params![user_id], |r| r.get(0))?.collect();
-    rows
 }
