@@ -1,4 +1,5 @@
 import React from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import { ArrowUpRight, Link2, Plus } from "lucide-react";
 import type { BacklinkItem, Page } from "../../types/notion";
 
@@ -41,9 +42,7 @@ export const PageFooterExtras: React.FC<PageFooterExtrasProps> = ({
                 className="nb-subpage-card"
                 onClick={() => onNavigatePage(child.id)}
               >
-                <span style={{ fontSize: "16px", flexShrink: 0 }}>
-                  {child.icon || "📄"}
-                </span>
+                <PageIcon icon={child.icon} size={16} className="nb-inline-page-icon" />
                 <span
                   style={{
                     flex: 1,

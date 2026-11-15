@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { PageIcon } from "../../icons/pageIcon";
 import {
   CornerDownLeft,
   Database,
@@ -331,9 +332,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       onClose();
                     }}
                   >
-                    <span style={{ fontSize: "18px", flexShrink: 0 }}>
-                      {item.pageIcon || "📄"}
-                    </span>
+                    <PageIcon icon={item.pageIcon} size={17} className="nb-inline-page-icon" />
                     <div className="nb-cmd-item-body">
                       <div className="nb-cmd-item-title">
                         {item.pageTitle || "无标题"}

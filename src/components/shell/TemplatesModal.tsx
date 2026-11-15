@@ -1,5 +1,17 @@
-import React, { useState } from "react";
-import { Sparkles, X } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Download, FilePlus2, RefreshCw, Sparkles, Trash2, Upload, X } from "lucide-react";
+import {
+  deleteCustomTemplate,
+  importCustomTemplates,
+  listCustomTemplates,
+  savePageAsTemplate,
+  TEMPLATE_FILE_SCHEMA,
+  templatePreviewLines,
+  updateCustomTemplate,
+  type CustomTemplate,
+} from "../../api/templates";
+import { PageIcon } from "../../icons/pageIcon";
+import { IconPicker } from "./IconPicker";
 import type { CreatePageInput, PageType } from "../../types/notion";
 
 interface TemplateDefinition {
@@ -97,137 +109,339 @@ export interface TemplatesModalProps {
   open: boolean;
   onClose: () => void;
   onUseTemplate: (input: CreatePageInput) => void;
+  /** 当前打开的页面（可以存为模板） */
+  currentPage?: { id: string; title: string } | null;
+  onNotify?: (msg: string, ms?: number) => void;
+  /** 打开时直接选中的「我的模板」 */
+  focusTemplateId?: string | null;
 }
+
+type Selection = { kind: "builtin"; id: string } | { kind: "custom"; id: string };
+
+function downloadJson(name: string, data: unknown) {
+  try {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    /* 无法下载时忽略 */
+  }
+}
+
+const errText = (e: unknown) => String(e instanceof Error ? e.message : e).replace(/^(Not found|Validation error): /, "");
 
 export const TemplatesModal: React.FC<TemplatesModalProps> = ({
   open,
   onClose,
   onUseTemplate,
+  currentPage = null,
+  onNotify = () => {},
+  focusTemplateId = null,
 }) => {
-  const [selectedId, setSelectedId] = useState<string>(TEMPLATES[0].id);
+  const [selection, setSelection] = useState<Selection>({ kind: "builtin", id: TEMPLATES[0].id });
+  const [mine, setMine] = useState<CustomTemplate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [iconOpen, setIconOpen] = useState(false);
+  const [draft, setDraft] = useState({ title: "", description: "" });
+  const importRef = useRef<HTMLInputElement | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const list = await listCustomTemplates();
+      setMine(list);
+      return list;
+    } catch (e) {
+      onNotify(`读取我的模板失败：${errText(e)}`);
+      return [];
+    }
+  }, [onNotify]);
+
+  useEffect(() => {
+    if (!open) return;
+    void reload().then((list) => {
+      if (focusTemplateId && list.some((t) => t.id === focusTemplateId)) {
+        setSelection({ kind: "custom", id: focusTemplateId });
+      }
+    });
+  }, [open, focusTemplateId, reload]);
+
+  const custom = selection.kind === "custom" ? mine.find((t) => t.id === selection.id) ?? null : null;
+
+  useEffect(() => {
+    if (custom) setDraft({ title: custom.title, description: custom.description });
+    setIconOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [custom?.id]);
 
   if (!open) return null;
 
-  const selected = TEMPLATES.find((t) => t.id === selectedId) ?? TEMPLATES[0];
+  const builtin = TEMPLATES.find((t) => selection.kind === "builtin" && t.id === selection.id) ?? (custom ? null : TEMPLATES[0]);
+
+  const replaceInList = (t: CustomTemplate) => setMine((list) => list.map((x) => (x.id === t.id ? t : x)));
+
+  const saveMeta = async (patch: { title?: string; icon?: string; description?: string }) => {
+    if (!custom) return;
+    try {
+      replaceInList(await updateCustomTemplate(custom.id, patch));
+    } catch (e) {
+      onNotify(`保存失败：${errText(e)}`);
+    }
+  };
+
+  const saveCurrentAsNew = async () => {
+    if (!currentPage) return;
+    setBusy(true);
+    try {
+      const t = await savePageAsTemplate(currentPage.id);
+      await reload();
+      setSelection({ kind: "custom", id: t.id });
+      onNotify(`已把「${t.title}」存为模板，可以在右侧修改名称和说明`);
+    } catch (e) {
+      onNotify(`存为模板失败：${errText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateFromCurrent = async () => {
+    if (!custom || !currentPage) return;
+    if (!window.confirm(`用当前页面「${currentPage.title || "无标题"}」的内容替换模板「${custom.title}」的内容吗？`)) return;
+    setBusy(true);
+    try {
+      replaceInList(await savePageAsTemplate(currentPage.id, { title: custom.title, icon: custom.icon, description: custom.description }, custom.id));
+      onNotify("模板内容已更新");
+    } catch (e) {
+      onNotify(`更新失败：${errText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCustom = async () => {
+    if (!custom) return;
+    if (!window.confirm(`删除模板「${custom.title}」？已经用它创建的页面不受影响。`)) return;
+    try {
+      await deleteCustomTemplate(custom.id);
+      const list = await reload();
+      setSelection(list[0] ? { kind: "custom", id: list[0].id } : { kind: "builtin", id: TEMPLATES[0].id });
+      onNotify("模板已删除");
+    } catch (e) {
+      onNotify(`删除失败：${errText(e)}`);
+    }
+  };
+
+  const exportTemplates = (items: CustomTemplate[], name: string) => {
+    downloadJson(name, { schema: TEMPLATE_FILE_SCHEMA, exportedAt: new Date().toISOString(), templates: items });
+    onNotify(`已导出 ${items.length} 个模板`);
+  };
+
+  const onImportPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const items: CustomTemplate[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.templates) ? parsed.templates : [];
+      if (items.length === 0) throw new Error("文件里没有模板");
+      const n = await importCustomTemplates(items);
+      await reload();
+      onNotify(`已导入 ${n} 个模板`);
+    } catch (err) {
+      onNotify(`导入失败：${errText(err)}`, 3600);
+    }
+  };
+
+  const useSelected = () => {
+    if (custom) {
+      onUseTemplate({ title: custom.title, icon: custom.icon, pageType: custom.pageType, templateId: `custom:${custom.id}` });
+    } else if (builtin) {
+      onUseTemplate({ title: builtin.title, icon: builtin.icon, pageType: builtin.pageType, templateId: builtin.id });
+    }
+    onClose();
+  };
 
   return (
     <div className="nb-modal-backdrop" onMouseDown={onClose}>
-      <div
-        className="nb-modal-card is-wide"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+      <div className="nb-modal-card is-wide" onMouseDown={(e) => e.stopPropagation()}>
+        <input ref={importRef} type="file" accept=".json,application/json" hidden onChange={onImportPicked} />
         <div className="nb-modal-header">
           <div className="nb-modal-title">
             <Sparkles size={17} />
-            <span>模板中心 Templates</span>
+            <span>模板中心</span>
           </div>
-          <button type="button" className="nb-icon-btn" onClick={onClose}>
-            <X size={16} />
-          </button>
+          <div className="nb-tpl-head-actions">
+            <button type="button" className="nb-btn-secondary nb-tpl-small-btn" onClick={() => importRef.current?.click()} title="从 .json 文件导入模板">
+              <Upload size={13} /> 导入
+            </button>
+            <button
+              type="button"
+              className="nb-btn-secondary nb-tpl-small-btn"
+              disabled={mine.length === 0}
+              onClick={() => exportTemplates(mine, "xynote-templates.json")}
+              title="把我的全部模板导出为 .json 文件"
+            >
+              <Download size={13} /> 导出全部
+            </button>
+            <button type="button" className="nb-icon-btn" onClick={onClose} aria-label="关闭">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="nb-tpl-body">
           <div className="nb-tpl-sidebar">
+            <div className="nb-tpl-group-label">我的模板{mine.length ? `（${mine.length}）` : ""}</div>
+            <button
+              type="button"
+              className="nb-tpl-nav-btn nb-tpl-save-btn"
+              disabled={!currentPage || busy}
+              onClick={() => void saveCurrentAsNew()}
+              title={currentPage ? `把「${currentPage.title || "无标题"}」存为模板` : "先打开一个页面，再把它存为模板"}
+            >
+              <FilePlus2 size={16} />
+              <span>把当前页面存为模板</span>
+            </button>
+            {mine.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`nb-tpl-nav-btn${custom?.id === t.id ? " is-selected" : ""}`}
+                onClick={() => setSelection({ kind: "custom", id: t.id })}
+              >
+                <PageIcon icon={t.icon} size={17} className="nb-inline-page-icon" />
+                <div className="nb-tpl-nav-text">
+                  <div className="nb-tpl-nav-title">{t.title}</div>
+                  <div className="nb-tpl-nav-sub">{t.pageType === "database" ? "数据库模板" : "文档模板"}</div>
+                </div>
+              </button>
+            ))}
+
+            <div className="nb-tpl-group-label">内置模板</div>
             {TEMPLATES.map((tpl) => (
               <button
                 key={tpl.id}
                 type="button"
-                className={`nb-tpl-nav-btn${
-                  tpl.id === selected.id ? " is-selected" : ""
-                }`}
-                onClick={() => setSelectedId(tpl.id)}
+                className={`nb-tpl-nav-btn${builtin?.id === tpl.id ? " is-selected" : ""}`}
+                onClick={() => setSelection({ kind: "builtin", id: tpl.id })}
               >
                 <span style={{ fontSize: "17px" }}>{tpl.icon}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {tpl.title}
-                  </div>
-                  <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
-                    {tpl.category}
-                  </div>
+                <div className="nb-tpl-nav-text">
+                  <div className="nb-tpl-nav-title">{tpl.title}</div>
+                  <div className="nb-tpl-nav-sub">{tpl.category}</div>
                 </div>
               </button>
             ))}
           </div>
 
           <div className="nb-tpl-preview">
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "12px",
-                  marginBottom: "10px",
-                }}
-              >
-                <span style={{ fontSize: "38px", lineHeight: 1 }}>
-                  {selected.icon}
-                </span>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>
-                    {selected.title}
-                  </h3>
-                  <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
-                    {selected.category} · 一键生成结构与示例内容
-                  </span>
-                </div>
-              </div>
-
-              <p
-                style={{
-                  color: "var(--text-secondary)",
-                  fontSize: "14px",
-                  margin: "12px 0 18px",
-                }}
-              >
-                {selected.summary}
-              </p>
-
-              <div className="nb-tpl-preview-box">
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  包含模块预览
-                </div>
-                {selected.bullets.map((line) => (
-                  <div
-                    key={line}
-                    style={{ fontSize: "13.5px", color: "var(--text-primary)" }}
-                  >
-                    {line}
+            {custom ? (
+              <div>
+                <div className="nb-tpl-custom-head">
+                  <div style={{ position: "relative" }}>
+                    <button type="button" className="nb-tpl-icon-btn" onClick={() => setIconOpen((v) => !v)} title="更换图标">
+                      <PageIcon icon={custom.icon} size={34} strokeWidth={1.6} />
+                    </button>
+                    {iconOpen && (
+                      <IconPicker
+                        value={custom.icon}
+                        allowRemove={false}
+                        style={{ position: "absolute", left: 0, top: "52px" }}
+                        onClose={() => setIconOpen(false)}
+                        onChange={(icon, opts) => {
+                          if (icon) void saveMeta({ icon });
+                          if (!opts?.keepOpen) setIconOpen(false);
+                        }}
+                      />
+                    )}
                   </div>
-                ))}
+                  <div className="nb-tpl-custom-fields">
+                    <input
+                      className="nb-tpl-title-input"
+                      value={draft.title}
+                      maxLength={80}
+                      aria-label="模板名称"
+                      onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                      onBlur={() => draft.title.trim() && draft.title !== custom.title && void saveMeta({ title: draft.title })}
+                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                    />
+                    <span className="nb-tpl-nav-sub">
+                      {custom.pageType === "database" ? "数据库模板" : "文档模板"} · 更新于 {custom.updatedAt.slice(0, 10)}
+                    </span>
+                  </div>
+                </div>
+                <textarea
+                  className="nb-tpl-desc-input"
+                  value={draft.description}
+                  maxLength={300}
+                  rows={2}
+                  placeholder="写一句说明：这个模板适合做什么（选填）"
+                  aria-label="模板说明"
+                  onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                  onBlur={() => draft.description !== custom.description && void saveMeta({ description: draft.description })}
+                />
+                <div className="nb-tpl-preview-box">
+                  <div className="nb-tpl-preview-label">内容预览</div>
+                  {templatePreviewLines(custom).length === 0 ? (
+                    <div className="nb-tpl-nav-sub">（空白页面）</div>
+                  ) : (
+                    templatePreviewLines(custom).map((line, i) => (
+                      <div key={i} className="nb-tpl-preview-line">
+                        {line}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="nb-tpl-custom-tools">
+                  <button
+                    type="button"
+                    className="nb-btn-secondary nb-tpl-small-btn"
+                    disabled={!currentPage || busy}
+                    onClick={() => void updateFromCurrent()}
+                    title={currentPage ? "用当前打开的页面替换模板内容" : "先打开一个页面"}
+                  >
+                    <RefreshCw size={13} /> 用当前页面更新
+                  </button>
+                  <button type="button" className="nb-btn-secondary nb-tpl-small-btn" onClick={() => exportTemplates([custom], `${custom.title}.xynote-template.json`)}>
+                    <Download size={13} /> 导出
+                  </button>
+                  <button type="button" className="nb-btn-secondary nb-tpl-small-btn is-danger" onClick={() => void removeCustom()}>
+                    <Trash2 size={13} /> 删除
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : builtin ? (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "10px" }}>
+                  <span style={{ fontSize: "38px", lineHeight: 1 }}>{builtin.icon}</span>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>{builtin.title}</h3>
+                    <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>{builtin.category}</span>
+                  </div>
+                </div>
+                <p style={{ color: "var(--text-secondary)", fontSize: "14px", margin: "12px 0 18px" }}>{builtin.summary}</p>
+                <div className="nb-tpl-preview-box">
+                  <div className="nb-tpl-preview-label">包含内容</div>
+                  {builtin.bullets.map((line) => (
+                    <div key={line} className="nb-tpl-preview-line">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
               <button type="button" className="nb-btn-secondary" onClick={onClose}>
                 取消
               </button>
-              <button
-                type="button"
-                className="nb-btn-primary"
-                onClick={() => {
-                  onUseTemplate({
-                    title: selected.title,
-                    icon: selected.icon,
-                    pageType: selected.pageType,
-                    templateId: selected.id,
-                  });
-                  onClose();
-                }}
-              >
-                使用此模板创建页面
+              <button type="button" className="nb-btn-primary" onClick={useSelected}>
+                用这个模板新建页面
               </button>
             </div>
           </div>

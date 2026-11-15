@@ -19,6 +19,12 @@ import {
   KeybindingDefinition,
   mergeKeybindings,
   normalizeKeyboardEventToShortcut,
+  normalizeTextEditorShortcut,
+  applyTextPreset,
+  defaultShortcutFor,
+  textPresetOf,
+  TEXT_KEYMAP_PRESETS,
+  type TextKeymapPreset,
 } from "./keybindingRegistry";
 
 export interface KeybindingSettingsPanelProps {
@@ -54,7 +60,8 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
   );
 
   const customOverrideCount = useMemo(
-    () => Object.keys(extractKeybindingOverrides(mergedMap)).length,
+    // 文本编辑器按所选方案（IDEA / VS Code）的默认值计算，换方案本身不算自定义
+    () => KEYBINDING_DEFINITIONS.filter((d) => (mergedMap[d.id] ?? "") !== defaultShortcutFor(d, mergedMap)).length,
     [mergedMap]
   );
 
@@ -114,7 +121,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
         return;
       }
 
-      const combo = normalizeKeyboardEventToShortcut(e);
+      const combo = targetDef.category === "textEditor" ? normalizeTextEditorShortcut(e) : normalizeKeyboardEventToShortcut(e);
       if (!combo) {
         // Ignore lone modifier press or plain typing key without Ctrl/Alt
         return;
@@ -180,7 +187,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
   };
 
   const handleResetSingle = (def: KeybindingDefinition) => {
-    const next = { ...mergedMap, [def.id]: def.defaultShortcut };
+    const next = { ...mergedMap, [def.id]: defaultShortcutFor(def, mergedMap) };
     onChangeKeybindings(next);
     if (pendingConflict?.targetAction.id === def.id) {
       setPendingConflict(null);
@@ -189,7 +196,8 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
   };
 
   const handleResetAll = () => {
-    onChangeKeybindings({ ...DEFAULT_KEYBINDINGS });
+    // 保留文本编辑器所选的方案
+    onChangeKeybindings(applyTextPreset({ ...DEFAULT_KEYBINDINGS }, textPresetOf(mergedMap)));
     setRecordingActionId(null);
     setPendingConflict(null);
     onNotify("已将全部快捷键恢复为出厂默认配置");
@@ -270,6 +278,37 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
           <p className="nb-settings-desc">
             支持自定义全部 18 种块级转换、块颜色高亮、块移动复制、行内排版与全局视图快捷键。点击任意快捷键胶囊即可实时按键录制。
           </p>
+        </div>
+      </div>
+
+      {/* 文本 / 代码编辑器的快捷键方案 */}
+      <div className="nb-settings-card-box nb-kb-preset">
+        <div className="nb-kb-preset-text">
+          <div className="nb-kb-preset-title">文本 / 代码编辑器的快捷键方案</div>
+          <div className="nb-shortcut-desc">
+            打开 txt、JSON、代码等文件时使用。选好方案后，下面「文本 / 代码编辑器」分类里的每一项都还可以单独修改。
+          </div>
+        </div>
+        <div className="nb-kb-preset-btns" role="radiogroup" aria-label="快捷键方案">
+          {(Object.keys(TEXT_KEYMAP_PRESETS) as TextKeymapPreset[]).map((id) => {
+            const active = textPresetOf(mergedMap) === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={`nb-kb-cat-pill${active ? " is-active" : ""}`}
+                onClick={() => {
+                  onChangeKeybindings(applyTextPreset(mergedMap, id));
+                  setSelectedCategory("textEditor");
+                  onNotify(`文本编辑器已改用 ${TEXT_KEYMAP_PRESETS[id].label} 快捷键`);
+                }}
+              >
+                {TEXT_KEYMAP_PRESETS[id].label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -392,7 +431,7 @@ export const KeybindingSettingsPanel: React.FC<KeybindingSettingsPanelProps> = (
             {filteredActions.map((def) => {
               const currentCombo = mergedMap[def.id] ?? "";
               const isRecording = recordingActionId === def.id;
-              const isModified = currentCombo !== def.defaultShortcut;
+              const isModified = currentCombo !== defaultShortcutFor(def, mergedMap);
               return (
                 <tr
                   key={def.id}

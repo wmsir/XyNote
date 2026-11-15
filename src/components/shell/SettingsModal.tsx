@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { getUiLangPref, setUiLangPref, type UiLangPref } from "../../i18n/lang";
 import {
   AlignCenter,
   Archive,
@@ -1112,6 +1113,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </p>
                 </div>
 
+                <UiLanguageCard />
+
                 <div className="nb-settings-card-box">
                   <div className="nb-settings-label">界面配色主题</div>
                   <div className="nb-theme-cards-grid">
@@ -1611,3 +1614,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+/** 界面语言：中文 / English / 跟随系统 */
+function UiLanguageCard() {
+  const [pref, setPref] = React.useState<UiLangPref>(() => getUiLangPref());
+  const options: { id: UiLangPref; label: string; sub: string }[] = [
+    { id: "zh", label: "简体中文", sub: "Chinese" },
+    { id: "en", label: "English", sub: "英文" },
+    { id: "system", label: "跟随系统", sub: "System" },
+  ];
+  return (
+    <div className="nb-settings-card-box">
+      <div className="nb-settings-label">界面语言 / Language</div>
+      <div className="nb-theme-cards-grid">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className={`nb-choice-card${pref === o.id ? " is-selected" : ""}`}
+            onClick={() => {
+              setPref(o.id);
+              setUiLangPref(o.id);
+            }}
+          >
+            <div className="nb-choice-title" data-i18n-skip={o.id === "system" ? undefined : ""}>
+              {o.label}
+            </div>
+            <div className="nb-choice-desc" data-i18n-skip="">
+              {o.sub}
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="nb-settings-sub">笔记内容不会被翻译，只切换界面文字。</div>
+    </div>
+  );
+}

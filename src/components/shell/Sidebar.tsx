@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isSvgIcon, PageIcon } from "../../icons/pageIcon";
 import {
   ChevronRight,
   Copy,
@@ -80,6 +81,19 @@ const PageNodeGlyph: React.FC<{ page: Page }> = ({ page }) => {
   const hasCustomEmoji = isDb
     ? !DEFAULT_DB_ICONS.has(rawIcon)
     : !DEFAULT_DOC_ICONS.has(rawIcon);
+
+  if (isSvgIcon(rawIcon)) {
+    return (
+      <span className="nb-tree-emoji-wrap">
+        <PageIcon icon={rawIcon} size={16} strokeWidth={1.7} className="nb-tree-glyph-svg" />
+        {isDb && (
+          <span className="nb-tree-db-corner" aria-hidden="true">
+            <Database size={8} strokeWidth={2.2} />
+          </span>
+        )}
+      </span>
+    );
+  }
 
   if (isDb) {
     if (!hasCustomEmoji) {

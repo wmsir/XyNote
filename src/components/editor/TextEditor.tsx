@@ -25,6 +25,8 @@ import {
   type TextFileDocument,
 } from "../../api/textfile";
 import { Highlighter, langForFileName } from "./textHighlight";
+import { buildTextShortcutLookup, mergeKeybindings, normalizeTextEditorShortcut } from "../shell/keybindingRegistry";
+import type { KeybindingMap } from "../../types/notion";
 import "./textEditor.css";
 
 export interface TextEditorProps {
@@ -33,6 +35,8 @@ export interface TextEditorProps {
   onRevealInExplorer: (path: string) => void;
   /** 保存状态变化，供顶栏显示 */
   onSavingChange?: (saving: boolean) => void;
+  /** 快捷键设置（含文本编辑器的 text.* 动作） */
+  keybindings?: KeybindingMap;
 }
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
@@ -110,7 +114,11 @@ function replaceRange(ta: HTMLTextAreaElement, start: number, end: number, text:
   if (selectStart !== undefined) ta.setSelectionRange(selectStart, selectEnd ?? selectStart);
 }
 
-export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSavingChange }: TextEditorProps) {
+export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSavingChange, keybindings }: TextEditorProps) {
+  const shortcutLookup = useMemo(() => buildTextShortcutLookup(keybindings), [keybindings]);
+  const mergedKeys = useMemo(() => mergeKeybindings(keybindings), [keybindings]);
+  /** 提示文字里显示当前绑定的快捷键 */
+  const keyHint = (id: string) => (mergedKeys[id] ? ` (${mergedKeys[id]})` : "");
   const [doc, setDoc] = useState(initialDoc);
   const [content, setContent] = useState(initialDoc.content);
   const [encoding, setEncoding] = useState<TextEncoding>(initialDoc.encoding);
@@ -553,68 +561,246 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
 
   /* ---------------- 键盘 ---------------- */
 
+  /* ---------------- 可自定义快捷键的动作 ---------------- */
+
+  const wordRangeAt = (v: string, pos: number) => {
+    const isWord = (c: string | undefined) => !!c && /[\p{L}\p{N}_$]/u.test(c);
+    let a = pos;
+    let b = pos;
+    while (a > 0 && isWord(v[a - 1])) a--;
+    while (b < v.length && isWord(v[b])) b++;
+    return { a, b };
+  };
+
+  const moveLines = (ta: HTMLTextAreaElement, dir: -1 | 1) => {
+    const v = ta.value;
+    const { start, end } = selectedLineRange(ta);
+    const selStart = ta.selectionStart;
+    const selEnd = ta.selectionEnd;
+    if (dir === -1) {
+      if (start === 0) return;
+      const prevStart = v.lastIndexOf("\n", start - 2) + 1;
+      const prev = v.slice(prevStart, start - 1);
+      const block = v.slice(start, end);
+      const shift = prev.length + 1;
+      replaceRange(ta, prevStart, end, `${block}\n${prev}`, selStart - shift, selEnd - shift);
+    } else {
+      if (end >= v.length) return;
+      let nextEnd = v.indexOf("\n", end + 1);
+      if (nextEnd < 0) nextEnd = v.length;
+      const next = v.slice(end + 1, nextEnd);
+      const block = v.slice(start, end);
+      const shift = next.length + 1;
+      replaceRange(ta, start, nextEnd, `${next}\n${block}`, selStart + shift, selEnd + shift);
+    }
+  };
+
+  const blockComment = (ta: HTMLTextAreaElement) => {
+    const pair = lang.mode === "markup" ? (["<!--", "-->"] as [string, string]) : lang.block?.[0];
+    if (!pair) {
+      onNotify(`${lang.label} 没有块注释`);
+      return;
+    }
+    const [open, close] = pair;
+    const a = ta.selectionStart;
+    const b = ta.selectionEnd;
+    const sel = ta.value.slice(a, b);
+    if (sel.startsWith(open) && sel.endsWith(close) && sel.length >= open.length + close.length) {
+      const inner = sel.slice(open.length, sel.length - close.length).replace(/^ /, "").replace(/ $/, "");
+      replaceRange(ta, a, b, inner, a, a + inner.length);
+    } else {
+      const text = `${open} ${sel} ${close}`;
+      replaceRange(ta, a, b, text, a + open.length + 1, a + open.length + 1 + sel.length);
+    }
+  };
+
+  const formatDocument = (ta: HTMLTextAreaElement) => {
+    const v = ta.value;
+    let next = v;
+    if (lang.id === "json") {
+      try {
+        const indent = indentUnit === "\t" ? "\t" : indentUnit.length;
+        next = JSON.stringify(JSON.parse(v), null, indent) + (v.endsWith("\n") ? "\n" : "");
+      } catch {
+        onNotify("JSON 格式有误（或含注释），只去掉了行尾空格");
+        next = v.replace(/[ \t]+$/gm, "");
+      }
+    } else {
+      next = v.replace(/[ \t]+$/gm, "");
+    }
+    if (next === v) {
+      onNotify("已经是整理好的格式");
+      return;
+    }
+    const caret = Math.min(ta.selectionStart, next.length);
+    replaceRange(ta, 0, v.length, next, caret, caret);
+    onNotify(lang.id === "json" ? "已格式化 JSON" : "已去掉行尾空格");
+  };
+
+  const runAction = (id: string, ta: HTMLTextAreaElement): boolean => {
+    const v = ta.value;
+    switch (id) {
+      case "text.save":
+        void doSave(false);
+        return true;
+      case "text.find":
+        openFind(false);
+        return true;
+      case "text.replace":
+        openFind(true);
+        return true;
+      case "text.findNext":
+      case "text.findPrev":
+        if (!find.open || !find.query) openFind(false);
+        else goToMatch(id === "text.findNext" ? 1 : -1);
+        return true;
+      case "text.gotoLine":
+        setGotoValue(String(cursor.line));
+        setGotoOpen(true);
+        return true;
+      case "text.duplicateLine": {
+        if (ta.selectionEnd > ta.selectionStart && !v.slice(ta.selectionStart, ta.selectionEnd).includes("\n")) {
+          // 选中的是一段文字：复制这段文字
+          const a = ta.selectionStart;
+          const b = ta.selectionEnd;
+          replaceRange(ta, b, b, v.slice(a, b), b, b + (b - a));
+          return true;
+        }
+        const { start, end } = selectedLineRange(ta);
+        const block = v.slice(start, end);
+        const shift = block.length + 1;
+        replaceRange(ta, end, end, "\n" + block, ta.selectionStart + shift, ta.selectionEnd + shift);
+        return true;
+      }
+      case "text.deleteLine": {
+        const { start, end } = selectedLineRange(ta);
+        const from = end < v.length ? start : Math.max(0, start - 1);
+        const to = end < v.length ? end + 1 : end;
+        replaceRange(ta, from, to, "", from, from);
+        return true;
+      }
+      case "text.moveLineUp":
+        moveLines(ta, -1);
+        return true;
+      case "text.moveLineDown":
+        moveLines(ta, 1);
+        return true;
+      case "text.toggleComment":
+        if (!lang.line?.[0]) onNotify(`${lang.label} 没有行注释`);
+        else toggleComment(ta);
+        return true;
+      case "text.blockComment":
+        blockComment(ta);
+        return true;
+      case "text.expandSelection": {
+        const a = ta.selectionStart;
+        const b = ta.selectionEnd;
+        const w = wordRangeAt(v, a);
+        const lineStart = v.lastIndexOf("\n", a - 1) + 1;
+        let lineEnd = v.indexOf("\n", b);
+        if (lineEnd < 0) lineEnd = v.length;
+        if (a === b && w.b > w.a) ta.setSelectionRange(w.a, w.b);
+        else if (a > lineStart || b < lineEnd) ta.setSelectionRange(lineStart, lineEnd);
+        else ta.setSelectionRange(0, v.length);
+        updateCursor();
+        return true;
+      }
+      case "text.selectNextOccurrence": {
+        const a = ta.selectionStart;
+        const b = ta.selectionEnd;
+        if (a === b) {
+          const w = wordRangeAt(v, a);
+          if (w.b > w.a) ta.setSelectionRange(w.a, w.b);
+          updateCursor();
+          return true;
+        }
+        const needle = v.slice(a, b);
+        let idx = v.indexOf(needle, b);
+        if (idx < 0) idx = v.indexOf(needle);
+        if (idx >= 0) {
+          ta.setSelectionRange(idx, idx + needle.length);
+          updateCursor();
+          revealPosition(lineOf(idx), idx - v.lastIndexOf("\n", idx - 1) - 1, false);
+        }
+        return true;
+      }
+      case "text.insertLineBelow":
+      case "text.insertLineAbove": {
+        const pos = ta.selectionStart;
+        const lineStart = v.lastIndexOf("\n", pos - 1) + 1;
+        let lineEnd = v.indexOf("\n", pos);
+        if (lineEnd < 0) lineEnd = v.length;
+        const indent = v.slice(lineStart, lineEnd).match(/^[ \t]*/)?.[0] ?? "";
+        if (id === "text.insertLineBelow") {
+          const caret = lineEnd + 1 + indent.length;
+          replaceRange(ta, lineEnd, lineEnd, "\n" + indent, caret, caret);
+        } else {
+          const caret = lineStart + indent.length;
+          replaceRange(ta, lineStart, lineStart, indent + "\n", caret, caret);
+        }
+        return true;
+      }
+      case "text.joinLines": {
+        const { start, end } = selectedLineRange(ta);
+        const multi = v.slice(start, end).includes("\n");
+        if (!multi) {
+          if (end >= v.length) return true;
+          let nextEnd = v.indexOf("\n", end + 1);
+          if (nextEnd < 0) nextEnd = v.length;
+          const joined = v.slice(start, end).replace(/[ \t]+$/, "") + " " + v.slice(end + 1, nextEnd).trimStart();
+          const caret = start + v.slice(start, end).replace(/[ \t]+$/, "").length;
+          replaceRange(ta, start, nextEnd, joined, caret, caret);
+        } else {
+          const parts = v.slice(start, end).split("\n");
+          const joined = parts.map((l, i) => (i === 0 ? l.replace(/[ \t]+$/, "") : l.trim())).join(" ");
+          replaceRange(ta, start, end, joined, start, start + joined.length);
+        }
+        return true;
+      }
+      case "text.toggleCase": {
+        let a = ta.selectionStart;
+        let b = ta.selectionEnd;
+        if (a === b) ({ a, b } = wordRangeAt(v, a));
+        if (a === b) return true;
+        const sel = v.slice(a, b);
+        const next = sel === sel.toUpperCase() ? sel.toLowerCase() : sel.toUpperCase();
+        replaceRange(ta, a, b, next, a, b);
+        return true;
+      }
+      case "text.format":
+        formatDocument(ta);
+        return true;
+      case "text.toggleWrap":
+        if (rich) toggleWrap();
+        return true;
+      case "text.zoomIn":
+        zoom(1);
+        return true;
+      case "text.zoomOut":
+        zoom(-1);
+        return true;
+      case "text.zoomReset":
+        zoom(null);
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  /* ---------------- 键盘 ---------------- */
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget;
     const mod = e.ctrlKey || e.metaKey;
-    const key = e.key.toLowerCase();
     const handled = () => {
       e.preventDefault();
       e.stopPropagation();
     };
-    if (mod && key === "s") {
+    if (e.nativeEvent.isComposing) return;
+    const combo = normalizeTextEditorShortcut(e);
+    const action = combo ? shortcutLookup.get(combo.toLowerCase()) : undefined;
+    if (action && runAction(action, ta)) {
       handled();
-      void doSave(false);
-      return;
-    }
-    if (mod && key === "f") {
-      handled();
-      openFind(false);
-      return;
-    }
-    if (mod && key === "h") {
-      handled();
-      openFind(true);
-      return;
-    }
-    if (mod && key === "g") {
-      handled();
-      setGotoValue(String(cursor.line));
-      setGotoOpen(true);
-      return;
-    }
-    if (e.key === "F3") {
-      handled();
-      if (!find.open) openFind(false);
-      else goToMatch(e.shiftKey ? -1 : 1);
-      return;
-    }
-    if (mod && (key === "=" || key === "+")) {
-      handled();
-      zoom(1);
-      return;
-    }
-    if (mod && key === "-") {
-      handled();
-      zoom(-1);
-      return;
-    }
-    if (mod && key === "0") {
-      handled();
-      zoom(null);
-      return;
-    }
-    if (mod && key === "/") {
-      handled();
-      toggleComment(ta);
-      return;
-    }
-    if (mod && key === "d") {
-      // 复制当前行
-      handled();
-      const { start, end } = selectedLineRange(ta);
-      const block = ta.value.slice(start, end);
-      const caret = ta.selectionStart + block.length + 1;
-      replaceRange(ta, end, end, "\n" + block, caret, caret);
       return;
     }
     if (e.key === "Tab" && !mod && !e.altKey) {
@@ -624,7 +810,7 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
       else replaceRange(ta, ta.selectionStart, ta.selectionEnd, indentUnit);
       return;
     }
-    if (e.key === "Enter" && !mod && !e.altKey && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && !mod && !e.altKey && !e.shiftKey) {
       // 自动缩进：新行沿用上一行的缩进
       const v = ta.value;
       const lineStart = v.lastIndexOf("\n", ta.selectionStart - 1) + 1;
@@ -853,16 +1039,16 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
                       ? `${currentIndex + 1} / ${matches.length}${matches.length >= MAX_MATCHES ? "+" : ""}`
                       : `共 ${matches.length}${matches.length >= MAX_MATCHES ? "+" : ""} 处`}
             </span>
-            <button type="button" className="nb-texted-opt" title="上一个 (Shift+Enter)" onClick={() => goToMatch(-1)}>
+            <button type="button" className="nb-texted-opt" title={`上一个 (Shift+Enter)${mergedKeys["text.findPrev"] ? ` / ${mergedKeys["text.findPrev"]}` : ""}`} onClick={() => goToMatch(-1)}>
               <ArrowUp size={15} />
             </button>
-            <button type="button" className="nb-texted-opt" title="下一个 (Enter)" onClick={() => goToMatch(1)}>
+            <button type="button" className="nb-texted-opt" title={`下一个 (Enter)${mergedKeys["text.findNext"] ? ` / ${mergedKeys["text.findNext"]}` : ""}`} onClick={() => goToMatch(1)}>
               <ArrowDown size={15} />
             </button>
             <button
               type="button"
               className={`nb-texted-opt${find.replace ? " is-on" : ""}`}
-              title="替换 (Ctrl+H)"
+              title={`替换${keyHint("text.replace")}`}
               aria-pressed={find.replace}
               onClick={() => setFind((f) => ({ ...f, replace: !f.replace }))}
             >
@@ -973,7 +1159,7 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
         <button
           type="button"
           className="nb-texted-status-item"
-          title="跳到行 (Ctrl+G)"
+          title={`跳到行${keyHint("text.gotoLine")}`}
           onClick={() => {
             setGotoValue(String(cursor.line));
             setGotoOpen(true);
@@ -1048,7 +1234,7 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
         <button
           type="button"
           className={`nb-texted-status-item nb-texted-save is-${saveState}`}
-          title="保存 (Ctrl+S)"
+          title={`保存${keyHint("text.save")}`}
           onClick={() => void doSave(false)}
         >
           <span className="nb-texted-save-dot" />

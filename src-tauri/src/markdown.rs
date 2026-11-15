@@ -129,6 +129,16 @@ fn extract_attr_value(open_tag: &str, attr_name: &str) -> Option<String> {
     None
 }
 
+/// 一级标题「# 图标 标题」；SVG 图标（lucide:…）无法写进 Markdown，只写标题
+fn heading_with_icon(icon: &str, title: &str) -> String {
+    let icon = icon.trim();
+    if icon.is_empty() || icon.starts_with("lucide:") {
+        format!("# {}", title)
+    } else {
+        format!("# {} {}", icon, title)
+    }
+}
+
 fn strip_leading_icon_prefix(label: &str) -> &str {
     let trimmed = label.trim();
     if let Some((first_tok, rest)) = trimmed.split_once(' ') {
@@ -1778,7 +1788,7 @@ pub fn serialize_save_blocks_to_markdown(items: &[SaveBlockItem]) -> String {
 }
 
 pub fn export_doc_to_markdown(page: &Page, blocks: &[Block]) -> MarkdownExport {
-    let mut lines: Vec<String> = vec![format!("# {} {}", page.icon, page.title), String::new()];
+    let mut lines: Vec<String> = vec![heading_with_icon(&page.icon, &page.title), String::new()];
     let mut num_counter = 0usize;
 
     for b in blocks {
@@ -1799,7 +1809,7 @@ pub fn export_doc_to_markdown(page: &Page, blocks: &[Block]) -> MarkdownExport {
 }
 
 pub fn export_database_to_markdown(page: &Page, db: &DatabaseFull) -> MarkdownExport {
-    let mut lines: Vec<String> = vec![format!("# {} {}", page.icon, page.title), String::new()];
+    let mut lines: Vec<String> = vec![heading_with_icon(&page.icon, &page.title), String::new()];
 
     if !db.columns.is_empty() {
         let col_names: Vec<String> = db

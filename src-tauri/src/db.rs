@@ -353,6 +353,7 @@ impl Database {
         // 同步基线与删除墓碑（见 sync.rs）
         conn.execute_batch(crate::sync::SCHEMA_SQL)?;
         conn.execute_batch(crate::versions::SCHEMA_SQL)?;
+        conn.execute_batch(CUSTOM_TEMPLATES_SQL)?;
 
         // Seed default settings if absent
         let default_settings = [
@@ -911,12 +912,21 @@ impl Database {
             .map(str::trim)
             .filter(|s| !s.is_empty());
 
+        // 「我的模板」：template_id 形如 custom:<id>
+        let custom = match template_id.and_then(|t| t.strip_prefix("custom:")) {
+            Some(cid) => Some(Self::load_custom_template_conn(&tx, cid)?),
+            None => None,
+        };
+        let template_id = if custom.is_some() { None } else { template_id };
+
         let is_db_template = matches!(
             template_id,
             Some("product-roadmap" | "task-hub" | "reading-list")
         );
 
-        let page_type = if is_db_template {
+        let page_type = if let Some(c) = &custom {
+            c.page_type.clone()
+        } else if is_db_template {
             "database".to_string()
         } else if template_id.is_some() {
             "doc".to_string()
@@ -944,6 +954,10 @@ impl Database {
             ),
         };
 
+        let (default_title, default_icon) = match &custom {
+            Some(c) => (c.title.as_str(), c.icon.as_str()),
+            None => (default_title, default_icon),
+        };
         let final_title = custom_title.unwrap_or_else(|| default_title.to_string());
         let final_icon = input
             .icon
@@ -970,7 +984,9 @@ impl Database {
             ],
         )?;
 
-        if let Some(tpl) = template_id {
+        if let Some(c) = &custom {
+            Self::populate_custom_template(&tx, &page_id, &c.payload, &ts)?;
+        } else if let Some(tpl) = template_id {
             Self::populate_template(&tx, &page_id, tpl, &ts)?;
         } else if page_type == "database" {
             Self::ensure_database_initialized_conn(&tx, &page_id)?;
@@ -2647,6 +2663,322 @@ impl Database {
     }
 }
 
+/* ───────────── 我的模板（自定义模板） ───────────── */
+
+const CUSTOM_TEMPLATES_SQL: &str = "
+CREATE TABLE IF NOT EXISTS custom_templates (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    icon TEXT NOT NULL DEFAULT '📄',
+    description TEXT NOT NULL DEFAULT '',
+    page_type TEXT NOT NULL DEFAULT 'doc',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+";
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateBlock {
+    pub block_type: String,
+    pub content: String,
+    pub plain_text: String,
+    pub props: BlockProps,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateColumn {
+    pub id: String,
+    pub name: String,
+    pub col_type: String,
+    pub options: Vec<crate::models::SelectOption>,
+    pub width: i64,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateRow {
+    pub cells: Map<String, Value>,
+    pub sort_order: i64,
+}
+
+/// 模板内容：文档页面存块，数据库页面存列、视图和行
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplatePayload {
+    pub blocks: Vec<TemplateBlock>,
+    pub columns: Vec<TemplateColumn>,
+    pub active_view: Option<String>,
+    pub group_by_col_id: Option<String>,
+    pub rows: Vec<TemplateRow>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CustomTemplate {
+    pub id: String,
+    pub title: String,
+    pub icon: String,
+    pub description: String,
+    pub page_type: String,
+    pub payload: TemplatePayload,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateMetaInput {
+    pub title: Option<String>,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+}
+
+fn clean_text(v: Option<&str>, max: usize) -> Option<String> {
+    v.map(|s| s.trim().chars().take(max).collect::<String>()).filter(|s| !s.is_empty())
+}
+
+impl Database {
+    fn load_custom_template_conn(conn: &Connection, id: &str) -> Result<CustomTemplate, AppError> {
+        conn.query_row(
+            "SELECT id, title, icon, description, page_type, payload_json, created_at, updated_at
+             FROM custom_templates WHERE id = ?1",
+            params![id],
+            |r| {
+                let payload: String = r.get(5)?;
+                Ok(CustomTemplate {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    icon: r.get(2)?,
+                    description: r.get(3)?,
+                    page_type: r.get(4)?,
+                    payload: serde_json::from_str(&payload).unwrap_or_default(),
+                    created_at: r.get(6)?,
+                    updated_at: r.get(7)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("模板不存在或已被删除".into()))
+    }
+
+    fn snapshot_page_conn(conn: &Connection, page: &Page) -> Result<TemplatePayload, AppError> {
+        let mut payload = TemplatePayload::default();
+        if page.page_type == "database" {
+            let full = Self::get_database_conn(conn, &page.id)?;
+            payload.columns = full
+                .columns
+                .iter()
+                .map(|c| TemplateColumn {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    col_type: c.col_type.clone(),
+                    options: c.options.clone(),
+                    width: c.width,
+                    sort_order: c.sort_order,
+                })
+                .collect();
+            payload.active_view = Some(full.active_view.clone());
+            payload.group_by_col_id = full.group_by_col_id.clone();
+            payload.rows = full
+                .rows
+                .iter()
+                .map(|r| TemplateRow { cells: r.cells.clone(), sort_order: r.sort_order })
+                .collect();
+        } else {
+            payload.blocks = Self::get_blocks_for_page_conn(conn, &page.id)?
+                .into_iter()
+                .map(|b| TemplateBlock {
+                    block_type: b.block_type,
+                    content: b.content,
+                    plain_text: b.plain_text,
+                    props: b.props,
+                    sort_order: b.sort_order,
+                })
+                .collect();
+        }
+        Ok(payload)
+    }
+
+    fn populate_custom_template(
+        conn: &Connection,
+        page_id: &str,
+        payload: &TemplatePayload,
+        ts: &str,
+    ) -> Result<(), AppError> {
+        let page_type: String = conn.query_row("SELECT page_type FROM pages WHERE id = ?1", params![page_id], |r| r.get(0))?;
+        if page_type == "database" {
+            if payload.columns.is_empty() {
+                Self::ensure_database_initialized_conn(conn, page_id)?;
+                return Ok(());
+            }
+            let mut col_map: HashMap<String, String> = HashMap::new();
+            for col in &payload.columns {
+                let nid = new_id();
+                col_map.insert(col.id.clone(), nid.clone());
+                conn.execute(
+                    "INSERT INTO db_columns (id, page_id, name, col_type, options_json, width, sort_order)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        nid,
+                        page_id,
+                        col.name,
+                        if col.col_type.is_empty() { "text" } else { col.col_type.as_str() },
+                        serde_json::to_string(&col.options)?,
+                        if col.width > 0 { col.width } else { 180 },
+                        col.sort_order
+                    ],
+                )?;
+            }
+            let group = payload.group_by_col_id.as_ref().and_then(|g| col_map.get(g).cloned());
+            conn.execute(
+                "INSERT INTO db_meta (page_id, active_view, group_by_col_id) VALUES (?1, ?2, ?3)",
+                params![page_id, payload.active_view.clone().unwrap_or_else(|| "table".into()), group],
+            )?;
+            for row in &payload.rows {
+                let mut cells = Map::new();
+                for (k, v) in &row.cells {
+                    if let Some(nk) = col_map.get(k) {
+                        cells.insert(nk.clone(), v.clone());
+                    }
+                }
+                conn.execute(
+                    "INSERT INTO db_rows (id, page_id, cells_json, linked_page_id, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?5)",
+                    params![new_id(), page_id, serde_json::to_string(&cells)?, row.sort_order, ts],
+                )?;
+            }
+        } else {
+            let blocks: Vec<&TemplateBlock> = payload.blocks.iter().filter(|b| !b.block_type.is_empty()).collect();
+            if blocks.is_empty() {
+                conn.execute(
+                    "INSERT INTO blocks (id, page_id, block_type, content, plain_text, props_json, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, 'paragraph', '', '', '{}', 0, ?3, ?3)",
+                    params![new_id(), page_id, ts],
+                )?;
+            }
+            for b in blocks {
+                let plain = effective_plain_text(&b.block_type, &b.content, &b.plain_text, &b.props);
+                conn.execute(
+                    "INSERT INTO blocks (id, page_id, block_type, content, plain_text, props_json, sort_order, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    params![new_id(), page_id, b.block_type, b.content, plain, serde_json::to_string(&b.props)?, b.sort_order, ts],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn list_custom_templates(&self) -> Result<Vec<CustomTemplate>, AppError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare("SELECT id FROM custom_templates ORDER BY updated_at DESC")?;
+        let ids: Vec<String> = stmt.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        ids.iter().map(|id| Self::load_custom_template_conn(&conn, id)).collect()
+    }
+
+    /// 把页面保存为模板；replace_id 有值时用页面内容更新这个模板（保留名称等信息，除非另外传入）
+    pub fn save_page_as_template(
+        &self,
+        page_id: &str,
+        meta: TemplateMetaInput,
+        replace_id: Option<&str>,
+    ) -> Result<CustomTemplate, AppError> {
+        let conn = self.lock()?;
+        let page = Self::get_page_by_id_conn(&conn, page_id)?;
+        let payload = Self::snapshot_page_conn(&conn, &page)?;
+        let payload_json = serde_json::to_string(&payload)?;
+        let ts = now_iso();
+        let id = match replace_id.filter(|s| !s.is_empty()) {
+            Some(rid) => {
+                let existing = Self::load_custom_template_conn(&conn, rid)?;
+                conn.execute(
+                    "UPDATE custom_templates SET title = ?1, icon = ?2, description = ?3, page_type = ?4, payload_json = ?5, updated_at = ?6 WHERE id = ?7",
+                    params![
+                        clean_text(meta.title.as_deref(), 80).unwrap_or(existing.title),
+                        clean_text(meta.icon.as_deref(), 80).unwrap_or(existing.icon),
+                        meta.description.as_deref().map(|d| d.trim().chars().take(300).collect::<String>()).unwrap_or(existing.description),
+                        page.page_type,
+                        payload_json,
+                        ts,
+                        rid
+                    ],
+                )?;
+                rid.to_string()
+            }
+            None => {
+                let id = new_id();
+                conn.execute(
+                    "INSERT INTO custom_templates (id, title, icon, description, page_type, payload_json, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    params![
+                        id,
+                        clean_text(meta.title.as_deref(), 80).unwrap_or_else(|| if page.title.trim().is_empty() { "我的模板".into() } else { page.title.clone() }),
+                        clean_text(meta.icon.as_deref(), 80).unwrap_or_else(|| page.icon.clone()),
+                        meta.description.as_deref().map(|d| d.trim().chars().take(300).collect::<String>()).unwrap_or_default(),
+                        page.page_type,
+                        payload_json,
+                        ts
+                    ],
+                )?;
+                id
+            }
+        };
+        Self::load_custom_template_conn(&conn, &id)
+    }
+
+    pub fn update_custom_template_meta(&self, id: &str, meta: TemplateMetaInput) -> Result<CustomTemplate, AppError> {
+        let conn = self.lock()?;
+        let existing = Self::load_custom_template_conn(&conn, id)?;
+        conn.execute(
+            "UPDATE custom_templates SET title = ?1, icon = ?2, description = ?3, updated_at = ?4 WHERE id = ?5",
+            params![
+                clean_text(meta.title.as_deref(), 80).unwrap_or(existing.title),
+                clean_text(meta.icon.as_deref(), 80).unwrap_or(existing.icon),
+                meta.description.as_deref().map(|d| d.trim().chars().take(300).collect::<String>()).unwrap_or(existing.description),
+                now_iso(),
+                id
+            ],
+        )?;
+        Self::load_custom_template_conn(&conn, id)
+    }
+
+    pub fn delete_custom_template(&self, id: &str) -> Result<(), AppError> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM custom_templates WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// 导入（来自导出的 JSON）：总是新建，避免覆盖已有模板
+    pub fn import_custom_templates(&self, items: Vec<CustomTemplate>) -> Result<usize, AppError> {
+        let conn = self.lock()?;
+        let ts = now_iso();
+        let mut n = 0;
+        for t in items {
+            let page_type = if t.page_type == "database" { "database" } else { "doc" };
+            let title = clean_text(Some(&t.title), 80).unwrap_or_else(|| "导入的模板".into());
+            conn.execute(
+                "INSERT INTO custom_templates (id, title, icon, description, page_type, payload_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                params![
+                    new_id(),
+                    title,
+                    clean_text(Some(&t.icon), 80).unwrap_or_else(|| "📄".into()),
+                    t.description.chars().take(300).collect::<String>(),
+                    page_type,
+                    serde_json::to_string(&t.payload)?,
+                    ts
+                ],
+            )?;
+            n += 1;
+        }
+        Ok(n)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3025,5 +3357,51 @@ mod tests {
         assert!(exported.markdown.contains("<br/>uwDetail.js (62)"));
         assert!(exported.markdown.contains("Map&lt;String,String&gt;"));
         assert!(exported.markdown.contains("| **Controller** | [PlcRiskAppraisalControllerImpl](file:///d:/src/PlcRiskAppraisalControllerImpl.java#L42) | `getNewDecisionResult` |"));
+    }
+
+    #[test]
+    fn custom_templates_roundtrip_doc_and_database() {
+        let db = Database::open_in_memory().unwrap();
+        // 文档：保存为模板后新建页面，内容一致
+        let tpl = db
+            .save_page_as_template("page-welcome", TemplateMetaInput { title: Some("我的周报".into()), description: Some("每周用".into()), ..Default::default() }, None)
+            .unwrap();
+        assert_eq!(tpl.title, "我的周报");
+        assert_eq!(tpl.page_type, "doc");
+        let src_blocks = db.get_page_detail("page-welcome").unwrap().blocks;
+        assert_eq!(tpl.payload.blocks.len(), src_blocks.len());
+        let page = db
+            .create_page(CreatePageInput { template_id: Some(format!("custom:{}", tpl.id)), ..Default::default() })
+            .unwrap();
+        assert_eq!(page.title, "我的周报");
+        let blocks = db.get_page_detail(&page.id).unwrap().blocks;
+        assert_eq!(blocks.len(), src_blocks.len());
+        assert_eq!(blocks[0].content, src_blocks[0].content);
+
+        // 数据库：列、视图、行都带上，列 id 重新生成
+        let roadmap = db
+            .create_page(CreatePageInput { template_id: Some("product-roadmap".into()), ..Default::default() })
+            .unwrap();
+        let dtpl = db.save_page_as_template(&roadmap.id, TemplateMetaInput::default(), None).unwrap();
+        assert_eq!(dtpl.page_type, "database");
+        let made = db
+            .create_page(CreatePageInput { template_id: Some(format!("custom:{}", dtpl.id)), ..Default::default() })
+            .unwrap();
+        assert_eq!(made.page_type, "database");
+        let orig = db.get_database(&roadmap.id).unwrap();
+        let copy = db.get_database(&made.id).unwrap();
+        assert_eq!(copy.columns.len(), orig.columns.len());
+        assert_eq!(copy.rows.len(), orig.rows.len());
+        assert_ne!(copy.columns[0].id, orig.columns[0].id);
+        assert_eq!(copy.rows[0].cells.len(), orig.rows[0].cells.len());
+
+        // 改名、导入、删除
+        let renamed = db.update_custom_template_meta(&tpl.id, TemplateMetaInput { title: Some("周报 v2".into()), ..Default::default() }).unwrap();
+        assert_eq!(renamed.title, "周报 v2");
+        assert_eq!(db.import_custom_templates(vec![renamed.clone()]).unwrap(), 1);
+        assert_eq!(db.list_custom_templates().unwrap().len(), 3);
+        db.delete_custom_template(&tpl.id).unwrap();
+        assert_eq!(db.list_custom_templates().unwrap().len(), 2);
+        assert!(db.create_page(CreatePageInput { template_id: Some(format!("custom:{}", tpl.id)), ..Default::default() }).is_err());
     }
 }
