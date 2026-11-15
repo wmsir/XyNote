@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { History, Lock, RotateCcw, X } from "lucide-react";
+import { History, RotateCcw, X } from "lucide-react";
 import {
   getPageVersion,
   listPageVersions,
   restorePageVersion,
-  type LicenseStatus,
   type PageVersionMeta,
   type PageVersionView,
 } from "../../api/pro";
@@ -14,11 +13,9 @@ export interface PageHistoryModalProps {
   open: boolean;
   pageId: string | null;
   pageTitle: string;
-  license: LicenseStatus | null;
   onClose: () => void;
   /** 恢复完成后由 App 刷新页面 */
   onRestored: (pageId: string) => Promise<void> | void;
-  onOpenProSettings: () => void;
   onNotify: (msg: string) => void;
 }
 
@@ -39,13 +36,10 @@ export function PageHistoryModal({
   open,
   pageId,
   pageTitle,
-  license,
   onClose,
   onRestored,
-  onOpenProSettings,
   onNotify,
 }: PageHistoryModalProps) {
-  const pro = !!license?.active;
   const [versions, setVersions] = useState<PageVersionMeta[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<PageVersionView | null>(null);
@@ -53,7 +47,7 @@ export function PageHistoryModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || !pageId || !pro) return;
+    if (!open || !pageId) return;
     setVersions(null);
     setView(null);
     setError(null);
@@ -63,7 +57,7 @@ export function PageHistoryModal({
         setSelected(v[0]?.id ?? null);
       })
       .catch((e) => setError(syncErrorText(e)));
-  }, [open, pageId, pro]);
+  }, [open, pageId]);
 
   useEffect(() => {
     if (!selected) {
@@ -122,25 +116,7 @@ export function PageHistoryModal({
           </button>
         </div>
 
-        {!pro ? (
-          <div className="nb-history-locked">
-            <Lock size={28} />
-            <div className="nb-settings-label">页面历史是永久版功能</div>
-            <div className="nb-settings-sub">
-              激活后，小悦笔记会在你编辑时自动保存每篇笔记的历史，误删、改错或被同步覆盖都能一键找回。
-            </div>
-            <button
-              type="button"
-              className="nb-btn-primary"
-              onClick={() => {
-                onClose();
-                onOpenProSettings();
-              }}
-            >
-              了解永久版
-            </button>
-          </div>
-        ) : (
+        {(
           <div className="nb-history-body">
             <div className="nb-history-list" role="listbox" aria-label="版本列表">
               {versions === null && !error && <div className="nb-settings-sub nb-history-empty">正在读取…</div>}

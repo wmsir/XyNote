@@ -572,16 +572,20 @@ pub fn pick_markdown_file_dialog_sync() -> Result<Option<String>, AppError> {
             imp::DialogSpec {
                 is_save: false,
                 pick_folders: false,
-                title: Some("打开本地 Markdown 文档".to_string()),
+                title: Some("打开文件".to_string()),
                 default_dir: None,
                 default_filename: None,
                 default_ext: Some("md".to_string()),
                 filters: vec![
-                    (
-                        "Markdown 文档 (*.md;*.markdown;*.txt)".to_string(),
-                        "*.md;*.markdown;*.txt".to_string(),
-                    ),
                     ("所有文件 (*.*)".to_string(), "*.*".to_string()),
+                    (
+                        "Markdown 文档 (*.md;*.markdown)".to_string(),
+                        "*.md;*.markdown".to_string(),
+                    ),
+                    (
+                        "文本文件 (*.txt;*.log;*.json;*.xml;*.yaml;*.ini;*.csv)".to_string(),
+                        "*.txt;*.log;*.json;*.xml;*.yaml;*.yml;*.ini;*.csv".to_string(),
+                    ),
                 ],
             },
             true,
@@ -590,8 +594,7 @@ pub fn pick_markdown_file_dialog_sync() -> Result<Option<String>, AppError> {
     #[cfg(not(target_os = "windows"))]
     {
         let picked = rfd::FileDialog::new()
-            .set_title("打开本地 Markdown 文档")
-            .add_filter("Markdown 文档", &["md", "markdown", "txt"])
+            .set_title("打开文件")
             .pick_file();
         Ok(picked.map(|p| normalize_win32_path_str(&p.to_string_lossy())))
     }

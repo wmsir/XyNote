@@ -73,14 +73,6 @@ fn clip(s: &str, n: usize) -> String {
     s.trim().chars().filter(|c| !c.is_control() || *c == '\n').take(n).collect()
 }
 
-pub fn category_label(c: &str) -> &'static str {
-    match c {
-        "bug" => "问题",
-        "idea" => "建议",
-        _ => "其他",
-    }
-}
-
 pub fn submit(conn: &Connection, user_id: Option<i64>, client_key: &str, f: &FeedbackInput) -> Result<i64, String> {
     let content = clip(&f.content, MAX_LEN);
     if content.chars().count() < 4 {

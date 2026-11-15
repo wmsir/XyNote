@@ -28,6 +28,8 @@ interface Options {
   setIsSaving: (saving: boolean) => void;
   showToast: (message: string, durationMs?: number) => void;
   workspaceFolders: WorkspaceFolder[];
+  /** 文本编辑器里打开的文件，同样需要监听外部修改 */
+  activeTextPath?: string | null;
 }
 
 /**
@@ -43,6 +45,7 @@ export function useDiskSync({
   setIsSaving,
   showToast,
   workspaceFolders,
+  activeTextPath = null,
 }: Options) {
   // ===== 磁盘文件的冲突检测 =====
   // 记录每个磁盘文件「打开 / 上次保存」时的修改时间；保存时带上，磁盘被其他程序改过就不覆盖
@@ -93,9 +96,9 @@ export function useDiskSync({
     if (!isTauriRuntime()) return;
     setWatchedPaths(
       workspaceFolders.map((f) => f.path),
-      activeLocalPath ? [activeLocalPath] : []
+      [activeLocalPath, activeTextPath].filter((p): p is string => !!p)
     ).catch(() => {});
-  }, [workspaceFolders, activeLocalPath]);
+  }, [workspaceFolders, activeLocalPath, activeTextPath]);
 
   // 正在编辑的文件被其他程序改了：没有未写入的改动就直接载入新内容，否则弹出冲突处理
   const checkExternalChangeRef = useRef<(filePath: string) => Promise<void>>(async () => {});

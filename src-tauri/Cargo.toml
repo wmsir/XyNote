@@ -1,6 +1,6 @@
 [package]
 name = "xynote"
-version = "0.4.2"
+version = "0.5.0"
 description = "小悦 · 轻量知识笔记 (XyNote) — 悦享服务、愉悦记录，块级结构与多维表格桌面端 (https://fwpt.cn/)"
 authors = ["fwpt.cn <admin@fwpt.cn>"]
 edition = "2021"
@@ -34,6 +34,8 @@ rand = "0.8"
 ed25519-dalek = "2"
 # 导出 HTML / Word
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+# 文本编辑器：GBK / UTF-16 等编码读写
+encoding_rs = "0.8"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 rfd = "0.15"

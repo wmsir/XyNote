@@ -5,7 +5,7 @@
 use crate::models::AppError;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::io::Write;
 
 fn md_options() -> Options {

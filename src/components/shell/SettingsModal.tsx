@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlignCenter,
   Archive,
-  BadgeCheck,
+  Heart,
   MessageSquareText,
   Cloud,
   BookOpen,
@@ -55,15 +55,14 @@ import { KeybindingSettingsPanel } from "./KeybindingSettingsPanel";
 import { ThemeStudioPanel } from "./ThemeStudioPanel";
 import { XyLogoIcon } from "./XyLogoIcon";
 import { SyncSettingsPanel } from "./SyncSettingsPanel";
-import { ProSettingsPanel } from "./ProSettingsPanel";
+import { DonatePanel } from "./DonatePanel";
 import { FeedbackPanel } from "./FeedbackPanel";
-import type { LicenseStatus } from "../../api/pro";
 import type { SyncConfig } from "../../api/sync";
 
 export type SettingsTabId =
   | "storage"
   | "sync"
-  | "pro"
+  | "donate"
   | "feedback"
   | "themes"
   | "appearance"
@@ -114,9 +113,6 @@ export interface SettingsModalProps {
   syncing: boolean;
   onRunSync: () => Promise<void>;
   onSyncConfigChanged: (cfg: SyncConfig) => void;
-  onLicenseChanged: (status: LicenseStatus) => void;
-  /** 可以使用永久版功能（自定义主题等） */
-  proActive: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -174,8 +170,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   syncing,
   onRunSync,
   onSyncConfigChanged,
-  onLicenseChanged,
-  proActive,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
   const [localInfo, setLocalInfo] = useState<StorageConfigInfo | null>(storageInfo);
@@ -523,7 +517,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
     { id: "appearance", label: "外观与排版", icon: <Palette size={15} /> },
     { id: "backup", label: "备份与数据安全", icon: <ShieldCheck size={15} /> },
-    { id: "pro", label: "永久版", icon: <BadgeCheck size={15} /> },
+    { id: "donate", label: "支持作者", icon: <Heart size={15} /> },
     { id: "feedback", label: "意见反馈", icon: <MessageSquareText size={15} /> },
     { id: "about", label: "关于软件", icon: <Info size={15} /> },
   ];
@@ -1475,36 +1469,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               />
             )}
 
-            {activeTab === "pro" && (
-              <ProSettingsPanel onLicenseChanged={onLicenseChanged} onNotify={onNotify} />
-            )}
+            {activeTab === "donate" && <DonatePanel />}
 
             {activeTab === "feedback" && <FeedbackPanel onNotify={onNotify} />}
 
-            {activeTab === "themes" && !proActive && (
-              <div className="nb-settings-section-stack">
-                <div>
-                  <h3 className="nb-settings-heading">自定义主题与样式插件</h3>
-                  <p className="nb-settings-desc">
-                    可视化调配色、字体与圆角，安装或编写 CSS 样式插件，是永久版功能。内置的浅色、深色、护眼主题在「外观与排版」中随时切换。
-                  </p>
-                </div>
-                <div className="nb-settings-card-box nb-pro-lock">
-                  <div className="nb-settings-label">登录 FWPT 通行证即可免费使用一年</div>
-                  <div className="nb-settings-sub">之后购买永久版（¥9.9，一次购买）继续使用；已保存的主题和插件不会丢失。</div>
-                  <div className="nb-settings-actions-bar">
-                    <button type="button" className="nb-btn-primary" onClick={() => setActiveTab("pro")}>
-                      了解永久版
-                    </button>
-                    <button type="button" className="nb-btn-secondary" onClick={() => setActiveTab("appearance")}>
-                      切换内置主题
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "themes" && proActive && (
+            {activeTab === "themes" && (
               <ThemeStudioPanel
                 styleState={styleState}
                 themePref={themePref}

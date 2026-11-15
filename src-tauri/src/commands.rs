@@ -112,12 +112,10 @@ pub fn save_page_blocks(
     db.save_page_blocks(&page_id, blocks).map_err(Into::into)
 }
 
-/// 永久版：编辑前按间隔自动保存一份历史版本（失败不影响保存）
+/// 编辑前按间隔自动保存一份历史版本（失败不影响保存）
 fn checkpoint_before_edit(db: &Database, page_id: &str) {
     if let Ok(conn) = db.lock() {
-        if crate::license::is_pro_conn(&conn) {
-            let _ = crate::versions::checkpoint(&conn, page_id, "edit", crate::versions::AUTO_GAP_MINUTES);
-        }
+        let _ = crate::versions::checkpoint(&conn, page_id, "edit", crate::versions::AUTO_GAP_MINUTES);
     }
 }
 
@@ -368,6 +366,41 @@ pub fn save_local_note_image(
 #[tauri::command]
 pub fn open_path_in_explorer(path: String) -> Result<(), String> {
     crate::win_dialogs::open_path_in_explorer_sync(&path).map_err(Into::into)
+}
+
+/// 用文本编辑器打开文件；encoding 为空时自动识别
+#[tauri::command]
+pub fn open_text_file(path: String, encoding: Option<String>) -> Result<crate::textfile::TextFileDocument, String> {
+    crate::textfile::open_text_file(&path, encoding.as_deref().filter(|e| !e.is_empty())).map_err(Into::into)
+}
+
+/// 保存文本文件，保留编码与换行符；expected_modified_ms 用于检测外部修改
+#[tauri::command]
+pub fn save_text_file(
+    path: String,
+    content: String,
+    encoding: String,
+    line_ending: String,
+    expected_modified_ms: Option<u64>,
+) -> Result<crate::textfile::TextSaveResult, String> {
+    crate::textfile::save_text_file(&path, &content, &encoding, &line_ending, expected_modified_ms).map_err(Into::into)
+}
+
+/// 用系统默认程序打开文件（图片、PDF、Office 文档等）
+#[tauri::command]
+pub fn open_with_system_app(path: String) -> Result<(), String> {
+    let norm = crate::win_dialogs::normalize_win32_path_str(&path);
+    if !std::path::Path::new(&norm).exists() {
+        return Err(format!("文件不存在：{}", norm));
+    }
+    #[cfg(target_os = "windows")]
+    // 不经过 cmd：文件名里的 & 等字符不会被当成命令
+    let res = std::process::Command::new("explorer.exe").arg(&norm).spawn();
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(&norm).spawn();
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let res = std::process::Command::new("xdg-open").arg(&norm).spawn();
+    res.map(|_| ()).map_err(|e| format!("无法打开：{}", e))
 }
 
 /// 侧栏「文件夹」：列出一层子文件夹与笔记文件
@@ -721,18 +754,6 @@ pub async fn feedback_submit(app: AppHandle, category: String, content: String, 
     license_blocking(app, move |db| crate::license::submit_feedback(db, &category, &content, &contact)).await
 }
 
-fn require_pro(db: &Database) -> Result<(), String> {
-    require_pro_for(db, "页面历史")
-}
-
-fn require_pro_for(db: &Database, feature: &str) -> Result<(), String> {
-    if crate::license::is_pro(db) {
-        Ok(())
-    } else {
-        Err(format!("{}是永久版功能，登录通行证可免费使用一年", feature))
-    }
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HtmlExport {
@@ -743,7 +764,6 @@ pub struct HtmlExport {
 /// 页面导出为 HTML（也用于打印成 PDF）
 #[tauri::command]
 pub fn export_page_html(db: State<'_, Database>, page_id: String) -> Result<HtmlExport, String> {
-    require_pro_for(&db, "导出 HTML / PDF")?;
     let md = db.export_page_markdown(&page_id).map_err(String::from)?;
     let base = crate::export_formats::base_filename(&md.filename);
     Ok(HtmlExport { html: crate::export_formats::markdown_to_html_document(&base, &md.markdown), filename: base })
@@ -755,8 +775,6 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
     use tauri::Manager;
     let (base, bytes, ext, label, title) = {
         let db = app.state::<Database>();
-        let feature = if format == "docx" { "导出 Word" } else { "导出 HTML" };
-        require_pro_for(&db, feature)?;
         let md = db.export_page_markdown(&page_id).map_err(String::from)?;
         let base = crate::export_formats::base_filename(&md.filename);
         match format.as_str() {
@@ -782,21 +800,18 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
 
 #[tauri::command]
 pub fn page_versions_list(db: State<'_, Database>, page_id: String) -> Result<Vec<crate::versions::PageVersionMeta>, String> {
-    require_pro(&db)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     crate::versions::list(&conn, &page_id).map_err(Into::into)
 }
 
 #[tauri::command]
 pub fn page_version_get(db: State<'_, Database>, version_id: String) -> Result<crate::versions::PageVersionView, String> {
-    require_pro(&db)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     crate::versions::get(&conn, &version_id).map_err(Into::into)
 }
 
 #[tauri::command]
 pub fn page_version_restore(db: State<'_, Database>, version_id: String) -> Result<String, String> {
-    require_pro(&db)?;
     let page_id = {
         let mut conn = db.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;

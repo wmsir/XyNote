@@ -646,16 +646,6 @@ a {
   color: var(--icon-hover);
 }
 
-.nb-ws-db-btn {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.nb-ws-section:hover .nb-ws-db-btn,
-.nb-ws-section:focus-within .nb-ws-db-btn {
-  opacity: 1;
-  pointer-events: auto;
-}
 
 /* Tree Row */
 .nb-tree-row {
@@ -3772,4 +3762,66 @@ a {
   resize: vertical;
   min-height: 120px;
   line-height: 1.6;
+}
+
+/* 设置 → 支持作者 */
+.nb-donate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 16px 20px;
+}
+.nb-donate-tabs {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.nb-donate-tab {
+  min-width: 76px;
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.nb-donate-tab.is-active {
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.nb-donate-tab.is-wechat.is-active {
+  color: #07a35a;
+}
+.nb-donate-tab.is-alipay.is-active {
+  color: #1677ff;
+}
+.nb-donate-qr {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.nb-donate-qr img {
+  width: 200px;
+  height: 200px;
+  object-fit: contain;
+  padding: 10px;
+  background: #fff;
+  border-radius: 10px;
+  border: 3px solid #07c160;
+}
+.nb-donate-qr.is-alipay img {
+  border-color: #1677ff;
+}
+.nb-donate-qr figcaption {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+/* 文件夹树：不是文本的文件颜色淡一些，点开交给系统程序 */
+.nb-tree-title.is-other,
+.nb-tree-glyph-svg.is-other {
+  color: var(--text-tertiary);
 }

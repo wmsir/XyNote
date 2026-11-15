@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AppWindow,
   ChevronRight,
   Copy,
   ExternalLink,
+  File,
+  FileCode2,
   FilePlus2,
   FileText,
   Folder,
@@ -22,12 +25,13 @@ import {
   renameFolderEntry,
   trashFolderEntry,
 } from "../../api/client";
+import { openWithSystemApp } from "../../api/textfile";
 import type { FolderEntry, WorkspaceFolder } from "../../types/notion";
 
 /**
  * 侧栏「文件夹」：把磁盘上的多个文件夹以树形结构挂在侧栏。
  * - 逐层按需读取，展开状态记在本机；窗口重新获得焦点时刷新已展开的目录；
- * - 只显示子文件夹与笔记文件（.md / .txt 等），点击笔记直接在编辑器里打开磁盘文件；
+ * - 显示子文件夹和全部文件：Markdown 用块编辑器打开，文本和代码用文本编辑器打开，其他文件交给系统程序；
  * - 支持新建笔记、新建文件夹、重命名、在文件管理器中显示、复制路径、移除根文件夹。
  */
 
@@ -88,13 +92,31 @@ function errText(err: unknown): string {
   return msg.replace(/^(Not found|Validation error|IO error):\s*/i, "");
 }
 
-/** 笔记文件显示时去掉 .md 一类的扩展名，.txt 保留以示区别 */
+/** Markdown 笔记显示时去掉 .md 一类的扩展名，其他文件保留扩展名以示区别 */
 function displayName(entry: FolderEntry): string {
   if (entry.isDir) return entry.name;
-  if (entry.ext && entry.ext !== "txt") {
+  if (entry.kind === "note" && entry.ext) {
     return entry.name.slice(0, entry.name.length - entry.ext.length - 1) || entry.name;
   }
   return entry.name;
+}
+
+function FileGlyph({ entry }: { entry: FolderEntry }) {
+  if (entry.kind === "note") return <FileText size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />;
+  if (entry.kind === "text") return <FileCode2 size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />;
+  return <File size={16} strokeWidth={1.6} className="nb-tree-glyph-svg is-other" />;
+}
+
+/** 路径统一成「/」分隔、去掉末尾分隔符、小写，用于比较 */
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/** dir 是否在 root 里（含 root 本身）；兼容盘符根目录「D:\」 */
+function isUnder(dir: string, root: string): boolean {
+  const d = normPath(dir);
+  const r = normPath(root);
+  return d === r || d.startsWith(r.endsWith("/") ? r : r + "/");
 }
 
 function samePath(a: string | null, b: string): boolean {
@@ -189,9 +211,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     if (!isTauri) return;
     Object.keys(expanded).forEach((dir) => {
       if (expanded[dir] && !listingsRef.current[dir]) {
-        const underRoot = folders.some(
-          (f) => samePath(dir, f.path) || dir.replace(/\\/g, "/").startsWith(f.path.replace(/\\/g, "/") + "/")
-        );
+        const underRoot = folders.some((f) => isUnder(dir, f.path));
         if (underRoot) void load(dir);
       }
     });
@@ -261,6 +281,38 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     setEdit({ kind, parent, value: kind === "new-file" ? "未命名笔记" : "新建文件夹" });
     setMenu(null);
   };
+
+  // 侧栏顶部「新建 .md 文件」：在指定文件夹里就地输入名称
+  const startCreateRef = useRef(startCreate);
+  startCreateRef.current = startCreate;
+  useEffect(() => {
+    if (!isTauri) return;
+    const onNew = (e: Event) => {
+      const parent = (e as CustomEvent<{ parent: string }>).detail?.parent;
+      if (!parent || !folders.some((f) => isUnder(parent, f.path))) return;
+      e.preventDefault();
+      // 一路展开到目标文件夹
+      setExpanded((prev) => {
+        const next = { ...prev };
+        folders.forEach((f) => {
+          if (!isUnder(parent, f.path)) return;
+          const sep = f.path.includes("\\") ? "\\" : "/";
+          const rest = parent.slice(f.path.replace(/[\\/]+$/, "").length).split(/[\\/]/).filter(Boolean);
+          let cur = f.path.replace(/[\\/]+$/, "");
+          next[f.path] = true;
+          rest.forEach((seg) => {
+            cur = cur + sep + seg;
+            next[cur] = true;
+          });
+        });
+        persistExpanded(next);
+        return next;
+      });
+      startCreateRef.current(parent, "new-file");
+    };
+    window.addEventListener("xynote:folder-new-file", onNew);
+    return () => window.removeEventListener("xynote:folder-new-file", onNew);
+  }, [folders, isTauri, persistExpanded]);
 
   // 回车提交后输入框卸载可能再触发一次 blur，用标记避免重复新建 / 重命名
   const committingRef = useRef(false);
@@ -393,7 +445,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
           autoFocus
           value={edit.value}
           spellCheck={false}
-          aria-label={edit.kind === "rename" ? "新名称" : isDir ? "文件夹名称" : "笔记名称"}
+          aria-label={edit.kind === "rename" ? "新名称" : isDir ? "文件夹名称" : "文件名（不写扩展名时为 .md 笔记）"}
           onFocus={(e) => {
             // 重命名文件时只选中文件名部分，不选扩展名
             const v = e.currentTarget.value;
@@ -453,7 +505,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
         {files.map((entry) => renderEntry(entry, dir, depth))}
         {listing.entries.length === 0 && !creatingHere && (
           <div className="nb-folder-hint" style={{ paddingLeft: `${30 + depth * 14}px` }}>
-            没有笔记文件
+            空文件夹
           </div>
         )}
         {listing.truncated && (
@@ -516,11 +568,11 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
                   className={`nb-tree-glyph-svg nb-folder-caret${isOpen ? " is-open" : ""}`}
                 />
               ) : (
-                <FileText size={16} strokeWidth={1.6} className="nb-tree-glyph-svg" />
+                <FileGlyph entry={entry} />
               )}
             </span>
           </div>
-          <span className="nb-tree-title">{displayName(entry)}</span>
+          <span className={`nb-tree-title${entry.kind === "other" ? " is-other" : ""}`}>{displayName(entry)}</span>
           <div className="nb-tree-actions">
             <button
               type="button"
@@ -688,6 +740,21 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
               </button>
               <div className="nb-menu-divider" />
             </>
+          )}
+          {!menu.isDir && (
+            <button
+              type="button"
+              className="nb-menu-item"
+              onClick={() => {
+                openWithSystemApp(menu.path).catch((err) => notify(errText(err), 3200));
+                setMenu(null);
+              }}
+            >
+              <span className="nb-menu-item-left">
+                <AppWindow size={14} />
+                用系统默认程序打开
+              </span>
+            </button>
           )}
           {!menu.isRoot && (
             <button

@@ -2,9 +2,19 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useSyncController } from "./hooks/useSyncController";
-import { cachedProActive, exportPageFile, exportPageHtml, getLicenseStatus, licenseRefresh, type LicenseStatus } from "./api/pro";
+import { exportPageFile, exportPageHtml } from "./api/pro";
 import { printHtmlDocument } from "./utils/printHtml";
 import { PageHistoryModal } from "./components/shell/PageHistoryModal";
+import { TextEditor } from "./components/editor/TextEditor";
+import {
+  isBinaryFileError,
+  isMarkdownPath,
+  openTextFile,
+  openWithSystemApp,
+  textErrorText,
+  type TextFileDocument,
+} from "./api/textfile";
+import { createFolderEntry } from "./api/folders";
 import {
   convertMarkdownBlocks,
   createPage,
@@ -166,6 +176,8 @@ export const App: React.FC = () => {
   >([]);
   // 侧栏「文件夹」里挂载的磁盘文件夹
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
+  /** 文本编辑器里打开的磁盘文件（.txt、.json、代码等） */
+  const [activeTextFile, setActiveTextFile] = useState<TextFileDocument | null>(null);
 
   // Appearance & Layout
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -192,9 +204,6 @@ export const App: React.FC = () => {
   }));
   const [stylePluginState, setStylePluginState] =
     useState<StylePluginState | null>(null);
-  const [license, setLicense] = useState<LicenseStatus | null>(null);
-  // 授权状态读取前先用上次的结果，避免自定义主题闪一下
-  const proActive = license ? license.active : cachedProActive();
   const [themePreviewOverride, setThemePreviewOverride] = useState<{
     baseMode?: ThemeMode;
     tokens?: ThemeTokens | null;
@@ -292,9 +301,8 @@ export const App: React.FC = () => {
     if (themePreviewOverride?.baseMode) {
       return themePreviewOverride.baseMode;
     }
-    // 自定义主题是永久版功能；授权到期后回到内置主题（已保存的主题不删除）
-    return resolveEffectiveBaseMode(proActive ? stylePluginState : null, themePref, systemDark);
-  }, [stylePluginState, themePref, systemDark, themePreviewOverride, proActive]);
+    return resolveEffectiveBaseMode(stylePluginState, themePref, systemDark);
+  }, [stylePluginState, themePref, systemDark, themePreviewOverride]);
 
   // Apply theme attribute & class to document root
   useEffect(() => {
@@ -304,8 +312,8 @@ export const App: React.FC = () => {
 
   // Inject custom ThemeTokens & active CSS Snippet Plugins into <head>
   useEffect(() => {
-    applyRuntimeStylePluginsToDom(proActive ? stylePluginState : null, proActive ? themePreviewOverride : null);
-  }, [stylePluginState, themePreviewOverride, proActive]);
+    applyRuntimeStylePluginsToDom(stylePluginState, themePreviewOverride);
+  }, [stylePluginState, themePreviewOverride]);
 
   // Apply dynamic CSS variables for editor typography
   useEffect(() => {
@@ -356,6 +364,7 @@ export const App: React.FC = () => {
     setIsSaving,
     showToast,
     workspaceFolders,
+    activeTextPath: activeTextFile?.filePath ?? null,
   });
 
   const flushPendingBlockSave = useCallback(async () => {
@@ -412,6 +421,7 @@ export const App: React.FC = () => {
       await flushPendingBlockSave();
       const loaded = await getPageDetail(pageId);
       setActiveLocalMd(null);
+      setActiveTextFile(null);
       setActivePageId(pageId);
       setDetail(loaded);
       setHighlightBlockId(blockIdToHighlight);
@@ -452,13 +462,6 @@ export const App: React.FC = () => {
   });
 
   const [historyOpen, setHistoryOpen] = useState(false);
-  useEffect(() => {
-    const load = () => getLicenseStatus().then(setLicense).catch(() => {});
-    // 先用本地授权，再向服务器报到刷新（离线时保留本地授权）
-    load().then(() => licenseRefresh().then(setLicense).catch(() => {}));
-    window.addEventListener("xynote:license-changed", load);
-    return () => window.removeEventListener("xynote:license-changed", load);
-  }, []);
 
   const handleVersionRestored = useCallback(
     async (pageId: string) => {
@@ -470,7 +473,7 @@ export const App: React.FC = () => {
     [refreshSidebarLists]
   );
 
-  const pushRecentLocalMd = useCallback((doc: LocalMarkdownDocument) => {
+  const pushRecentLocalMd = useCallback((doc: { filePath: string; fileName: string; title: string }) => {
     setRecentLocalMdFiles((prev) => {
       const filtered = prev.filter((item) => item.filePath !== doc.filePath);
       const next = [
@@ -500,6 +503,7 @@ export const App: React.FC = () => {
       try {
         const doc = await openLocalMarkdownFile(filePath);
         rememberLocalMtime(doc);
+        setActiveTextFile(null);
         setActiveLocalMd(doc);
         pushRecentLocalMd(doc);
         showToast(`正在直编本地文件：${doc.fileName}`);
@@ -512,6 +516,40 @@ export const App: React.FC = () => {
     },
     [flushPendingBlockSave, pushRecentLocalMd, rememberLocalMtime, showToast]
   );
+
+  /** 打开磁盘文件：Markdown 用块编辑器，其他文本用文本编辑器，二进制交给系统程序 */
+  const openFileByPath = useCallback(
+    async (filePath: string) => {
+      if (isMarkdownPath(filePath)) {
+        await openLocalMdByPath(filePath);
+        return;
+      }
+      await flushPendingBlockSave();
+      try {
+        const doc = await openTextFile(filePath);
+        setActiveLocalMd(null);
+        setActiveTextFile(doc);
+        pushRecentLocalMd({ filePath: doc.filePath, fileName: doc.fileName, title: doc.fileName });
+      } catch (err) {
+        if (isBinaryFileError(err)) {
+          try {
+            await openWithSystemApp(filePath);
+            showToast("这个文件不是文本，已用系统默认程序打开");
+          } catch (e2) {
+            showToast(`无法打开：${textErrorText(e2)}`, 3800);
+          }
+          return;
+        }
+        showToast(`无法打开文件：${textErrorText(err)}`, 3800);
+      }
+    },
+    [openLocalMdByPath, flushPendingBlockSave, pushRecentLocalMd, showToast]
+  );
+
+  // 打开了 Markdown 文件时关掉文本编辑器
+  useEffect(() => {
+    if (activeLocalMd) setActiveTextFile(null);
+  }, [activeLocalMd?.filePath]);
 
   const persistWorkspaceFolders = useCallback((next: WorkspaceFolder[]) => {
     setSetting("workspaceFolders", JSON.stringify(next)).catch(() => {});
@@ -614,15 +652,37 @@ export const App: React.FC = () => {
     if (isTauriRuntime()) {
       const chosen = await pickMarkdownFileDialog();
       if (chosen) {
-        await openLocalMdByPath(chosen);
+        await openFileByPath(chosen);
       }
       return;
     }
     browserMdInputRef.current?.click();
-  }, [openLocalMdByPath]);
+  }, [openFileByPath]);
 
   const handleCreateLocalMdFile = useCallback(async () => {
     const initialMd = "# 新建笔记\n\n";
+    if (isTauriRuntime() && workspaceFolders.length > 0) {
+      // 已经打开了文件夹：直接建在当前文件所在的文件夹（或第一个文件夹）里，在侧栏就地命名
+      const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+      const currentPath = activeTextFile?.filePath ?? activeLocalMd?.filePath ?? null;
+      const currentDir = currentPath ? currentPath.replace(/[\\/][^\\/]*$/, "") : null;
+      const parent =
+        currentDir && workspaceFolders.some((f) => norm(currentDir) === norm(f.path) || norm(currentDir).startsWith(norm(f.path) + "/"))
+          ? currentDir
+          : workspaceFolders[0].path;
+      const handled = !window.dispatchEvent(
+        new CustomEvent("xynote:folder-new-file", { detail: { parent }, cancelable: true })
+      );
+      if (!handled) {
+        try {
+          const entry = await createFolderEntry(parent, "未命名笔记", false);
+          await openFileByPath(entry.path);
+        } catch (err) {
+          showToast(`新建失败：${textErrorText(err)}`, 3600);
+        }
+      }
+      return;
+    }
     if (isTauriRuntime()) {
       const savedPath = await saveMarkdownFileDialog("新建笔记.md", initialMd);
       if (savedPath) {
@@ -638,7 +698,7 @@ export const App: React.FC = () => {
     setActiveLocalMd(doc);
     pushRecentLocalMd(doc);
     showToast(`已新建本地 .md 文件直编：${doc.fileName}`);
-  }, [flushPendingBlockSave, openLocalMdByPath, pushRecentLocalMd, showToast]);
+  }, [flushPendingBlockSave, openLocalMdByPath, openFileByPath, pushRecentLocalMd, showToast, workspaceFolders, activeTextFile, activeLocalMd]);
 
   const handleBrowserMdFilePicked = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1730,14 +1790,9 @@ export const App: React.FC = () => {
     [flushPendingBlockSave]
   );
 
-  /** 永久版导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
+  /** 导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
   const handleExportAs = useCallback(
     async (pageId: string, format: "html" | "pdf" | "docx") => {
-      if (!proActive) {
-        showToast("导出 HTML、PDF、Word 是永久版功能，登录通行证可免费使用一年");
-        handleOpenSettingsAtTab("pro");
-        return;
-      }
       await flushPendingBlockSave();
       try {
         if (format === "pdf") {
@@ -1751,7 +1806,7 @@ export const App: React.FC = () => {
         showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
       }
     },
-    [proActive, flushPendingBlockSave, showToast, handleOpenSettingsAtTab]
+    [flushPendingBlockSave, showToast]
   );
 
   const handleImportMarkdownSubmit = useCallback(
@@ -1851,7 +1906,7 @@ export const App: React.FC = () => {
       <Sidebar
         pages={pages}
         activePageId={activePageId}
-        activeLocalMdPath={activeLocalMd?.filePath ?? null}
+        activeLocalMdPath={activeTextFile?.filePath ?? activeLocalMd?.filePath ?? null}
         recentLocalMdFiles={recentLocalMdFiles}
         collapsed={sidebarCollapsed}
         trashedCount={trashedPages.length}
@@ -1867,7 +1922,7 @@ export const App: React.FC = () => {
           handleCreateLocalMdFile().catch(() => {});
         }}
         onSelectLocalMdFile={(fp) => {
-          openLocalMdByPath(fp).catch(() => {});
+          openFileByPath(fp).catch(() => {});
         }}
         onRemoveRecentLocalMdFile={handleRemoveRecentLocalMd}
         onCreateDoc={(parentId) => {
@@ -1918,6 +1973,7 @@ export const App: React.FC = () => {
         <Topbar
           page={detail?.page ?? null}
           activeLocalMd={activeLocalMd}
+          textFile={activeTextFile}
           breadcrumbs={detail?.breadcrumbs ?? []}
           sidebarCollapsed={sidebarCollapsed}
           isSaving={isSaving || isBatchImporting}
@@ -1983,7 +2039,6 @@ export const App: React.FC = () => {
               handleExportAs(detail.page.id, fmt).catch(() => {});
             }
           }}
-          proActive={proActive}
           onOpenHistory={async () => {
             await flushPendingBlockSave();
             setHistoryOpen(true);
@@ -2010,6 +2065,16 @@ export const App: React.FC = () => {
             >
               正在加载本地工作区...
             </div>
+          ) : activeTextFile ? (
+            <TextEditor
+              key={activeTextFile.filePath}
+              doc={activeTextFile}
+              onNotify={showToast}
+              onSavingChange={setIsSaving}
+              onRevealInExplorer={(p) => {
+                openPathInExplorer(p).catch(() => {});
+              }}
+            />
           ) : activeLocalMd ? (
             <div
               className={`nb-page-container page-content-column page-editor-container ${containerModeClass} ${fontClass}`.trim()}
@@ -2217,7 +2282,7 @@ export const App: React.FC = () => {
           )}
         </div>
 
-        {showStatusBar && (
+        {showStatusBar && !activeTextFile && (
           <StatusBar
             storageInfo={storageInfo}
             activeLocalMd={activeLocalMd}
@@ -2359,18 +2424,14 @@ export const App: React.FC = () => {
         syncing={syncing}
         onRunSync={syncNow}
         onSyncConfigChanged={setSyncConfig}
-        onLicenseChanged={setLicense}
-        proActive={proActive}
       />
 
       <PageHistoryModal
         open={historyOpen}
         pageId={detail?.page.id ?? null}
         pageTitle={detail?.page.title ?? ""}
-        license={license}
         onClose={() => setHistoryOpen(false)}
         onRestored={handleVersionRestored}
-        onOpenProSettings={() => handleOpenSettingsAtTab("pro")}
         onNotify={showToast}
       />
 

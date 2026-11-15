@@ -134,13 +134,10 @@ fn stored_payload(conn: &Connection, include_expired: bool) -> Option<LicensePay
     (include_expired || !expired(&p)).then_some(p)
 }
 
-/// 每次都重新校验签名、本机和到期时间，手改数据库无效
+/// 小悦笔记全部功能免费：保留授权代码只为兼容已经激活过的旧版本数据
+#[allow(dead_code)]
 pub fn is_pro_conn(conn: &Connection) -> bool {
     stored_payload(conn, false).is_some()
-}
-
-pub fn is_pro(db: &Database) -> bool {
-    db.lock().map(|c| is_pro_conn(&c)).unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,0 +1,384 @@
+/* 文本文件编辑器（类似 Notepad++） */
+.nb-texted {
+  --te-line-height: 1.6;
+  --te-pad-x: 14px;
+  --te-pad-y: 12px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.nb-texted-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: var(--accent-bg);
+  border-bottom: 1px solid var(--border-color);
+}
+.nb-texted-banner.is-warn {
+  background: rgba(217, 115, 13, 0.12);
+}
+.nb-texted-banner span {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* 编辑区：行号与高亮层在下，透明文字的 textarea 盖在上面 */
+.nb-texted-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+.nb-texted-body {
+  position: relative;
+  min-height: 100%;
+  width: max-content;
+  min-width: 100%;
+}
+.nb-texted-body.is-wrap {
+  width: 100%;
+}
+.nb-texted-lines,
+.nb-texted-input,
+.nb-texted-mark,
+.nb-texted-gutter {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace);
+  font-size: var(--te-font-size);
+  line-height: var(--te-line-height);
+  tab-size: 4;
+  letter-spacing: 0;
+  font-variant-ligatures: none;
+}
+.nb-texted-lines {
+  padding: var(--te-pad-y) 0 40vh;
+  white-space: pre;
+}
+.nb-texted-line {
+  position: relative;
+  padding: 0 var(--te-pad-x) 0 calc(var(--te-gutter) + var(--te-pad-x) + 10px);
+  min-height: calc(var(--te-font-size) * var(--te-line-height));
+}
+.nb-texted-body.is-wrap .nb-texted-lines,
+.nb-texted-body.is-wrap .nb-texted-mark {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nb-texted-line::before {
+  content: attr(data-n);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--te-gutter);
+  padding-right: 4px;
+  text-align: right;
+  color: var(--text-tertiary);
+  opacity: 0.75;
+  user-select: none;
+}
+.nb-texted-line.is-current {
+  background: var(--bg-hover);
+}
+.nb-texted-line.is-current::before {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+/* 行号栏的分隔线 */
+.nb-texted-body::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--te-gutter) + 6px);
+  width: 1px;
+  background: var(--border-color);
+  pointer-events: none;
+}
+
+.nb-texted-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  padding: var(--te-pad-y) var(--te-pad-x) 40vh calc(var(--te-gutter) + var(--te-pad-x) + 10px);
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
+  white-space: pre;
+}
+.nb-texted-body.is-wrap .nb-texted-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nb-texted-input::selection {
+  background: rgba(35, 131, 226, 0.28);
+  color: transparent;
+}
+
+/* 当前查找结果 */
+.nb-texted-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  white-space: pre;
+}
+.nb-texted-mark::before {
+  content: none;
+}
+.nb-texted-ghost {
+  color: transparent;
+}
+.nb-texted-mark mark {
+  color: transparent;
+  background: rgba(255, 196, 0, 0.45);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(214, 150, 0, 0.7);
+}
+
+/* 大文件模式：textarea 自己滚动，行号同步 */
+.nb-texted-plain {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+.nb-texted-plain .nb-texted-gutter {
+  flex: none;
+  width: calc(var(--te-gutter) + 12px);
+  padding: var(--te-pad-y) 6px 0 0;
+  overflow: hidden;
+  white-space: pre;
+  text-align: right;
+  color: var(--text-tertiary);
+  border-right: 1px solid var(--border-color);
+  user-select: none;
+}
+.nb-texted-plain .nb-texted-input {
+  position: static;
+  flex: 1;
+  overflow: auto;
+  color: var(--text-primary);
+  padding: var(--te-pad-y) var(--te-pad-x);
+  white-space: pre;
+}
+.nb-texted-plain .nb-texted-input::selection {
+  color: inherit;
+}
+
+/* 语法高亮 */
+.tk-c { color: #6a737d; }
+.tk-s { color: #22863a; }
+.tk-k { color: #d73a49; }
+.tk-n { color: #005cc5; }
+.tk-f { color: #6f42c1; }
+.tk-a { color: #b06000; }
+.tk-t { color: #22669b; }
+.tk-p { color: #d73a49; }
+.tk-err { color: #fff; background: #cb2431; border-radius: 2px; }
+.tk-warn { color: #3b2a00; background: #ffd33d; border-radius: 2px; }
+[data-theme="dark"] .tk-c, .theme-dark .tk-c { color: #8b949e; }
+[data-theme="dark"] .tk-s, .theme-dark .tk-s { color: #7ee787; }
+[data-theme="dark"] .tk-k, .theme-dark .tk-k { color: #ff7b72; }
+[data-theme="dark"] .tk-n, .theme-dark .tk-n { color: #79c0ff; }
+[data-theme="dark"] .tk-f, .theme-dark .tk-f { color: #d2a8ff; }
+[data-theme="dark"] .tk-a, .theme-dark .tk-a { color: #ffa657; }
+[data-theme="dark"] .tk-t, .theme-dark .tk-t { color: #7ee787; }
+[data-theme="dark"] .tk-p, .theme-dark .tk-p { color: #ff7b72; }
+
+/* 查找替换 */
+.nb-texted-find {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.nb-texted-find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.nb-texted-find-icon {
+  color: var(--text-tertiary);
+  flex: none;
+  margin-right: 2px;
+}
+.nb-texted-find-label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+.nb-texted-find-input {
+  flex: 0 1 320px;
+  min-width: 120px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.nb-texted-find-input:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.nb-texted-find-input.is-error {
+  border-color: #cb2431;
+}
+.nb-texted-goto .nb-texted-find-input {
+  flex-basis: 110px;
+}
+.nb-texted-opt {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  flex: none;
+}
+.nb-texted-opt:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nb-texted-opt.is-on {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+}
+.nb-texted-opt:focus-visible,
+.nb-texted-status-item:focus-visible,
+.nb-texted-status-path:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.nb-texted-find-count {
+  min-width: 72px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.nb-texted-find-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 状态栏 */
+.nb-texted-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 6px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.nb-texted-status-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 40%;
+  padding: 0 6px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+}
+.nb-texted-status-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.nb-texted-status-path:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nb-texted-status-spacer {
+  flex: 1;
+}
+.nb-texted-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+button.nb-texted-status-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nb-texted-status-item.is-static {
+  color: var(--text-tertiary);
+}
+.nb-texted-status-item.is-on {
+  color: var(--accent-color);
+}
+.nb-texted-status-item:disabled {
+  opacity: 0.45;
+}
+.nb-texted-save-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2da44e;
+}
+.nb-texted-save.is-dirty .nb-texted-save-dot {
+  background: #d29922;
+}
+.nb-texted-save.is-saving .nb-texted-save-dot {
+  background: var(--accent-color);
+}
+.nb-texted-save.is-error {
+  color: #cb2431;
+}
+.nb-texted-save.is-error .nb-texted-save-dot {
+  background: #cb2431;
+}
+.nb-texted-menu-wrap {
+  position: relative;
+}
+.nb-texted-menu {
+  right: 0;
+  bottom: 28px;
+  top: auto;
+  width: 220px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.nb-texted-check {
+  font-size: 11.5px;
+  color: var(--accent-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nb-texted * {
+    transition: none !important;
+  }
+}
