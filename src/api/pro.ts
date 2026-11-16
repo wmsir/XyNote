@@ -161,8 +161,8 @@ export async function exportPageHtml(pageId: string): Promise<{ filename: string
   return invoke<{ filename: string; html: string }>("export_page_html", { pageId });
 }
 
-/** 导出 HTML / Word 文件，返回保存路径；取消时为 null */
-export async function exportPageFile(pageId: string, format: "html" | "docx"): Promise<string | null> {
+/** 导出 HTML / Word / EPUB / LaTeX / OPML 文件，返回保存路径；取消时为 null */
+export async function exportPageFile(pageId: string, format: "html" | "docx" | "epub" | "latex" | "opml"): Promise<string | null> {
   return invoke<string | null>("export_page_file", { pageId, format });
 }
 

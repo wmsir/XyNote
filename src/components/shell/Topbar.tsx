@@ -26,6 +26,7 @@ import {
   Trash2,
   Upload,
   LayoutTemplate,
+  AppWindow,
 } from "lucide-react";
 import type {
   BreadcrumbItem,
@@ -33,6 +34,9 @@ import type {
   LocalMarkdownDocument,
   Page,
 } from "../../types/notion";
+
+/** 页面导出格式 */
+export type ExportFormat = "html" | "pdf" | "docx" | "epub" | "png" | "latex" | "opml";
 
 export type ThemeMode = "light" | "dark" | "sepia";
 export type FontStyleMode = "sans" | "serif" | "mono";
@@ -73,7 +77,9 @@ export interface TopbarProps {
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
   /** 导出：html / pdf / docx */
-  onExportAs: (format: "html" | "pdf" | "docx") => void;
+  onExportAs: (format: ExportFormat) => void;
+  /** 在新窗口中打开当前页面 */
+  onOpenInNewWindow?: () => void;
   onOpenHistory: () => void;
   /** 把当前页面存为自定义模板 */
   onSaveAsTemplate?: () => void;
@@ -117,6 +123,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onDuplicatePage,
   onExportMarkdown,
   onExportAs,
+  onOpenInNewWindow,
   onOpenHistory,
   onSaveAsTemplate,
   onOpenImportMarkdown,
@@ -533,6 +540,21 @@ export const Topbar: React.FC<TopbarProps> = ({
                       </span>
                     </button>
 
+                    {onOpenInNewWindow && page && !activeLocalMd && (
+                      <button
+                        type="button"
+                        className="nb-menu-item"
+                        onClick={() => {
+                          onOpenInNewWindow();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span className="nb-menu-item-left">
+                          <AppWindow size={14} /> 在新窗口中打开
+                        </span>
+                      </button>
+                    )}
+
                     {onSaveAsTemplate && page && !activeLocalMd && (
                       <button
                         type="button"
@@ -566,6 +588,10 @@ export const Topbar: React.FC<TopbarProps> = ({
                         ["html", "导出 HTML"],
                         ["pdf", "导出 PDF"],
                         ["docx", "导出 Word"],
+                        ["epub", "导出 EPUB 电子书"],
+                        ["png", "导出为图片"],
+                        ["latex", "导出 LaTeX"],
+                        ["opml", "导出 OPML 大纲"],
                       ] as const
                     ).map(([fmt, label]) => (
                       <button

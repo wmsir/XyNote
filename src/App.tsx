@@ -15,6 +15,10 @@ import {
   type TextFileDocument,
 } from "./api/textfile";
 import { createFolderEntry } from "./api/folders";
+import { initialPageFromUrl, openNewWindow, saveExportImages } from "./api/desktop";
+import { renderHtmlToPngParts } from "./utils/exportImage";
+import { UpdateNotice } from "./components/shell/UpdateCheck";
+import type { ExportFormat } from "./components/shell/Topbar";
 import { savePageAsTemplate } from "./api/templates";
 import {
   convertMarkdownBlocks,
@@ -454,6 +458,19 @@ export const App: React.FC = () => {
       }
     }
   }, [refreshSidebarLists, loadPageDetailById]);
+
+  // 多窗口：切回这个窗口时，载入其他窗口里的修改（页面列表与当前页面）
+  const focusRefreshAt = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - focusRefreshAt.current < 1500) return;
+      focusRefreshAt.current = now;
+      handleRemoteSyncChanges().catch(() => {});
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [handleRemoteSyncChanges]);
 
   const { syncConfig, setSyncConfig, syncing, syncNow } = useSyncController({
     ready: !isLoading,
@@ -1083,8 +1100,13 @@ export const App: React.FC = () => {
         setTrashedPages(trashList);
 
         const remembered = settings.lastActivePageId;
+        // 新窗口通过 ?page=xxx 指定要打开的页面
+        const requested = initialPageFromUrl();
         const targetPage =
-          activeList.find((p) => p.id === remembered) ?? activeList[0] ?? null;
+          (requested ? activeList.find((p) => p.id === requested) ?? (await getPageDetail(requested).then((d) => d.page).catch(() => null)) : null) ??
+          activeList.find((p) => p.id === remembered) ??
+          activeList[0] ??
+          null;
 
         if (targetPage) {
           const initialDetail = await getPageDetail(targetPage.id);
@@ -1414,6 +1436,12 @@ export const App: React.FC = () => {
       if (combo === kb["app.toggleSidebar"]) {
         e.preventDefault();
         handleToggleSidebar();
+        return;
+      }
+
+      if (combo === kb["app.newWindow"]) {
+        e.preventDefault();
+        openNewWindow(null).catch((err) => showToast(`无法打开新窗口：${err instanceof Error ? err.message : String(err)}`));
         return;
       }
 
@@ -1794,12 +1822,20 @@ export const App: React.FC = () => {
 
   /** 导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
   const handleExportAs = useCallback(
-    async (pageId: string, format: "html" | "pdf" | "docx") => {
+    async (pageId: string, format: ExportFormat) => {
       await flushPendingBlockSave();
       try {
         if (format === "pdf") {
           const { filename, html } = await exportPageHtml(pageId);
           await printHtmlDocument(html, filename);
+          return;
+        }
+        if (format === "png") {
+          showToast("正在生成图片…");
+          const { filename, html } = await exportPageHtml(pageId);
+          const parts = await renderHtmlToPngParts(html);
+          const saved = await saveExportImages(filename, parts);
+          if (saved) showToast(parts.length > 1 ? `已导出 ${parts.length} 张图片：${saved}` : `已导出：${saved}`);
           return;
         }
         const saved = await exportPageFile(pageId, format);
@@ -2040,6 +2076,12 @@ export const App: React.FC = () => {
             if (detail?.page) {
               handleExportAs(detail.page.id, fmt).catch(() => {});
             }
+          }}
+          onOpenInNewWindow={() => {
+            if (!detail) return;
+            void flushPendingBlockSave().then(() =>
+              openNewWindow(detail.page.id).catch((err) => showToast(`无法打开新窗口：${err instanceof Error ? err.message : String(err)}`))
+            );
           }}
           onSaveAsTemplate={async () => {
             if (!detail) return;
@@ -2449,6 +2491,8 @@ export const App: React.FC = () => {
         onRestored={handleVersionRestored}
         onNotify={showToast}
       />
+
+      <UpdateNotice onOpenAbout={() => handleOpenSettingsAtTab("about")} />
 
       <TemplatesModal
         open={templatesOpen}
