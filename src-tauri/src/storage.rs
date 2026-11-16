@@ -22,10 +22,12 @@ use uuid::Uuid;
 const CONFIG_FILENAME: &str = "xynote-config.json";
 const DB_FILENAME: &str = "xynote.db";
 const SYNC_MANIFEST_FILENAME: &str = ".xynote-sync-manifest.json";
-// 早期版本沿用的文件名：启动时自动改成新名字，老用户无感升级
+const DEFAULT_DATA_DIR_NAME: &str = "XyNote-data";
+// 早期版本沿用的文件名与目录名：启动时自动改成新名字，老用户无感升级
 const LEGACY_CONFIG_FILENAME: &str = "notion-config.json";
 const LEGACY_DB_FILENAME: &str = "notion_desktop.db";
 const LEGACY_SYNC_MANIFEST_FILENAME: &str = ".notion-sync-manifest.json";
+const LEGACY_DATA_DIR_NAME: &str = "data";
 
 /// 新文件不存在而旧文件存在时，把旧文件改成新名字（失败时保持原样，下次再试）
 fn migrate_legacy_file(dir: &Path, legacy: &str, current: &str) {
@@ -50,6 +52,21 @@ fn migrate_legacy_db(data_dir: &Path) {
         );
     }
     migrate_legacy_file(data_dir, LEGACY_DB_FILENAME, DB_FILENAME);
+}
+
+/// 旧版默认 `data` 目录升级为见名知意的 `XyNote-data`
+fn migrate_legacy_data_dir(base_dir: &Path) {
+    let legacy = base_dir.join(LEGACY_DATA_DIR_NAME);
+    let current = base_dir.join(DEFAULT_DATA_DIR_NAME);
+    if current.exists() || !legacy.is_dir() {
+        return;
+    }
+    let looks_like_xynote_data = legacy.join(DB_FILENAME).is_file()
+        || legacy.join(LEGACY_DB_FILENAME).is_file()
+        || base_dir.join(CONFIG_FILENAME).is_file();
+    if looks_like_xynote_data {
+        let _ = std::fs::rename(&legacy, &current);
+    }
 }
 const LAUNCH_BACKUP_MIN_INTERVAL_SECS: u64 = 600; // 10 minutes
 
@@ -949,7 +966,7 @@ pub fn convert_markdown_blocks_pure(
 
 impl Database {
     /// Open portable storage anchored at `exe_dir` (`<exe_dir>\xynote-config.json` and
-    /// `<exe_dir>\data\`), falling back to `fallback_app_data_dir` only if `exe_dir` is read-only.
+    /// `<exe_dir>\XyNote-data\`), falling back to `fallback_app_data_dir` only if `exe_dir` is read-only.
     pub fn open_portable(
         exe_dir: &Path,
         fallback_app_data_dir: &Path,
@@ -958,20 +975,30 @@ impl Database {
         let exe_dir_writable = probe_dir_writable(exe_dir);
         migrate_legacy_file(exe_dir, LEGACY_CONFIG_FILENAME, CONFIG_FILENAME);
         migrate_legacy_file(fallback_app_data_dir, LEGACY_CONFIG_FILENAME, CONFIG_FILENAME);
-        let (config_file_path, default_data_dir) = if exe_dir_writable {
-            (
-                exe_dir.join(CONFIG_FILENAME),
-                exe_dir.join("data"),
-            )
+        let base_dir = if exe_dir_writable {
+            exe_dir
         } else {
             std::fs::create_dir_all(fallback_app_data_dir)?;
-            (
-                fallback_app_data_dir.join(CONFIG_FILENAME),
-                fallback_app_data_dir.join("data"),
-            )
+            fallback_app_data_dir
         };
+        migrate_legacy_data_dir(base_dir);
+        let config_file_path = base_dir.join(CONFIG_FILENAME);
+        let default_data_dir = base_dir.join(DEFAULT_DATA_DIR_NAME);
+        let legacy_data_dir = base_dir.join(LEGACY_DATA_DIR_NAME);
 
         let mut config = load_or_init_storage_config(&config_file_path, &default_data_dir);
+        if default_data_dir.is_dir() && !legacy_data_dir.exists() {
+            if normalize_path_key(Path::new(&config.active_data_dir))
+                == normalize_path_key(&legacy_data_dir)
+            {
+                config.active_data_dir = clean_display_path(&default_data_dir);
+            }
+            if normalize_path_key(Path::new(&config.markdown_sync_dir))
+                == normalize_path_key(&legacy_data_dir.join("pages"))
+            {
+                config.markdown_sync_dir = clean_display_path(&default_data_dir.join("pages"));
+            }
+        }
 
         // Ensure configured activeDataDir & markdownSyncDir exist; fall back safely if custom drive unavailable
         if ensure_data_subdirs(
@@ -1592,12 +1619,12 @@ mod tests {
         let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false)
             .expect("open portable db in exe_dir");
 
-        // 1. Default portable storage lives in `<exe_dir>\xynote-config.json` & `<exe_dir>\data\`
+        // 1. Default portable storage lives in `<exe_dir>\xynote-config.json` & `<exe_dir>\XyNote-data\`
         assert!(exe_root.path().join("xynote-config.json").is_file());
-        assert!(exe_root.path().join("data").join("xynote.db").is_file());
-        assert!(exe_root.path().join("data").join("pages").is_dir());
-        assert!(exe_root.path().join("data").join("assets").is_dir());
-        assert!(exe_root.path().join("data").join("backups").is_dir());
+        assert!(exe_root.path().join("XyNote-data").join("xynote.db").is_file());
+        assert!(exe_root.path().join("XyNote-data").join("pages").is_dir());
+        assert!(exe_root.path().join("XyNote-data").join("assets").is_dir());
+        assert!(exe_root.path().join("XyNote-data").join("backups").is_dir());
 
         let info0 = db.get_storage_info().unwrap();
         assert!(info0.is_default_portable_dir);
@@ -1701,16 +1728,18 @@ mod tests {
             let db = Database::open_portable(exe_root.path(), appdata.path(), false).unwrap();
             db.create_page(CreatePageInput { title: Some("老数据".into()), ..Default::default() }).unwrap();
         }
-        let data = exe_root.path().join("data");
+        let data = exe_root.path().join("XyNote-data");
         std::fs::rename(exe_root.path().join("xynote-config.json"), exe_root.path().join("notion-config.json")).unwrap();
         std::fs::rename(data.join("xynote.db"), data.join("notion_desktop.db")).unwrap();
         for s in ["-wal", "-shm"] {
             let _ = std::fs::rename(data.join(format!("xynote.db{}", s)), data.join(format!("notion_desktop.db{}", s)));
         }
+        std::fs::rename(&data, exe_root.path().join("data")).unwrap();
 
         let db = Database::open_portable(exe_root.path(), appdata.path(), false).unwrap();
         assert!(exe_root.path().join("xynote-config.json").is_file());
         assert!(!exe_root.path().join("notion-config.json").exists());
+        assert!(!exe_root.path().join("data").exists());
         assert!(data.join("xynote.db").is_file());
         assert!(db.list_pages().unwrap().iter().any(|p| p.title == "老数据"), "数据应随文件一起迁移");
     }
@@ -1745,7 +1774,7 @@ mod tests {
         let appdata_fallback = TempTestDir::new("md-appdata");
 
         let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
-        let pages_dir = exe_root.path().join("data").join("pages");
+        let pages_dir = exe_root.path().join("XyNote-data").join("pages");
 
         // 新工作区只有一篇使用说明，它的 .md 镜像应已写到磁盘
         let seeded_welcome = pages_dir.join("欢迎使用 小悦 (XyNote).md");
