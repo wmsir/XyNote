@@ -821,16 +821,95 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
                 let html = crate::export_formats::markdown_to_html_document(&base, &md.markdown);
                 (base, html.into_bytes(), "html", "网页文件", "导出为 HTML")
             }
+            "epub" => {
+                let bytes = crate::export_more::markdown_to_epub(&base, &md.markdown).map_err(String::from)?;
+                (base, bytes, "epub", "EPUB 电子书", "导出为 EPUB 电子书")
+            }
+            "opml" => {
+                let opml = crate::export_more::markdown_to_opml(&base, &md.markdown);
+                (base, opml.into_bytes(), "opml", "OPML 大纲", "导出为 OPML 大纲")
+            }
+            // LaTeX 的图片文件夹要跟随保存的文件名，选好路径后再生成
+            "latex" => (base, md.markdown.into_bytes(), "tex", "LaTeX 文件", "导出为 LaTeX"),
             other => return Err(format!("不支持的导出格式：{}", other)),
         }
     };
+    let is_latex = format == "latex";
+    let base_for_latex = base.clone();
     let picked = run_dialog(&app, move || {
         crate::win_dialogs::pick_save_path_dialog_sync(title.to_string(), base, ext.to_string(), label.to_string())
     })
     .await?;
     let Some(path) = picked else { return Ok(None) };
+    if is_latex {
+        let markdown = String::from_utf8(bytes).unwrap_or_default();
+        let target = std::path::Path::new(&path);
+        let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "export".into());
+        let image_dir = format!("{}_images", stem);
+        let bundle = crate::export_more::markdown_to_latex(&base_for_latex, &markdown, &image_dir);
+        std::fs::write(&path, &bundle.bytes).map_err(|e| format!("保存失败：{}", e))?;
+        let parent = target.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        for (rel, data) in bundle.extra_files {
+            let file = parent.join(&rel);
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| format!("保存图片失败：{}", e))?;
+            }
+            std::fs::write(&file, data).map_err(|e| format!("保存图片失败：{}", e))?;
+        }
+        return Ok(Some(path));
+    }
     std::fs::write(&path, bytes).map_err(|e| format!("保存失败：{}", e))?;
     Ok(Some(path))
+}
+
+/// 保存前端生成的图片（PNG）。页面很长时分成多张：第一张用选择的文件名，其余加 -2、-3…
+#[tauri::command]
+pub async fn save_export_images(app: AppHandle, filename: String, parts: Vec<String>) -> Result<Option<String>, String> {
+    let images = crate::export_more::decode_parts(&parts).map_err(String::from)?;
+    if images.is_empty() {
+        return Err("没有可保存的图片".into());
+    }
+    let picked = run_dialog(&app, move || {
+        crate::win_dialogs::pick_save_path_dialog_sync("导出为图片".to_string(), filename, "png".to_string(), "PNG 图片".to_string())
+    })
+    .await?;
+    let Some(path) = picked else { return Ok(None) };
+    let target = std::path::PathBuf::from(&path);
+    let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "export".into());
+    for (i, bytes) in images.iter().enumerate() {
+        let file = if i == 0 { target.clone() } else { target.with_file_name(format!("{}-{}.png", stem, i + 1)) };
+        std::fs::write(&file, bytes).map_err(|e| format!("保存失败：{}", e))?;
+    }
+    Ok(Some(path))
+}
+
+/// 新建一个窗口（可以同时开多个）；page_id 有值时新窗口直接打开这个页面
+#[tauri::command]
+pub async fn open_new_window(app: AppHandle, page_id: Option<String>) -> Result<String, String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    let label = format!("win-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let mut url = "index.html".to_string();
+    if let Some(id) = page_id.filter(|v| !v.trim().is_empty()) {
+        let safe: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+        url.push_str(&format!("?page={}", safe));
+    }
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title("小悦 (XyNote)")
+        .inner_size(1180.0, 800.0)
+        .min_inner_size(900.0, 600.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("无法打开新窗口：{}", e))?;
+    Ok(label)
+}
+
+/// 检查更新：读取 GitHub 上最新发布的版本
+#[tauri::command]
+pub async fn check_for_update() -> Result<crate::updater::UpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(crate::updater::check)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(Into::into)
 }
 
 #[tauri::command]

@@ -366,6 +366,14 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     defaultShortcut: "Ctrl+N",
   },
   {
+    id: "app.newWindow",
+    category: "workspace",
+    categoryLabel: "全局与视图",
+    label: "新建窗口",
+    description: "再打开一个小悦笔记窗口，可以同时看、写不同的页面",
+    defaultShortcut: "Ctrl+Shift+N",
+  },
+  {
     id: "app.openMd",
     category: "workspace",
     categoryLabel: "全局与视图",

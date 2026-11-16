@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { UpdateCard } from "./UpdateCheck";
 import { getUiLangPref, setUiLangPref, type UiLangPref } from "../../i18n/lang";
 import {
   AlignCenter,
@@ -1514,6 +1515,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                 </div>
+
+                <UpdateCard />
 
                 <div className="nb-settings-card-box">
                   <div className="nb-settings-label">品牌故事与命名理念</div>

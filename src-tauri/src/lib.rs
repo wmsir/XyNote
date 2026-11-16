@@ -1,5 +1,7 @@
 pub mod folders;
 pub mod textfile;
+pub mod export_more;
+pub mod updater;
 pub mod watch;
 pub mod sync;
 pub mod sync_remote;
@@ -92,6 +94,9 @@ pub fn run() {
             commands::open_path_in_explorer,
             commands::list_folder_entries,
             commands::open_text_file,
+            commands::save_export_images,
+            commands::open_new_window,
+            commands::check_for_update,
             commands::list_custom_templates,
             commands::save_page_as_template,
             commands::update_custom_template,
