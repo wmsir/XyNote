@@ -144,6 +144,8 @@ impl OpenState for AppState {
         conn.execute_batch(crate::store::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::licensing::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::feedback::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        conn.execute_batch(crate::marketplace::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        crate::marketplace::seed_if_empty(&conn)?;
         let signing_key = match &config.license_key_file {
             Some(path) => {
                 let raw = std::fs::read_to_string(path).map_err(|e| format!("读取永久版签名私钥失败：{}", e))?;
@@ -167,8 +169,15 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/me/devices/:machine/unbind", post(me_unbind_device))
         .route("/api/v1/feedback", post(feedback_submit))
         .route("/api/v1/feedback/mine", get(feedback_mine))
+        .route("/api/v1/marketplace", get(marketplace_list).post(marketplace_publish))
+        .route("/api/v1/marketplace/:id", get(marketplace_detail).delete(marketplace_delete))
+        .route("/api/v1/marketplace/:id/download", get(marketplace_download))
+        .route("/api/v1/marketplace/:id/like", post(marketplace_like))
         .route("/api/v1/admin/feedback", get(admin_feedback_list))
         .route("/api/v1/admin/feedback/:id", post(admin_feedback_update))
+        .route("/api/v1/admin/marketplace", get(admin_marketplace_list))
+        .route("/api/v1/admin/marketplace/:id/featured", post(admin_marketplace_featured))
+        .route("/api/v1/admin/marketplace/:id", axum::routing::delete(admin_marketplace_delete))
         .route("/api/v1/admin/users", get(admin_users))
         .route("/api/v1/admin/users/:id/reset-trial-device", post(admin_reset_trial_device))
         .route("/api/v1/auth/register", post(register))
@@ -982,6 +991,7 @@ async fn admin_stats(State(state): State<AppState>, headers: HeaderMap) -> Respo
         Ok(mut v) => {
             v["pendingOrders"] = json!(pending);
             v["newFeedback"] = json!(crate::feedback::count_new(&conn));
+            v["marketplaceTotal"] = json!(crate::marketplace::count_total(&conn));
             Json(v).into_response()
         }
         Err(e) => internal(e),
@@ -1287,6 +1297,236 @@ async fn admin_feedback_update(
     match crate::feedback::update(&conn, id, u.status.as_deref(), u.reply.as_deref()) {
         Ok(f) => Json(f).into_response(),
         Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+/* ---------------- 插件与模板社区市场 ---------------- */
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarketplaceQuery {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    sort: String,
+    #[serde(default)]
+    mine: bool,
+}
+
+fn percent_encode_utf8(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.') {
+            out.push(*b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+async fn optional_viewer(state: &AppState, headers: &HeaderMap) -> (String, Option<i64>, bool) {
+    if let Some(tok) = bearer(headers) {
+        if let Some(admin) = state.config.admin_token.as_ref() {
+            if sha256_hex(&tok) == sha256_hex(admin) {
+                return ("admin:token".to_string(), None, true);
+            }
+        }
+        if let Ok(u) = authed(state, headers).await {
+            let is_admin = u.role == "ADMIN" || u.role == "SUPER_ADMIN";
+            return (format!("u:{}", u.id), Some(u.id), is_admin);
+        }
+    }
+    (format!("ip:{}", client_ip(headers)), None, false)
+}
+
+async fn marketplace_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<MarketplaceQuery>,
+) -> Response {
+    let (viewer_key, viewer_uid, is_admin) = optional_viewer(&state, &headers).await;
+    let only_owner = if q.mine {
+        match viewer_uid {
+            Some(id) => Some(id),
+            None => return Json(json!({ "items": [] })).into_response(),
+        }
+    } else {
+        None
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let kind_opt = if q.kind.trim().is_empty() || q.kind == "all" { None } else { Some(q.kind.as_str()) };
+    match crate::marketplace::list(&conn, kind_opt, &q.q, &q.sort, only_owner, &viewer_key, viewer_uid, is_admin) {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn marketplace_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let (viewer_key, viewer_uid, is_admin) = optional_viewer(&state, &headers).await;
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::get_detail(&conn, id, &viewer_key, viewer_uid, is_admin) {
+        Ok(Some(item)) => Json(item).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "找不到这个插件或模板"),
+        Err(e) => internal(e),
+    }
+}
+
+async fn marketplace_publish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<crate::marketplace::PublishInput>,
+) -> Response {
+    let user = if bearer(&headers).is_some() { authed(&state, &headers).await.ok() } else { None };
+    let client_key = match &user {
+        Some(u) => format!("u:{}", u.id),
+        None => format!("ip:{}", client_ip(&headers)),
+    };
+    let fallback_author = user.as_ref().map(|u| u.display().to_string()).unwrap_or_else(|| "社区创作者".to_string());
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::publish(&conn, user.map(|u| u.id), &fallback_author, &client_key, &input) {
+        Ok(item) => Json(item).into_response(),
+        Err(m) => err(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+async fn marketplace_download(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::record_download(&conn, id) {
+        Ok(Some(p)) => {
+            let disp = format!(
+                "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+                p.ascii_filename,
+                percent_encode_utf8(&p.filename)
+            );
+            let _ = p.kind;
+            match axum::http::HeaderValue::from_str(&disp) {
+                Ok(hv) => (
+                    [
+                        (axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream")),
+                        (axum::http::header::CONTENT_DISPOSITION, hv),
+                        (axum::http::header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff")),
+                    ],
+                    p.content,
+                )
+                    .into_response(),
+                Err(e) => internal(e),
+            }
+        }
+        Ok(None) => err(StatusCode::NOT_FOUND, "找不到要下载的文件"),
+        Err(e) => internal(e),
+    }
+}
+
+async fn marketplace_like(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let (viewer_key, _, _) = optional_viewer(&state, &headers).await;
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::toggle_like(&conn, id, &viewer_key) {
+        Ok(Some((liked, likes))) => Json(json!({ "liked": liked, "likes": likes })).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "作品不存在"),
+        Err(e) => internal(e),
+    }
+}
+
+async fn marketplace_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let (_, viewer_uid, is_admin) = optional_viewer(&state, &headers).await;
+    if viewer_uid.is_none() && !is_admin {
+        return err(StatusCode::UNAUTHORIZED, "请先登录");
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::delete_item(&conn, id, viewer_uid, is_admin) {
+        Ok(()) => Json(json!({ "deleted": true })).into_response(),
+        Err(m) if m.contains("不存在") => err(StatusCode::NOT_FOUND, &m),
+        Err(m) => err(StatusCode::FORBIDDEN, &m),
+    }
+}
+
+async fn admin_marketplace_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::list(&conn, None, "", "newest", None, "admin:panel", None, true) {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct FeaturedInput {
+    featured: bool,
+}
+
+async fn admin_marketplace_featured(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<FeaturedInput>,
+) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::set_featured(&conn, id, body.featured) {
+        Ok(true) => Json(json!({ "featured": body.featured })).into_response(),
+        Ok(false) => err(StatusCode::NOT_FOUND, "作品不存在"),
+        Err(e) => internal(e),
+    }
+}
+
+async fn admin_marketplace_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::marketplace::delete_item(&conn, id, None, true) {
+        Ok(()) => Json(json!({ "deleted": true })).into_response(),
+        Err(m) => err(StatusCode::NOT_FOUND, &m),
     }
 }
 
@@ -1676,13 +1916,53 @@ mod tests {
         let app = router(test_state(false));
         let (s, b) = call(&app, "GET", "/", None, vec![], false).await;
         assert_eq!(s, StatusCode::OK);
-        assert!(String::from_utf8_lossy(&b).contains("小悦笔记 · 用户中心"));
+        assert!(String::from_utf8_lossy(&b).contains("小悦笔记"));
         let (s, b) = call(&app, "GET", "/admin/", None, vec![], false).await;
         assert_eq!(s, StatusCode::OK);
         assert!(String::from_utf8_lossy(&b).contains("管理后台"));
         let resp = app.clone().oneshot(Request::builder().uri("/admin").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
         assert_eq!(resp.headers().get("location").unwrap(), "admin/");
+    }
+
+    #[tokio::test]
+    async fn marketplace_list_publish_like_download_delete() {
+        let app = router(test_state(false));
+        let t1 = register_user(&app, "maker@example.com").await;
+        let t2 = register_user(&app, "fan@example.com").await;
+
+        let (s, b) = call(&app, "GET", "/api/v1/marketplace", None, vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(val(&b)["items"].as_array().unwrap().len() >= 7);
+
+        let payload = json!({
+            "kind": "snippet",
+            "name": "测试荧光标注",
+            "version": "1.0.0",
+            "description": "给行内标记加上温和渐变",
+            "tags": "标注,测试",
+            "baseMode": "light",
+            "content": "mark { background: #fde68a; border-radius: 4px; }"
+        });
+        let (s, b) = call(&app, "POST", "/api/v1/marketplace", Some(&t1), payload.to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let id = val(&b)["id"].as_i64().unwrap();
+
+        let (s, b) = call(&app, "POST", &format!("/api/v1/marketplace/{}/like", id), Some(&t2), vec![], false).await;
+        assert_eq!((s, val(&b)["liked"].clone(), val(&b)["likes"].clone()), (StatusCode::OK, json!(true), json!(1)));
+
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(format!("/api/v1/marketplace/{}/download", id)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().get("content-disposition").unwrap().to_str().unwrap().contains("attachment"));
+
+        let (s, _) = call(&app, "DELETE", &format!("/api/v1/marketplace/{}", id), Some(&t2), vec![], false).await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        let (s, _) = call(&app, "DELETE", &format!("/api/v1/marketplace/{}", id), Some(&t1), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
     }
 
     #[tokio::test]

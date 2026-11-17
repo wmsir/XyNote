@@ -1,8 +1,9 @@
 name: Build & Release XyNote
 
-# 自动发布：main 分支上的版本号（package.json）还没有发布过时，自动打包并创建
-# v<版本号> 标签与 GitHub Release。所以发新版只需要把版本号改大并合并到 main。
-# 也支持推送 v* 标签，或在 Actions 页手动运行（版本已发布过时只生成构建产物）。
+# 每次向 main 推送代码更新时自动检查版本并打包发布：
+# - 若当前版本号尚未发布，按当前版本号打包发布 Release；
+# - 若当前版本号已发布，自动递增补丁位（如 0.7.2 -> 0.7.3）并回写版本号后再打包发布。
+# - 支持推送 v* 标签或 workflow_dispatch 手动触发。
 #
 # 可选的仓库 Secrets：
 #   XYNOTE_LICENSE_PUBKEY  永久版授权公钥（不设置时使用 src-tauri/license_pubkey.txt）
@@ -10,9 +11,9 @@ name: Build & Release XyNote
 on:
   push:
     branches: [main]
-    paths:
-      - package.json
-      - .github/workflows/release.yml
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
     tags:
       - "v*"
   workflow_dispatch:
@@ -32,19 +33,70 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
       publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
-      - name: 检查标签与版本号一致
+        with:
+          fetch-depth: 0
+
+      - name: 检查版本并自动递增（如需要）
         id: v
         shell: bash
         run: |
+          if [[ "${{ github.event_name }}" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            LAST_MSG=$(git log -1 --pretty=%B)
+            if [[ "$LAST_MSG" == chore\(release\):* || "$LAST_MSG" == *"[skip release]"* ]]; then
+              echo "检测到自动升版提交，跳过重复发布"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
           if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]]; then
             echo "::error::标签 ${GITHUB_REF#refs/tags/} 与 package.json 版本 $VERSION 不一致"
             exit 1
           fi
+
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]] && gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$VERSION 已发布，自动递增补丁版本号..."
+            while gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; do
+              IFS='.' read -r MAJ MIN PAT <<< "$VERSION"
+              VERSION="${MAJ}.${MIN}.$((PAT + 1))"
+            done
+            echo "新版本号：$VERSION"
+            NEW_VER="$VERSION" node -e '
+              const fs = require("fs");
+              const v = process.env.NEW_VER;
+              const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              pkg.version = v;
+              fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+              const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+              lock.version = v;
+              if (lock.packages && lock.packages[""]) lock.packages[""].version = v;
+              fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
+            '
+            python3 - "$VERSION" <<'PY'
+          import re, sys
+          ver = sys.argv[1]
+          for path, pat, repl in [
+              ("src-tauri/Cargo.toml", r'(?m)^(version\s*=\s*")[^"]+(")', rf'\g<1>{ver}\g<2>'),
+              ("src-tauri/Cargo.lock", r'(?ms)(name\s*=\s*"xynote"\s+version\s*=\s*")[^"]+(")', rf'\g<1>{ver}\g<2>'),
+          ]:
+              txt = open(path, "r", encoding="utf-8").read()
+              new_txt, n = re.subn(pat, repl, txt, count=1)
+              assert n == 1, f"Failed updating version in {path}"
+              open(path, "w", encoding="utf-8", newline="\n").write(new_txt)
+          PY
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+            git commit -m "chore(release): v$VERSION [skip release] [skip ci]"
+            git push origin HEAD:main
+          fi
+
           CARGO_VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
           if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
             echo "::error::src-tauri/Cargo.toml 版本 $CARGO_VERSION 与 package.json 版本 $VERSION 不一致"
@@ -53,16 +105,10 @@ jobs:
           if ! grep -qE '^[0-9a-fA-F]{64}$' src-tauri/license_pubkey.txt && [[ -z "$XYNOTE_LICENSE_PUBKEY" ]]; then
             echo "::warning::未配置永久版授权公钥：这个版本无法登录或激活永久版"
           fi
-          # 该版本还没有发布过才发布（标签推送总是发布）
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            PUBLISH=true
-          elif gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "v$VERSION 已发布，本次只构建"
-            PUBLISH=false
-          else
-            PUBLISH=true
-          fi
-          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -90,6 +136,8 @@ jobs:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.sha }}
 
       - name: 安装 Linux 依赖
         if: startsWith(matrix.platform, 'ubuntu')
@@ -158,11 +206,13 @@ jobs:
   build-server:
     needs: check-version
     if: needs.check-version.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -185,6 +235,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      TARGET_SHA: ${{ needs.check-version.outputs.sha }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -199,7 +250,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ env.TARGET_SHA }}
           name: 小悦笔记 XyNote v${{ env.VERSION }}
           generate_release_notes: true
           body: |
@@ -215,7 +266,7 @@ jobs:
 
             安装包未做代码签名：Windows 若提示「已保护你的电脑」，点「更多信息 → 仍要运行」；macOS 首次打开请在「系统设置 → 隐私与安全性」中允许。
 
-            基础功能免费；在「设置 → 永久版」登录 FWPT 通行证可免费使用永久版一年，之后 ¥9.9 一次购买。详见 https://fwpt.cn/xynote.html
+            全部功能免费，无广告、无需登录；社区主题、CSS 插件与最新国内镜像下载详见 https://fwpt.cn/xynote/
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

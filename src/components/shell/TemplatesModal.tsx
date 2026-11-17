@@ -103,6 +103,19 @@ const TEMPLATES: TemplateDefinition[] = [
       "🎯 下周最重要的三件事 (Top 3 Todos)",
     ],
   },
+  {
+    id: "cornell-notes",
+    title: "康奈尔深度读书笔记",
+    icon: "📖",
+    pageType: "doc",
+    category: "文档模板",
+    summary: "经典的「线索提问 · 核心摘录 · 总结转化」康奈尔笔记结构，把阅读真正沉淀为知识与行动。",
+    bullets: [
+      "📚 顶部书目元信息卡（作者、阅读进度与一句话核心命题）",
+      "🧭 线索栏（Cue）与笔记栏（Notes）双栏对照表格 + 原文精摘",
+      "🎯 读后总结（Summary）、[[双向链接]] 串联与落地行动清单",
+    ],
+  },
 ];
 
 export interface TemplatesModalProps {

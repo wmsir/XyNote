@@ -1611,7 +1611,12 @@ const EN: Record<string, string> = {
   "🖼️ 预置画廊卡片视图与在读状态管理": "🖼️ Gallery view and reading status",
   "🗂️ 默认开启看板分组视图，直观呈现待办与进行中事项": "🗂️ Board view shows to-do and in-progress items",
   "🛠️ 评审状态提示块与背景目标拆解": "🛠️ Review status callout and goals",
-  "🧩 挑战反思引用块与经验沉淀": "🧩 Challenges and lessons quote block"
+  "🧩 挑战反思引用块与经验沉淀": "🧩 Challenges and lessons quote block",
+  "康奈尔深度读书笔记": "Cornell Deep Reading Notes",
+  "经典的「线索提问 · 核心摘录 · 总结转化」康奈尔笔记结构，把阅读真正沉淀为知识与行动。": "Classic Cue · Notes · Summary Cornell framework to turn reading into structured knowledge and action.",
+  "📚 顶部书目元信息卡（作者、阅读进度与一句话核心命题）": "📚 Book metadata callout (author, reading date and core thesis)",
+  "🧭 线索栏（Cue）与笔记栏（Notes）双栏对照表格 + 原文精摘": "🧭 Cue & Notes two-column table plus quote highlights",
+  "🎯 读后总结（Summary）、[[双向链接]] 串联与落地行动清单": "🎯 Post-reading Summary, [[backlinks]] and action items"
 };
 
 export default EN;

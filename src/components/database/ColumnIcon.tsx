@@ -54,33 +54,61 @@ export function detectThemeStyles(sourceEl: HTMLElement | null): {
   if (typeof window === "undefined") {
     return { isDark: false, vars: {} };
   }
-  const target =
-    (sourceEl?.closest(".nb-db-root") as HTMLElement | null) ??
-    document.documentElement;
-  const computed = window.getComputedStyle(target);
-  const bg = computed.backgroundColor || "";
-  let isDark = false;
+  const varSource =
+    (sourceEl?.closest(
+      ".nb-db-drawer-panel, .nb-db-popover, .nb-db-root:not(.nb-db-drawer-backdrop)"
+    ) as HTMLElement | null) ?? document.documentElement;
+  const computed = window.getComputedStyle(varSource);
+  let isDark: boolean | null = null;
 
-  const rgbMatch = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(bg);
-  if (rgbMatch) {
-    const r = Number(rgbMatch[1]);
-    const g = Number(rgbMatch[2]);
-    const b = Number(rgbMatch[3]);
-    if (r + g + b > 0 && (r * 299 + g * 587 + b * 114) / 1000 < 110) {
+  // Prefer explicit theme attributes before inspecting computed backgroundColor
+  // (e.g. RowDetailDrawer backdrop uses semi-transparent overlay rgba(15,15,15,0.35))
+  const explicitNb = sourceEl
+    ?.closest("[data-nb-dark]")
+    ?.getAttribute("data-nb-dark");
+  if (explicitNb === "true") {
+    isDark = true;
+  } else if (explicitNb === "false") {
+    isDark = false;
+  }
+
+  if (isDark === null) {
+    const themeHost =
+      sourceEl?.closest(
+        "[data-theme], .dark, .theme-dark, .theme-light, .theme-sepia"
+      ) ?? document.documentElement;
+    const dt = themeHost.getAttribute("data-theme");
+    if (
+      dt === "dark" ||
+      themeHost.classList.contains("dark") ||
+      themeHost.classList.contains("theme-dark")
+    ) {
       isDark = true;
+    } else if (
+      dt === "light" ||
+      dt === "sepia" ||
+      themeHost.classList.contains("theme-light") ||
+      themeHost.classList.contains("theme-sepia")
+    ) {
+      isDark = false;
     }
   }
-  if (!isDark) {
-    const themeHost = target.closest("[data-theme], .dark, .theme-dark");
-    if (themeHost) {
-      const dt = themeHost.getAttribute("data-theme");
-      if (
-        dt === "dark" ||
-        themeHost.classList.contains("dark") ||
-        themeHost.classList.contains("theme-dark")
-      ) {
-        isDark = true;
-      }
+
+  if (isDark === null) {
+    const bg = computed.backgroundColor || "";
+    const rgbMatch =
+      /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?/.exec(bg);
+    if (rgbMatch) {
+      const r = Number(rgbMatch[1]);
+      const g = Number(rgbMatch[2]);
+      const b = Number(rgbMatch[3]);
+      const alpha = rgbMatch[4] !== undefined ? Number(rgbMatch[4]) : 1;
+      isDark =
+        alpha >= 0.8 &&
+        r + g + b > 0 &&
+        (r * 299 + g * 587 + b * 114) / 1000 < 110;
+    } else {
+      isDark = false;
     }
   }
 

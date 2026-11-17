@@ -958,7 +958,7 @@
   padding: 0 8px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
   white-space: nowrap;
 }
@@ -999,20 +999,20 @@
 
 /* Light & Sepia Pill Palette */
 .nb-db-pill-gray {
-  background: rgba(120, 119, 116, 0.15);
-  color: #55534e;
+  background: rgba(120, 119, 116, 0.17);
+  color: #45433e;
 }
 .nb-db-pill-brown {
   background: rgba(159, 107, 83, 0.17);
   color: #6c4532;
 }
 .nb-db-pill-orange {
-  background: rgba(217, 115, 13, 0.16);
-  color: #9a4e06;
+  background: rgba(217, 115, 13, 0.18);
+  color: #8a4304;
 }
 .nb-db-pill-amber {
-  background: rgba(203, 145, 47, 0.18);
-  color: #84590c;
+  background: rgba(203, 145, 47, 0.22);
+  color: #704705;
 }
 .nb-db-pill-green {
   background: rgba(68, 131, 97, 0.16);
@@ -1039,8 +1039,8 @@
   color: #882a5c;
 }
 .nb-db-pill-red {
-  background: rgba(212, 76, 71, 0.16);
-  color: #982925;
+  background: rgba(212, 76, 71, 0.18);
+  color: #8f221e;
 }
 
 /* Dark Mode Pill Palette */

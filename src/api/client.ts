@@ -743,6 +743,30 @@ function applyTemplateToPage(store: LocalStore, page: Page, templateId: string):
       makeBlock(page.id, 5, "todo", "推进核心特性体验走查", { checked: false }),
       makeBlock(page.id, 6, "todo", "阅读并沉淀一篇技术笔记", { checked: false })
     );
+  } else if (templateId === "cornell-notes") {
+    page.title = page.title === "无标题" ? "康奈尔深度读书笔记" : page.title;
+    page.icon = "📖";
+    page.pageType = "doc";
+    store.blocks.push(
+      makeBlock(page.id, 0, "callout", "书名 / 文章：《填写标题》 ｜ 作者： ｜ 阅读日期： ｜ 推荐度：★★★★★", { calloutIcon: "📖", color: "blue" }),
+      makeBlock(page.id, 1, "heading2", "🎯 一句话核心命题"),
+      makeBlock(page.id, 2, "quote", "用自己的话写下全书最核心想解决的问题与核心论点。"),
+      makeBlock(page.id, 3, "heading2", "🧭 康奈尔双栏笔记（左栏线索提问 · 右栏核心笔记）"),
+      makeBlock(page.id, 4, "table", "", {
+        headers: ["🔑 线索与关键追问 (Cues)", "📝 核心论据与推导笔记 (Notes)"],
+        rows: [
+          ["核心概念 / 为什么重要？", "记录关键定义、数据支撑、案例与推导逻辑"],
+          ["与我已有认知的冲突点？", "对比既有经验，标记颠覆认知的关键转折"],
+          ["适用边界与反例是什么？", "注明该方法成立的前提条件与潜在局限"],
+        ],
+      }),
+      makeBlock(page.id, 5, "heading2", "💎 原文金句精摘"),
+      makeBlock(page.id, 6, "bullet", "「摘录触动你的关键原文……」—— 第 xx 页（批注：为什么这句话重要）"),
+      makeBlock(page.id, 7, "heading2", "🧠 总结内化与知识关联 (Summary)"),
+      makeBlock(page.id, 8, "paragraph", "合上书用三句话复述核心脉络；可输入 [[ 链接工作区内的相关概念或项目笔记。"),
+      makeBlock(page.id, 9, "heading2", "✅ 最小可落地行动 (Action Items)"),
+      makeBlock(page.id, 10, "todo", "提炼 1 个可在未来 7 天内实践的具体改变并验证效果", { checked: false })
+    );
   } else if (
     templateId === "product-roadmap" ||
     templateId === "task-hub" ||

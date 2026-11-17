@@ -941,6 +941,7 @@ impl Database {
             Some("meeting-notes") => ("团队周会纪要", "📝"),
             Some("eng-spec") => ("技术方案设计 RFC", "⚙️"),
             Some("weekly-journal") => ("每周复盘与计划", "🗓️"),
+            Some("cornell-notes") => ("康奈尔深度读书笔记", "📖"),
             Some("product-roadmap") => ("产品路线图", "🗺️"),
             Some("task-hub") => ("任务管理看板", "✅"),
             Some("reading-list") => ("阅读书单与笔记", "📚"),
@@ -1199,6 +1200,112 @@ impl Database {
                     6,
                     "todo",
                     "阅读并沉淀一篇技术笔记",
+                    None,
+                    BlockProps {
+                        checked: Some(false),
+                        ..Default::default()
+                    },
+                )?;
+            }
+            "cornell-notes" => {
+                add_block(
+                    0,
+                    "callout",
+                    "书名 / 文章：《填写标题》 ｜ 作者： ｜ 阅读日期： ｜ 推荐度：★★★★★",
+                    None,
+                    BlockProps {
+                        callout_icon: Some("📖".into()),
+                        color: Some("blue".into()),
+                        ..Default::default()
+                    },
+                )?;
+                add_block(
+                    1,
+                    "heading2",
+                    "🎯 一句话核心命题",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    2,
+                    "quote",
+                    "用自己的话写下全书最核心想解决的问题与核心论点。",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    3,
+                    "heading2",
+                    "🧭 康奈尔双栏笔记（左栏线索提问 · 右栏核心笔记）",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    4,
+                    "table",
+                    "",
+                    None,
+                    BlockProps {
+                        headers: Some(vec![
+                            "🔑 线索与关键追问 (Cues)".into(),
+                            "📝 核心论据与推导笔记 (Notes)".into(),
+                        ]),
+                        rows: Some(vec![
+                            vec![
+                                "核心概念 / 为什么重要？".into(),
+                                "记录关键定义、数据支撑、案例与推导逻辑".into(),
+                            ],
+                            vec![
+                                "与我已有认知的冲突点？".into(),
+                                "对比既有经验，标记颠覆认知的关键转折".into(),
+                            ],
+                            vec![
+                                "适用边界与反例是什么？".into(),
+                                "注明该方法成立的前提条件与潜在局限".into(),
+                            ],
+                        ]),
+                        ..Default::default()
+                    },
+                )?;
+                add_block(
+                    5,
+                    "heading2",
+                    "💎 原文金句精摘",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    6,
+                    "bullet",
+                    "「摘录触动你的关键原文……」—— 第 xx 页（批注：为什么这句话重要）",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    7,
+                    "heading2",
+                    "🧠 总结内化与知识关联 (Summary)",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    8,
+                    "paragraph",
+                    "合上书用三句话复述核心脉络；可输入 [[ 链接工作区内的相关概念或项目笔记。",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    9,
+                    "heading2",
+                    "✅ 最小可落地行动 (Action Items)",
+                    None,
+                    BlockProps::default(),
+                )?;
+                add_block(
+                    10,
+                    "todo",
+                    "提炼 1 个可在未来 7 天内实践的具体改变并验证效果",
                     None,
                     BlockProps {
                         checked: Some(false),
@@ -3403,5 +3510,15 @@ mod tests {
         db.delete_custom_template(&tpl.id).unwrap();
         assert_eq!(db.list_custom_templates().unwrap().len(), 2);
         assert!(db.create_page(CreatePageInput { template_id: Some(format!("custom:{}", tpl.id)), ..Default::default() }).is_err());
+
+        // 内置模板：康奈尔深度读书笔记
+        let cornell = db
+            .create_page(CreatePageInput { template_id: Some("cornell-notes".into()), ..Default::default() })
+            .unwrap();
+        assert_eq!(cornell.title, "康奈尔深度读书笔记");
+        assert_eq!(cornell.icon, "📖");
+        let cornell_blocks = db.get_page_detail(&cornell.id).unwrap().blocks;
+        assert_eq!(cornell_blocks.len(), 11);
+        assert_eq!(cornell_blocks[4].block_type, "table");
     }
 }

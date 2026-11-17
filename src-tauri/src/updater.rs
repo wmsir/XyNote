@@ -6,8 +6,8 @@ use crate::models::AppError;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const DEFAULT_URL: &str = "https://api.github.com/repos/wmsir/XyNote/releases/latest";
-pub const RELEASES_PAGE: &str = "https://github.com/wmsir/XyNote/releases";
+const DEFAULT_URL: &str = "https://fwpt.cn/downloads/xynote/latest.json";
+pub const RELEASES_PAGE: &str = "https://fwpt.cn/xynote/#download";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -38,3 +38,5 @@ notion-config.json
 /server/data
 /tools/license/target
 *.key
+/XyNote-data
+xynote-config.json
