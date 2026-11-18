@@ -162,7 +162,7 @@ export async function exportPageHtml(pageId: string): Promise<{ filename: string
 }
 
 /** 导出 HTML / Word / EPUB / LaTeX / OPML 文件，返回保存路径；取消时为 null */
-export async function exportPageFile(pageId: string, format: "html" | "docx" | "epub" | "latex" | "opml"): Promise<string | null> {
+export async function exportPageFile(pageId: string, format: "md" | "html" | "docx" | "epub" | "latex" | "opml"): Promise<string | null> {
   return invoke<string | null>("export_page_file", { pageId, format });
 }
 

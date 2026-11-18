@@ -32,7 +32,7 @@ import type {
 } from "../../types/notion";
 
 /** 页面导出格式 */
-export type ExportFormat = "html" | "pdf" | "docx" | "epub" | "png" | "latex" | "opml";
+export type ExportFormat = "md" | "html" | "pdf" | "docx" | "epub" | "png" | "latex" | "opml";
 
 export type ThemeMode = "light" | "dark" | "sepia";
 export type FontStyleMode = "sans" | "serif" | "mono" | "custom";

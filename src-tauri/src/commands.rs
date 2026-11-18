@@ -848,6 +848,9 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
         let md = db.export_page_markdown(&page_id).map_err(String::from)?;
         let base = crate::export_formats::base_filename(&md.filename);
         match format.as_str() {
+            "md" | "markdown" => {
+                (base, md.markdown.into_bytes(), "md", "Markdown 文件", "导出为 Markdown")
+            }
             "docx" => {
                 let bytes = crate::export_formats::markdown_to_docx(&base, &md.markdown).map_err(String::from)?;
                 (base, bytes, "docx", "Word 文档", "导出为 Word 文档")

@@ -21,6 +21,7 @@ import {
   Database,
 } from "lucide-react";
 import type { ExportFormat } from "./Topbar";
+import { IS_TAURI } from "../../utils/platform";
 import {
   importMarkdownTree,
   importNotionZipBytes,
@@ -62,7 +63,7 @@ export interface MarkdownModalProps {
 }
 
 /** 导出格式卡片 */
-const EXPORT_FORMATS: { id: ExportFormat | "md"; name: string; ext: string; desc: string; icon: React.ReactNode }[] = [
+const EXPORT_FORMATS: { id: ExportFormat; name: string; ext: string; desc: string; icon: React.ReactNode }[] = [
   { id: "md", name: "Markdown", ext: ".md", desc: "通用纯文本，可在任何笔记软件里打开", icon: <FileText size={18} /> },
   { id: "html", name: "网页", ext: ".html", desc: "单个网页文件，图片一并内嵌", icon: <Globe size={18} /> },
   { id: "pdf", name: "PDF", ext: ".pdf", desc: "通过打印另存为 PDF，适合分享和打印", icon: <Printer size={18} /> },
@@ -433,9 +434,7 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
               setErrorText(null);
               setLastBatchResult(null);
               setActiveTab("export");
-              if (!exportData && onRequestExportCurrent) {
-                onRequestExportCurrent();
-              }
+              onRequestExportCurrent?.();
             }}
           >
             <Download size={14} /> 导出当前页面
@@ -807,9 +806,10 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
                         key={f.id}
                         type="button"
                         className="nb-export-card"
-                        disabled={f.id === "md" ? !exportData : !onExportAs}
+                        disabled={f.id === "md" && !(IS_TAURI && onExportAs) ? !exportData : !onExportAs}
                         onClick={() => {
-                          if (f.id === "md") handleDownloadExport();
+                          // 桌面端统一走系统保存对话框；浏览器预览里 Markdown 直接下载
+                          if (f.id === "md" && !(IS_TAURI && onExportAs)) handleDownloadExport();
                           else onExportAs?.(f.id);
                         }}
                       >

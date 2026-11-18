@@ -1928,17 +1928,45 @@ export const App: React.FC = () => {
   /** 导入 / 导出中心里「导出」针对的页面 */
   const [exportTarget, setExportTarget] = useState<{ id: string; title: string } | null>(null);
 
-  const handleExportMarkdown = useCallback(
-    async (pageId: string) => {
-      await flushPendingBlockSave();
+  /** 每次打开导入 / 导出中心都重新确定导出对象，避免沿用上一次（可能已切走或已删除）的页面 */
+  const exportLoadSeqRef = useRef(0);
+  const prepareExportTarget = useCallback(
+    async (pageId: string | null) => {
+      const seq = ++exportLoadSeqRef.current;
+      setExportPayload(null);
+      if (!pageId) {
+        setExportTarget(null);
+        return;
+      }
       const target = pages.find((p) => p.id === pageId) ?? (detail?.page.id === pageId ? detail.page : null);
       setExportTarget({ id: pageId, title: target?.title || "无标题" });
-      setExportPayload(null);
-      setMarkdownModalMode("export");
-      const exported = await exportPageMarkdown(pageId);
-      setExportPayload(exported);
+      await flushPendingBlockSave();
+      try {
+        const exported = await exportPageMarkdown(pageId);
+        if (seq === exportLoadSeqRef.current) setExportPayload(exported);
+      } catch {
+        /* 预览读取失败不影响其他格式导出 */
+      }
     },
     [flushPendingBlockSave, pages, detail]
+  );
+
+  /** 打开导入 / 导出中心：导出对象始终是当前正在看的工作区页面 */
+  const openImportExportCenter = useCallback(
+    (mode: "import" | "notion-zip" | "export") => {
+      const current = !activeLocalMd && !activeTextFile && detail ? detail.page.id : null;
+      setMarkdownModalMode(mode);
+      prepareExportTarget(current).catch(() => {});
+    },
+    [activeLocalMd, activeTextFile, detail, prepareExportTarget]
+  );
+
+  const handleExportMarkdown = useCallback(
+    async (pageId: string) => {
+      setMarkdownModalMode("export");
+      await prepareExportTarget(pageId);
+    },
+    [prepareExportTarget]
   );
 
   /** 导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
@@ -2125,7 +2153,7 @@ export const App: React.FC = () => {
         onOpenSearch={() => setSearchOpen(true)}
         onOpenTemplates={() => setTemplatesOpen(true)}
         onOpenTrash={() => setTrashOpen(true)}
-        onOpenImportMarkdown={() => setMarkdownModalMode("import")}
+        onOpenImportMarkdown={() => openImportExportCenter("import")}
         onOpenSettings={() => handleOpenSettingsAtTab("storage")}
         workspaceFolders={workspaceFolders}
         onAddWorkspaceFolder={() => {
@@ -2246,7 +2274,7 @@ export const App: React.FC = () => {
             await flushPendingBlockSave();
             setHistoryOpen(true);
           }}
-          onOpenImportMarkdown={() => setMarkdownModalMode("import")}
+          onOpenImportMarkdown={() => openImportExportCenter("import")}
           onTrashPage={() => {
             if (detail?.page) {
               handleTrashPage(detail.page.id).catch(() => {});
@@ -2480,7 +2508,7 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   className="nb-btn-secondary"
-                  onClick={() => setMarkdownModalMode("notion-zip")}
+                  onClick={() => openImportExportCenter("notion-zip")}
                 >
                   <Archive size={15} /> 导入 / Notion 迁移
                 </button>
@@ -2722,11 +2750,9 @@ export const App: React.FC = () => {
         onImportSubmit={handleImportMarkdownSubmit}
         onBatchImported={handleBatchImportSuccess}
         onRequestExportCurrent={async () => {
-          if (detail?.page) {
-            await flushPendingBlockSave();
-            setExportTarget({ id: detail.page.id, title: detail.page.title || "无标题" });
-            const exported = await exportPageMarkdown(detail.page.id);
-            setExportPayload(exported);
+          if (!exportTarget) {
+            const current = !activeLocalMd && !activeTextFile && detail ? detail.page.id : null;
+            await prepareExportTarget(current);
           }
         }}
       />
