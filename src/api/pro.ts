@@ -68,7 +68,7 @@ const BROWSER_STATUS: LicenseStatus = {
   expiresAt: null,
   expired: false,
   configured: false,
-  purchaseUrl: "https://fwpt.cn/xynote.html",
+  purchaseUrl: "https://fwpt.cn/xynote/",
   loggedIn: false,
   account: null,
   machineName: "浏览器预览",
