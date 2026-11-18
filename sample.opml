@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>周报 &amp; 计划</title>
+    <dateCreated>Wed, 18 Nov 2026 14:41:32 +0000</dateCreated>
+  </head>
+  <body>
+    <outline text="本周">
+      <outline text="☑ 完成 发布"/>
+      <outline text="☐ 写 文档">
+        <outline text="子项"/>
+      </outline>
+      <outline text="第一"/>
+      <outline text="第二"/>
+      <outline text="引用 50%"/>
+      <outline text="fn main() {}" _note="fn main() {}"/>
+      <outline text="事项 | 状态"/>
+      <outline text="官网 | 进行中"/>
+      <outline text="公式 E=mc^2 与 a_b"/>
+      <outline text="\int_0^1 x\,dx"/>
+      <outline text="[图片] 示意图"/>
+      <outline text="[图片 https://example.com/a.png] 远程"/>
+      <outline text="小节">
+        <outline text="结尾 下划线"/>
+      </outline>
+    </outline>
+  </body>
+</opml>

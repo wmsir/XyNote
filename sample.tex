@@ -1,0 +1,71 @@
+% 由小悦笔记导出。请用 XeLaTeX 编译（支持中文）：xelatex "文件名.tex"
+\documentclass[UTF8,11pt]{ctexart}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,graphicx,longtable,array,xcolor}
+\usepackage[normalem]{ulem}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+\lstset{basicstyle=\ttfamily\small,breaklines=true,frame=single,columns=fullflexible,backgroundcolor=\color[gray]{0.96}}
+\title{周报 \& 计划}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\subsection*{本周}
+
+\begin{itemize}
+  \item $\boxtimes$ 完成 \textbf{发布}
+  \item $\square$ 写 \emph{文档}\begin{itemize}
+  \item 子项
+\end{itemize}
+\end{itemize}
+
+\begin{enumerate}
+  \item 第一
+  \item 第二
+\end{enumerate}
+
+\begin{quote}
+引用 50\%
+
+\end{quote}
+
+\begin{lstlisting}
+fn main() {}
+\end{lstlisting}
+
+\begin{longtable}{|p{\dimexpr\linewidth/2-2\tabcolsep\relax}|p{\dimexpr\linewidth/2-2\tabcolsep\relax}|}
+\hline
+\textbf{事项} & \textbf{状态} \\
+\hline
+\endhead
+官网 & 进行中 \\
+\hline
+\end{longtable}
+
+公式 $E=mc^2$ 与 \texttt{a\_b}
+
+
+\[
+\int_0^1 x\,dx
+\]
+
+
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{周报_images/image1.png}
+\caption*{示意图}
+\end{figure}
+
+
+[图片：\url{https://example.com/a.png}]
+
+
+\subsubsection*{小节}
+
+结尾 下划线
+\end{document}
