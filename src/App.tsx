@@ -2505,7 +2505,7 @@ export const App: React.FC = () => {
           )}
         </div>
 
-        {showStatusBar && !activeTextFile && (
+        {showStatusBar && !activeTextFile && !(freshWindowRef.current && !detail && !activeLocalMd) && (
           <StatusBar
             storageInfo={storageInfo}
             activeLocalMd={activeLocalMd}
