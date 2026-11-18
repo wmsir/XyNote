@@ -91,18 +91,18 @@ export function syncErrorText(err: unknown): string {
 
 export async function getSyncConfig(): Promise<SyncConfig> {
   if (!isTauriRuntime()) return BROWSER_CONFIG;
-  return invoke<SyncConfig>("sync_get_config");
+  return invoke<SyncConfig>("x_c0");
 }
 
 export async function saveSyncConfig(input: SyncConfigInput): Promise<SyncConfig> {
   if (!isTauriRuntime()) throw new Error("同步仅支持桌面客户端");
-  return invoke<SyncConfig>("sync_save_config", { input });
+  return invoke<SyncConfig>("x_c1", { input });
 }
 
 /** 立即同步；纯本地模式返回 null */
 export async function runSync(): Promise<SyncReport | null> {
   if (!isTauriRuntime()) return null;
-  return invoke<SyncReport | null>("sync_run");
+  return invoke<SyncReport | null>("x_c2");
 }
 
 export async function syncAuth(
@@ -112,22 +112,22 @@ export async function syncAuth(
   password: string
 ): Promise<SyncAccount> {
   if (!isTauriRuntime()) throw new Error("同步仅支持桌面客户端");
-  return invoke<SyncAccount>("sync_auth", { official, action, email, password });
+  return invoke<SyncAccount>("x_c3", { official, action, email, password });
 }
 
 export async function getSyncAccount(official: boolean): Promise<SyncAccount> {
-  return invoke<SyncAccount>("sync_account", { official });
+  return invoke<SyncAccount>("x_c4", { official });
 }
 
 /** 兑换在官网购买的激活码 */
 export async function syncRedeem(official: boolean, code: string): Promise<SyncAccount> {
   if (!isTauriRuntime()) throw new Error("同步仅支持桌面客户端");
-  return invoke<SyncAccount>("sync_redeem", { official, code });
+  return invoke<SyncAccount>("x_c5", { official, code });
 }
 
 export async function syncLogout(official: boolean): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>("sync_logout", { official });
+  return invoke<void>("x_c6", { official });
 }
 
 export async function openExternalUrl(url: string): Promise<void> {

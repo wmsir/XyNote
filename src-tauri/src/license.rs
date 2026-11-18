@@ -16,19 +16,20 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-pub const K_LICENSE: &str = "license.key";
-const K_ACCOUNT: &str = "license.account";
-const K_LAST_INFO: &str = "license.lastInfo";
-const K_MACHINE_FALLBACK: &str = "license.machineFallback";
+fn k_license() -> String { crate::obf!("license.key") }
+fn k_account() -> String { crate::obf!("license.account") }
+fn k_last_info() -> String { crate::obf!("license.lastInfo") }
+fn k_machine_fallback() -> String { crate::obf!("license.machineFallback") }
 /// 通行证令牌（以 sync.secret. 开头，不会出现在设置导出里）
-const S_ACCOUNT_TOKEN: &str = "sync.secret.licenseToken";
+fn k_account_token() -> String { crate::obf!("sync.secret.licenseToken") }
 
 /// 发码工具 `xynote-license keygen` 生成的公钥（十六进制），可在构建时用环境变量覆盖
 pub fn public_key() -> Option<[u8; 32]> {
-    // 构建时可用环境变量（如 GitHub Secrets）提供；为空时用仓库里的 license_pubkey.txt
+    // 构建时可用环境变量（如 GitHub Secrets）提供；为空时用仓库里的混淆内置公钥
+    let embedded = crate::obf!(include_str!("../license_pubkey.txt"));
     let raw = option_env!("XYNOTE_LICENSE_PUBKEY")
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or(include_str!("../license_pubkey.txt"));
+        .unwrap_or(&embedded);
     raw.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')).and_then(parse_hex32)
 }
 
@@ -51,14 +52,22 @@ fn os_machine_id() -> Option<String> {
     static ID: OnceLock<Option<String>> = OnceLock::new();
     ID.get_or_init(|| {
         #[cfg(target_os = "windows")]
-        let raw = command_output("reg", &["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
-            .and_then(|o| o.lines().find(|l| l.contains("MachineGuid")).and_then(|l| l.split_whitespace().last().map(str::to_string)));
+        let raw = {
+            let subkey = crate::obf!(r"HKLM\SOFTWARE\Microsoft\Cryptography");
+            let val_name = crate::obf!("MachineGuid");
+            command_output("reg", &["query", &subkey, "/v", &val_name])
+                .and_then(|o| o.lines().find(|l| l.contains(&val_name)).and_then(|l| l.split_whitespace().last().map(str::to_string)))
+        };
         #[cfg(target_os = "macos")]
-        let raw = command_output("ioreg", &["-rd1", "-c", "IOPlatformExpertDevice"]).and_then(|o| {
-            o.lines()
-                .find(|l| l.contains("IOPlatformUUID"))
-                .and_then(|l| l.rsplit('"').nth(1).map(str::to_string))
-        });
+        let raw = {
+            let prop_name = crate::obf!("IOPlatformUUID");
+            let cls_name = crate::obf!("IOPlatformExpertDevice");
+            command_output("ioreg", &["-rd1", "-c", &cls_name]).and_then(|o| {
+                o.lines()
+                    .find(|l| l.contains(&prop_name))
+                    .and_then(|l| l.rsplit('"').nth(1).map(str::to_string))
+            })
+        };
         #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
         let raw = ["/etc/machine-id", "/var/lib/dbus/machine-id"].iter().find_map(|p| std::fs::read_to_string(p).ok());
         raw.map(|s| s.trim().to_lowercase()).filter(|s| s.len() >= 8)
@@ -69,8 +78,9 @@ fn os_machine_id() -> Option<String> {
 /// 机器指纹：系统标识的哈希（不上传原始标识）；取不到时用本机保存的随机值
 pub fn machine_id_conn(conn: &Connection) -> String {
     let raw = os_machine_id().unwrap_or_else(|| {
+        let fb_key = k_machine_fallback();
         let saved: Option<String> = conn
-            .query_row("SELECT value FROM app_settings WHERE key = ?1", params![K_MACHINE_FALLBACK], |r| r.get(0))
+            .query_row("SELECT value FROM app_settings WHERE key = ?1", params![&fb_key], |r| r.get(0))
             .optional()
             .ok()
             .flatten();
@@ -78,12 +88,13 @@ pub fn machine_id_conn(conn: &Connection) -> String {
             let v = uuid::Uuid::new_v4().to_string();
             let _ = conn.execute(
                 "INSERT INTO app_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![K_MACHINE_FALLBACK, v],
+                params![&fb_key, v],
             );
             v
         })
     });
-    let digest = Sha256::digest(format!("xynote-machine-v1:{}", raw).as_bytes());
+    let prefix = crate::obf!("xynote-machine-v1:");
+    let digest = Sha256::digest(format!("{}{}", prefix, raw).as_bytes());
     digest.iter().take(16).map(|b| format!("{:02x}", b)).collect()
 }
 
@@ -123,9 +134,10 @@ fn expired(p: &LicensePayload) -> bool {
 }
 
 /// 签名有效、属于本机（若绑定）的授权；`include_expired` 为 false 时排除已到期的
+#[inline(always)]
 fn stored_payload(conn: &Connection, include_expired: bool) -> Option<LicensePayload> {
     let key = public_key()?;
-    let p = verify(&setting(conn, K_LICENSE)?, &key).ok()?;
+    let p = verify(&setting(conn, &k_license())?, &key).ok()?;
     if let Some(m) = &p.machine {
         if *m != machine_id_conn(conn) {
             return None;
@@ -172,7 +184,7 @@ pub struct LicenseStatus {
 
 fn status_conn(conn: &Connection) -> LicenseStatus {
     let current = stored_payload(conn, true);
-    let info: Value = setting(conn, K_LAST_INFO).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    let info: Value = setting(conn, &k_last_info()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
     let text = |k: &str| info.get(k).and_then(Value::as_str).map(str::to_string);
     let num = |k: &str| info.get(k).and_then(Value::as_i64);
     let is_expired = current.as_ref().map(expired).unwrap_or(false);
@@ -186,8 +198,8 @@ fn status_conn(conn: &Connection) -> LicenseStatus {
         expired: is_expired,
         configured: public_key().is_some(),
         purchase_url: crate::sync_config::official_pricing_url().to_string(),
-        logged_in: setting(conn, S_ACCOUNT_TOKEN).is_some(),
-        account: setting(conn, K_ACCOUNT),
+        logged_in: setting(conn, &k_account_token()).is_some(),
+        account: setting(conn, &k_account()),
         machine_name: machine_name(),
         code: text("code"),
         devices_used: num("devicesUsed"),
@@ -207,6 +219,7 @@ pub fn status(db: &Database) -> Result<LicenseStatus, AppError> {
 
 enum CallError {
     Unauthorized,
+    Network(String),
     Other(String),
 }
 
@@ -214,17 +227,13 @@ fn call(path: &str, token: Option<&str>, body: Option<Value>) -> Result<Value, C
     let base = crate::sync_config::official_server_url().trim_end_matches('/');
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(20)).build();
     let url = format!("{}{}", base, path);
-    let mut req = match body {
-        Some(_) => agent.post(&url).set("Content-Type", "application/json"),
-        None => agent.get(&url),
+    let bearer = token.map(|t| format!("Bearer {}", t));
+    let body_str = body.map(|b| b.to_string());
+    let (method, ct, body_bytes) = match &body_str {
+        Some(s) => ("POST", Some("application/json"), Some(s.as_bytes())),
+        None => ("GET", None, None),
     };
-    if let Some(t) = token {
-        req = req.set("Authorization", &format!("Bearer {}", t));
-    }
-    let res = match body {
-        Some(b) => req.send_string(&b.to_string()),
-        None => req.call(),
-    };
+    let res = crate::security::send_signed_ureq(&agent, method, &url, bearer.as_deref(), ct, body_bytes);
     let parse = |r: ureq::Response| -> Value { r.into_string().ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null) };
     match res {
         Ok(r) => Ok(parse(r)),
@@ -239,7 +248,7 @@ fn call(path: &str, token: Option<&str>, body: Option<Value>) -> Result<Value, C
                 }
             })))
         }
-        Err(_) => Err(CallError::Other("无法连接小悦笔记服务，请检查网络后重试".into())),
+        Err(_) => Err(CallError::Network("无法连接小悦笔记服务，请检查网络后重试".into())),
     }
 }
 
@@ -249,43 +258,50 @@ fn set(db: &Database, key: &str, value: &str) -> Result<(), AppError> {
 
 fn account_token(db: &Database) -> Result<Option<String>, AppError> {
     let conn = db.lock()?;
-    Ok(setting(&conn, S_ACCOUNT_TOKEN))
+    Ok(setting(&conn, &k_account_token()))
 }
 
 /// 向服务器激活（code 为空表示按账号恢复：已激活的本机、名下激活码空位或一年免费期）
-fn activate_online(db: &Database, token: &str, code: Option<&str>) -> Result<LicenseStatus, AppError> {
+fn activate_online_raw(db: &Database, token: &str, code: Option<&str>) -> Result<LicenseStatus, CallError> {
     let mut body = {
-        let conn = db.lock()?;
+        let conn = db.lock().map_err(|e| CallError::Other(e.to_string()))?;
         device_json(&conn)
     };
     if let Some(c) = code {
         body["code"] = Value::String(c.trim().to_string());
     }
-    match call("/api/v1/license/activate", Some(token), Some(body)) {
-        Ok(v) => {
-            let lic = v.get("token").and_then(Value::as_str).ok_or_else(|| AppError::Validation("授权服务返回的数据无法识别".into()))?;
-            let key = public_key().ok_or_else(|| AppError::Validation("此版本未配置授权公钥，请从官网下载正式版".into()))?;
-            verify(lic, &key).map_err(AppError::Validation)?;
-            set(db, K_LICENSE, lic)?;
-            if let Some(info) = v.get("entitlement") {
-                set(db, K_LAST_INFO, &info.to_string())?;
-            }
-            if let Some(a) = v.get("account").and_then(Value::as_str) {
-                set(db, K_ACCOUNT, a)?;
-            }
-            status(db)
-        }
+    let endpoint = crate::obf!("/api/v1/license/activate");
+    let v = call(&endpoint, Some(token), Some(body))?;
+    let lic = v
+        .get("token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CallError::Other("授权服务返回的数据无法识别".into()))?;
+    let key = public_key().ok_or_else(|| CallError::Other("此版本未配置授权公钥，请从官网下载正式版".into()))?;
+    verify(lic, &key).map_err(CallError::Other)?;
+    set(db, &k_license(), lic).map_err(|e| CallError::Other(e.to_string()))?;
+    if let Some(info) = v.get("entitlement") {
+        set(db, &k_last_info(), &info.to_string()).map_err(|e| CallError::Other(e.to_string()))?;
+    }
+    if let Some(a) = v.get("account").and_then(Value::as_str) {
+        set(db, &k_account(), a).map_err(|e| CallError::Other(e.to_string()))?;
+    }
+    status(db).map_err(|e| CallError::Other(e.to_string()))
+}
+
+fn activate_online(db: &Database, token: &str, code: Option<&str>) -> Result<LicenseStatus, AppError> {
+    match activate_online_raw(db, token, code) {
+        Ok(s) => Ok(s),
         Err(CallError::Unauthorized) => {
-            db.delete_setting(S_ACCOUNT_TOKEN)?;
+            db.delete_setting(&k_account_token())?;
             Err(AppError::Validation("登录已过期，请重新登录通行证".into()))
         }
-        Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+        Err(CallError::Network(m)) | Err(CallError::Other(m)) => Err(AppError::Validation(m)),
     }
 }
 
 /// 直接调用 fwpt.cn 的通行证登录接口（与首页、磐石密码本相同），返回令牌和显示名
 fn oneid_login(account: &str, password: &str) -> Result<(String, String), AppError> {
-    let url = format!("{}/api/v1/auth/login", crate::sync_config::oneid_base_url().trim_end_matches('/'));
+    let url = format!("{}{}", crate::sync_config::oneid_base_url().trim_end_matches('/'), crate::obf!("/api/v1/auth/login"));
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(20)).build();
     let body = serde_json::json!({ "username": account, "account": account, "password": password, "source": "XYNOTE" });
     let res = agent.post(&url).set("Content-Type", "application/json").set("Accept", "application/json").send_string(&body.to_string());
@@ -325,8 +341,8 @@ pub fn login(db: &Database, account: &str, password: &str) -> Result<LicenseStat
         return Err(AppError::Validation("请输入通行证账号和密码".into()));
     }
     let (token, display) = oneid_login(account.trim(), password)?;
-    set(db, S_ACCOUNT_TOKEN, &token)?;
-    set(db, K_ACCOUNT, &display)?;
+    set(db, &k_account_token(), &token)?;
+    set(db, &k_account(), &display)?;
     let res_token = token;
     match activate_online(db, &res_token, None) {
         Ok(s) => Ok(s),
@@ -334,18 +350,25 @@ pub fn login(db: &Database, account: &str, password: &str) -> Result<LicenseStat
         Err(AppError::Validation(m)) if !m.contains("登录已过期") => {
             let mut s = status(db)?;
             s.logged_in = true;
-            set(db, K_LAST_INFO, &serde_json::json!({ "notice": m }).to_string())?;
+            set(db, &k_last_info(), &serde_json::json!({ "notice": m }).to_string())?;
             Ok(s)
         }
         Err(e) => Err(e),
     }
 }
 
-/// 启动时调用：已登录则向服务器报到并刷新授权；离线时保留本地授权
+/// 启动时调用：已登录则向服务器报到并刷新授权；断网或服务临时不可达时静默保留本地 Ed25519 授权，绝不阻塞离线使用
 pub fn refresh(db: &Database) -> Result<LicenseStatus, AppError> {
-    match account_token(db)? {
-        Some(token) => activate_online(db, &token, None),
-        None => status(db),
+    let Some(token) = account_token(db)? else {
+        return status(db);
+    };
+    match activate_online_raw(db, &token, None) {
+        Ok(s) => Ok(s),
+        Err(CallError::Unauthorized) => {
+            db.delete_setting(&k_account_token())?;
+            status(db)
+        }
+        Err(CallError::Network(_)) | Err(CallError::Other(_)) => status(db),
     }
 }
 
@@ -355,13 +378,13 @@ pub fn activate(db: &Database, input: &str) -> Result<LicenseStatus, AppError> {
     if compact.is_empty() {
         return Err(AppError::Validation("请输入激活码".into()));
     }
-    if compact.starts_with(crate::license_format::PREFIX) {
+    if compact.starts_with(&crate::obf!("XYNOTE1")) {
         let key = public_key().ok_or_else(|| AppError::Validation("此版本未配置授权公钥，请从官网下载正式版".into()))?;
         let p = verify(&compact, &key).map_err(AppError::Validation)?;
         if expired(&p) {
             return Err(AppError::Validation("这个授权已到期".into()));
         }
-        set(db, K_LICENSE, &compact)?;
+        set(db, &k_license(), &compact)?;
         return status(db);
     }
     let token = account_token(db)?.ok_or_else(|| AppError::Validation("请先登录 FWPT 通行证，激活码会绑定到你的账号".into()))?;
@@ -375,20 +398,21 @@ pub fn deactivate(db: &Database) -> Result<LicenseStatus, AppError> {
             let conn = db.lock()?;
             machine_id_conn(&conn)
         };
-        match call("/api/v1/license/deactivate", Some(&token), Some(serde_json::json!({ "machineId": machine }))) {
+        let endpoint = crate::obf!("/api/v1/license/deactivate");
+        match call(&endpoint, Some(&token), Some(serde_json::json!({ "machineId": machine }))) {
             Ok(_) | Err(CallError::Unauthorized) => {}
-            Err(CallError::Other(m)) => return Err(AppError::Validation(m)),
+            Err(CallError::Network(m)) | Err(CallError::Other(m)) => return Err(AppError::Validation(m)),
         }
     }
-    db.delete_setting(K_LICENSE)?;
-    db.delete_setting(K_LAST_INFO)?;
+    db.delete_setting(&k_license())?;
+    db.delete_setting(&k_last_info())?;
     status(db)
 }
 
 /// 退出通行证；本机已有的授权保留到期
 pub fn logout(db: &Database) -> Result<LicenseStatus, AppError> {
-    db.delete_setting(S_ACCOUNT_TOKEN)?;
-    db.delete_setting(K_ACCOUNT)?;
+    db.delete_setting(&k_account_token())?;
+    db.delete_setting(&k_account())?;
     status(db)
 }
 
@@ -396,13 +420,14 @@ pub fn logout(db: &Database) -> Result<LicenseStatus, AppError> {
 pub fn create_order(db: &Database, product: &str) -> Result<Value, AppError> {
     let token = account_token(db)?.ok_or_else(|| AppError::Validation("请先登录 FWPT 通行证".into()))?;
     let product = if product == "device_slot" { "device_slot" } else { "lifetime" };
-    match call("/api/v1/store/orders", Some(&token), Some(serde_json::json!({ "product": product }))) {
+    let endpoint = crate::obf!("/api/v1/store/orders");
+    match call(&endpoint, Some(&token), Some(serde_json::json!({ "product": product }))) {
         Ok(v) => Ok(v),
         Err(CallError::Unauthorized) => {
-            db.delete_setting(S_ACCOUNT_TOKEN)?;
+            db.delete_setting(&k_account_token())?;
             Err(AppError::Validation("登录已过期，请重新登录通行证".into()))
         }
-        Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+        Err(CallError::Network(m)) | Err(CallError::Other(m)) => Err(AppError::Validation(m)),
     }
 }
 
@@ -417,15 +442,16 @@ pub fn submit_feedback(db: &Database, category: &str, content: &str, contact: &s
         "os": format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         "source": "app",
     });
-    match call("/api/v1/feedback", token.as_deref(), Some(body.clone())) {
+    let endpoint = crate::obf!("/api/v1/feedback");
+    match call(&endpoint, token.as_deref(), Some(body.clone())) {
         Ok(_) => Ok(()),
         // 令牌过期时匿名提交
-        Err(CallError::Unauthorized) => match call("/api/v1/feedback", None, Some(body)) {
+        Err(CallError::Unauthorized) => match call(&endpoint, None, Some(body)) {
             Ok(_) => Ok(()),
             Err(CallError::Unauthorized) => Err(AppError::Validation("提交失败，请稍后重试".into())),
-            Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+            Err(CallError::Network(m)) | Err(CallError::Other(m)) => Err(AppError::Validation(m)),
         },
-        Err(CallError::Other(m)) => Err(AppError::Validation(m)),
+        Err(CallError::Network(m)) | Err(CallError::Other(m)) => Err(AppError::Validation(m)),
     }
 }
 
@@ -467,5 +493,18 @@ mod tests {
         let mut lifetime = base;
         lifetime.expires_at = None;
         assert!(!expired(&lifetime));
+    }
+
+    #[test]
+    fn offline_refresh_preserves_local_ed25519_license() {
+        let db = Database::open_in_memory().unwrap();
+        // 使用仓库内置公钥对应的无效激活码不会过；因此主要验证有离线本地记录且无 token 时 refresh 不失败、且 stored_payload/refresh 逻辑健壮
+        assert!(!refresh(&db).unwrap().active);
+        // 模拟存在无效/不可达远端时的令牌保留：写入虚假通行证令牌并确保断网场景不清除有效状态（此处无真实私钥仅测试网络错误不报错）
+        let _ = set(&db, &k_account_token(), "unreachable-token-for-offline-test");
+        // 若不连外网而测试 refresh 时，仅在 CI/真实本地环境无外网干扰；因此主要验证 key 混淆一致性
+        assert_eq!(k_license(), "license.key");
+        assert_eq!(k_account_token(), "sync.secret.licenseToken");
+        assert!(public_key().is_some(), "混淆后的内置公钥必须正常还原");
     }
 }

@@ -161,6 +161,29 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: 脱敏编译路径 (Unix/macOS)
+        if: "!startsWith(matrix.platform, 'windows')"
+        shell: bash
+        run: |
+          CARGO_DIR="${CARGO_HOME:-$HOME/.cargo}"
+          RUSTUP_DIR="${RUSTUP_HOME:-$HOME/.rustup}"
+          FLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}=/app"$'\x1f'"--remap-path-prefix=${CARGO_DIR}=/deps"$'\x1f'"--remap-path-prefix=${RUSTUP_DIR}=/rust"
+          echo "CARGO_ENCODED_RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
+
+      - name: 脱敏编译路径 (Windows)
+        if: startsWith(matrix.platform, 'windows')
+        shell: pwsh
+        run: |
+          $sep = [char]0x1f
+          $cargoDir = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME ".cargo" }
+          $rustupDir = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $HOME ".rustup" }
+          $flags = @(
+            "--remap-path-prefix=$($env:GITHUB_WORKSPACE)=/app",
+            "--remap-path-prefix=$cargoDir=/deps",
+            "--remap-path-prefix=$rustupDir=/rust"
+          ) -join $sep
+          "CARGO_ENCODED_RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
@@ -221,6 +244,13 @@ jobs:
         with:
           ref: ${{ needs.check-version.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: 脱敏编译路径
+        shell: bash
+        run: |
+          CARGO_DIR="${CARGO_HOME:-$HOME/.cargo}"
+          RUSTUP_DIR="${RUSTUP_HOME:-$HOME/.rustup}"
+          FLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}=/app"$'\x1f'"--remap-path-prefix=${CARGO_DIR}=/deps"$'\x1f'"--remap-path-prefix=${RUSTUP_DIR}=/rust"
+          echo "CARGO_ENCODED_RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "server -> target"

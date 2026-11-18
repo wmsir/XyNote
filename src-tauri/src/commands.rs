@@ -557,12 +557,12 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 /* ---------------- 同步 ---------------- */
 
 #[tauri::command]
-pub fn sync_get_config(db: State<'_, Database>) -> Result<crate::sync_config::SyncConfigView, String> {
+pub fn x_c0(db: State<'_, Database>) -> Result<crate::sync_config::SyncConfigView, String> {
     crate::sync_config::load_view(&db).map_err(Into::into)
 }
 
 #[tauri::command]
-pub fn sync_save_config(
+pub fn x_c1(
     db: State<'_, Database>,
     input: crate::sync_config::SyncConfigInput,
 ) -> Result<crate::sync_config::SyncConfigView, String> {
@@ -571,7 +571,7 @@ pub fn sync_save_config(
 
 /// 立即同步（在后台线程执行，不阻塞界面）；本地模式返回 null
 #[tauri::command]
-pub async fn sync_run(app: AppHandle) -> Result<Option<crate::sync::SyncReport>, String> {
+pub async fn x_c2(app: AppHandle) -> Result<Option<crate::sync::SyncReport>, String> {
     use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<Database>();
@@ -583,7 +583,7 @@ pub async fn sync_run(app: AppHandle) -> Result<Option<crate::sync::SyncReport>,
 
 /// 登录或注册同步服务器（official = true 时为官方服务；action = "login" | "register"）
 #[tauri::command]
-pub async fn sync_auth(
+pub async fn x_c3(
     app: AppHandle,
     official: bool,
     action: String,
@@ -600,7 +600,7 @@ pub async fn sync_auth(
 }
 
 #[tauri::command]
-pub async fn sync_account(app: AppHandle, official: bool) -> Result<crate::sync_remote::AccountInfo, String> {
+pub async fn x_c4(app: AppHandle, official: bool) -> Result<crate::sync_remote::AccountInfo, String> {
     use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<Database>();
@@ -611,7 +611,7 @@ pub async fn sync_account(app: AppHandle, official: bool) -> Result<crate::sync_
 }
 
 #[tauri::command]
-pub async fn sync_redeem(app: AppHandle, official: bool, code: String) -> Result<crate::sync_remote::AccountInfo, String> {
+pub async fn x_c5(app: AppHandle, official: bool, code: String) -> Result<crate::sync_remote::AccountInfo, String> {
     use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<Database>();
@@ -622,7 +622,7 @@ pub async fn sync_redeem(app: AppHandle, official: bool, code: String) -> Result
 }
 
 #[tauri::command]
-pub fn sync_logout(db: State<'_, Database>, official: bool) -> Result<(), String> {
+pub fn x_c6(db: State<'_, Database>, official: bool) -> Result<(), String> {
     crate::sync_config::logout(&db, official).map_err(Into::into)
 }
 
@@ -770,7 +770,7 @@ pub async fn export_style_plugin_dialog(
 /* ---------------- 永久版 ---------------- */
 
 #[tauri::command]
-pub fn license_status(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
+pub fn x_s0(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
     crate::license::status(&db).map_err(Into::into)
 }
 
@@ -789,38 +789,38 @@ async fn license_blocking<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn license_login(app: AppHandle, account: String, password: String) -> Result<crate::license::LicenseStatus, String> {
+pub async fn x_s1(app: AppHandle, account: String, password: String) -> Result<crate::license::LicenseStatus, String> {
     license_blocking(app, move |db| crate::license::login(db, &account, &password)).await
 }
 
 #[tauri::command]
-pub async fn license_refresh(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+pub async fn x_s2(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
     license_blocking(app, crate::license::refresh).await
 }
 
 #[tauri::command]
-pub async fn license_activate(app: AppHandle, license: String) -> Result<crate::license::LicenseStatus, String> {
+pub async fn x_s3(app: AppHandle, license: String) -> Result<crate::license::LicenseStatus, String> {
     license_blocking(app, move |db| crate::license::activate(db, &license)).await
 }
 
 #[tauri::command]
-pub async fn license_deactivate(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+pub async fn x_s4(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
     license_blocking(app, crate::license::deactivate).await
 }
 
 #[tauri::command]
-pub fn license_logout(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
+pub fn x_s5(db: State<'_, Database>) -> Result<crate::license::LicenseStatus, String> {
     crate::license::logout(&db).map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn license_create_order(app: AppHandle, product: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn x_s6(app: AppHandle, product: Option<String>) -> Result<serde_json::Value, String> {
     let product = product.unwrap_or_else(|| "lifetime".into());
     license_blocking(app, move |db| crate::license::create_order(db, &product)).await
 }
 
 #[tauri::command]
-pub async fn feedback_submit(app: AppHandle, category: String, content: String, contact: String) -> Result<(), String> {
+pub async fn x_s7(app: AppHandle, category: String, content: String, contact: String) -> Result<(), String> {
     license_blocking(app, move |db| crate::license::submit_feedback(db, &category, &content, &contact)).await
 }
 

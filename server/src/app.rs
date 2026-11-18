@@ -34,6 +34,10 @@ pub struct Config {
     pub price_lifetime_cents: i64,
     /// 增加 1 台电脑的价格（分）
     pub price_device_slot_cents: i64,
+    /// 客户端请求动态 HMAC 签名密钥（与客户端 XYNOTE_API_SIGN_KEY 一致）
+    pub api_sign_key: String,
+    /// 是否强制要求所有 /api/v1 请求携带客户端签名（false 时对未带签名的浏览器与旧版保持兼容）
+    pub require_client_sig: bool,
 }
 
 impl Config {
@@ -62,6 +66,12 @@ impl Config {
             license_key_file: std::env::var("XYNOTE_LICENSE_KEY_FILE").ok().filter(|v| !v.trim().is_empty()).map(PathBuf::from),
             price_lifetime_cents: num("XYNOTE_PRICE_LIFETIME_CENTS", 990),
             price_device_slot_cents: num("XYNOTE_PRICE_DEVICE_SLOT_CENTS", 300),
+            api_sign_key: std::env::var("XYNOTE_API_SIGN_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "xynote-client-hmac-v1-9f4c2e8a71b60d35e28c41a9f703b8d6".into()),
+            require_client_sig: flag("XYNOTE_REQUIRE_CLIENT_SIG", false),
         }
     }
 }
@@ -72,6 +82,8 @@ pub struct Inner {
     /// 通行证令牌校验结果缓存（令牌哈希 → 过期时间与资料）
     pub oneid_cache: Mutex<HashMap<String, (Instant, crate::oneid::OneIdUser)>>,
     pub signing_key: Option<ed25519_dalek::SigningKey>,
+    /// 已校验请求的防重放 Nonce 记录
+    pub sig_nonces: Mutex<HashMap<String, Instant>>,
 }
 
 const ONEID_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -154,7 +166,13 @@ impl OpenState for AppState {
             }
             None => None,
         };
-        Ok(Arc::new(Inner { config, conn: Mutex::new(conn), oneid_cache: Mutex::new(HashMap::new()), signing_key }))
+        Ok(Arc::new(Inner {
+            config,
+            conn: Mutex::new(conn),
+            oneid_cache: Mutex::new(HashMap::new()),
+            signing_key,
+            sig_nonces: Mutex::new(HashMap::new()),
+        }))
     }
 }
 
@@ -200,20 +218,263 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/admin/license-codes/:code/revoke", post(admin_revoke_code))
         .route("/api/v1/admin/users/plan", post(admin_set_plan))
         .route("/api/v1/admin/codes", post(admin_create_codes))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), verify_client_sig_middleware))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(cors_layer(&state.config.cors_origins))
         .with_state(state)
 }
 
 fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
-    use axum::http::{header, HeaderValue, Method};
+    use axum::http::{header, HeaderName, HeaderValue, Method};
     use tower_http::cors::{AllowOrigin, CorsLayer};
     let list: Vec<HeaderValue> = origins.iter().filter_map(|o| HeaderValue::from_str(o).ok()).collect();
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(list))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-xy-ts"),
+            HeaderName::from_static("x-xy-nonce"),
+            HeaderName::from_static("x-xy-sig"),
+        ])
+        .expose_headers([
+            HeaderName::from_static("x-xy-server-ts"),
+            HeaderName::from_static("x-xy-clock-skew"),
+        ])
         .max_age(Duration::from_secs(3600))
+}
+
+fn sha256_bytes_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    let mut k_block = [0u8; 64];
+    if key.len() > 64 {
+        let h = Sha256::digest(key);
+        k_block[..32].copy_from_slice(&h);
+    } else {
+        k_block[..key.len()].copy_from_slice(key);
+    }
+    let mut i_pad = [0x36u8; 64];
+    let mut o_pad = [0x5cu8; 64];
+    for i in 0..64 {
+        i_pad[i] ^= k_block[i];
+        o_pad[i] ^= k_block[i];
+    }
+    let mut inner = Sha256::new();
+    inner.update(i_pad);
+    inner.update(msg);
+    let inner_hash = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(o_pad);
+    outer.update(inner_hash);
+    outer.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in ab.iter().zip(bb.iter()) {
+        diff |= x ^ y;
+    }
+    std::hint::black_box(diff) == 0
+}
+
+fn encode_uri_component_canonical(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", b);
+            }
+        }
+    }
+    out
+}
+
+fn percent_decode_uri_bytes(input: &str) -> Vec<u8> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(v) = u8::from_str_radix(hex, 16) {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+fn canonical_api_target(raw_url_or_uri: &str) -> String {
+    let no_frag = raw_url_or_uri.split('#').next().unwrap_or(raw_url_or_uri).trim();
+    let path_and_query = if let Some(pos) = no_frag.find("/api/v1") {
+        &no_frag[pos..]
+    } else if no_frag.starts_with('/') {
+        no_frag
+    } else {
+        return format!("/{}", no_frag);
+    };
+
+    let (raw_path, raw_query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_and_query, None),
+    };
+
+    let canon_path: String = raw_path
+        .split('/')
+        .map(|seg| {
+            let decoded = percent_decode_uri_bytes(seg);
+            encode_uri_component_canonical(&String::from_utf8_lossy(&decoded))
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    let canon_path = if canon_path.starts_with('/') { canon_path } else { format!("/{}", canon_path) };
+
+    let Some(q) = raw_query.filter(|s| !s.is_empty()) else {
+        return canon_path;
+    };
+
+    let mut pairs: Vec<(String, String)> = q
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let (rk, rv) = part.split_once('=').unwrap_or((part, ""));
+            let k_dec = percent_decode_uri_bytes(rk);
+            let v_dec = percent_decode_uri_bytes(rv);
+            (
+                encode_uri_component_canonical(&String::from_utf8_lossy(&k_dec)),
+                encode_uri_component_canonical(&String::from_utf8_lossy(&v_dec)),
+            )
+        })
+        .collect();
+    pairs.sort();
+    if pairs.is_empty() {
+        canon_path
+    } else {
+        let qs = pairs.into_iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+        format!("{}?{}", canon_path, qs)
+    }
+}
+
+fn attach_server_ts_header(mut resp: Response, now_ts: i64) -> Response {
+    if let Ok(val) = axum::http::HeaderValue::from_str(&now_ts.to_string()) {
+        resp.headers_mut().insert(axum::http::HeaderName::from_static("x-xy-server-ts"), val);
+    }
+    resp
+}
+
+async fn verify_client_sig_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let now_ts = chrono::Utc::now().timestamp();
+    let path = req.uri().path().to_string();
+    if !path.starts_with("/api/v1/") || req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
+    fn header_trimmed(headers: &HeaderMap, name: &str) -> Option<String> {
+        headers.get(name).and_then(|v| v.to_str().ok()).map(|s| s.trim().to_string())
+    }
+    let h_ts = header_trimmed(req.headers(), "x-xy-ts");
+    let h_nonce = header_trimmed(req.headers(), "x-xy-nonce");
+    let h_sig = header_trimmed(req.headers(), "x-xy-sig");
+    let any_present = h_ts.is_some() || h_nonce.is_some() || h_sig.is_some();
+
+    if !any_present && !state.config.require_client_sig {
+        return attach_server_ts_header(next.run(req).await, now_ts);
+    }
+
+    let (Some(ts_raw), Some(nonce), Some(sig_raw)) = (h_ts, h_nonce, h_sig) else {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名缺失或格式错误"), now_ts);
+    };
+
+    let Ok(ts) = ts_raw.parse::<i64>() else {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名缺失或格式错误"), now_ts);
+    };
+    if nonce.len() < 16 || nonce.len() > 64 || !nonce.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名缺失或格式错误"), now_ts);
+    }
+    let Some(sig_hex) = sig_raw.strip_prefix("v1=").map(|s| s.to_ascii_lowercase()) else {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名缺失或格式错误"), now_ts);
+    };
+    if sig_hex.len() != 64 || !sig_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名缺失或格式错误"), now_ts);
+    }
+
+    if (now_ts - ts).abs() > 300 {
+        let mut resp = (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "code": "clock_skew", "message": "请求时间戳已过期" })),
+        )
+            .into_response();
+        resp.headers_mut().insert(
+            axum::http::HeaderName::from_static("x-xy-clock-skew"),
+            axum::http::HeaderValue::from_static("1"),
+        );
+        return attach_server_ts_header(resp, now_ts);
+    }
+
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, 64 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return attach_server_ts_header(err(StatusCode::PAYLOAD_TOO_LARGE, "请求体过大"), now_ts),
+    };
+
+    let target = canonical_api_target(&parts.uri.to_string());
+    let body_hash = sha256_bytes_hex(&bytes);
+    let payload = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        parts.method.as_str().to_ascii_uppercase(),
+        target,
+        ts,
+        nonce,
+        body_hash
+    );
+    let expected = hmac_sha256_hex(state.config.api_sign_key.as_bytes(), payload.as_bytes());
+    if !ct_eq(&sig_hex, &expected) {
+        return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "客户端请求签名校验失败"), now_ts);
+    }
+
+    {
+        let mut nonces = match state.sig_nonces.lock() {
+            Ok(g) => g,
+            Err(e) => return attach_server_ts_header(internal(e), now_ts),
+        };
+        let now_inst = Instant::now();
+        if nonces.len() > 4096 {
+            nonces.retain(|_, seen| now_inst.duration_since(*seen) <= Duration::from_secs(305));
+            if nonces.len() > 50_000 {
+                nonces.clear();
+            }
+        }
+        if let Some(prev) = nonces.get(&nonce) {
+            if now_inst.duration_since(*prev) <= Duration::from_secs(305) {
+                return attach_server_ts_header(err(StatusCode::UNAUTHORIZED, "检测到重复重放请求"), now_ts);
+            }
+        }
+        nonces.insert(nonce, now_inst);
+    }
+
+    let rebuilt = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+    attach_server_ts_header(next.run(rebuilt).await, now_ts)
 }
 
 /* ---------------- 工具 ---------------- */
@@ -1622,6 +1883,8 @@ mod tests {
             license_key_file: None,
             price_lifetime_cents: 990,
             price_device_slot_cents: 300,
+            api_sign_key: "xynote-client-hmac-v1-9f4c2e8a71b60d35e28c41a9f703b8d6".into(),
+            require_client_sig: false,
         }
     }
 
@@ -2183,5 +2446,101 @@ mod tests {
         assert_eq!(s, StatusCode::PAYMENT_REQUIRED);
         let (s, _) = call(&app, "GET", "/api/v1/files/a.json", Some(&t), vec![], false).await;
         assert_eq!(s, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn client_hmac_signature_verifies_and_blocks_tampering_and_replay() {
+        let mut cfg = test_config(false);
+        cfg.require_client_sig = true;
+        let sign_key = cfg.api_sign_key.clone();
+        let app = router(AppState::open(cfg).unwrap());
+
+        let sign_req = |method: &str, uri: &str, token: Option<&str>, ts: i64, nonce: &str, body: Vec<u8>, ct: Option<&str>| {
+            let payload = format!(
+                "{}\n{}\n{}\n{}\n{}",
+                method.to_ascii_uppercase(),
+                canonical_api_target(uri),
+                ts,
+                nonce,
+                sha256_bytes_hex(&body)
+            );
+            let sig = format!("v1={}", hmac_sha256_hex(sign_key.as_bytes(), payload.as_bytes()));
+            let mut req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("x-xy-ts", ts.to_string())
+                .header("x-xy-nonce", nonce)
+                .header("x-xy-sig", sig);
+            if let Some(t) = token {
+                req = req.header("authorization", format!("Bearer {}", t));
+            }
+            if let Some(c) = ct {
+                req = req.header("content-type", c);
+            }
+            req.body(Body::from(body)).unwrap()
+        };
+
+        // 1. 强制要求签名时无签名直接拦截，且带 x-xy-server-ts
+        let r0 = app
+            .clone()
+            .oneshot(Request::builder().method("GET").uri("/api/v1/store/products").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r0.status(), StatusCode::UNAUTHORIZED);
+        assert!(r0.headers().get("x-xy-server-ts").is_some());
+
+        // 2. 合法签名注册 + GET + PUT + query 列表
+        let now_ts = chrono::Utc::now().timestamp();
+        let reg_body = json!({"email": "sig@example.com", "password": "password123"}).to_string().into_bytes();
+        let r1 = app
+            .clone()
+            .oneshot(sign_req("POST", "/api/v1/auth/register", None, now_ts, "nonce_000000000001", reg_body, Some("application/json")))
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::OK);
+        assert!(r1.headers().get("x-xy-server-ts").is_some());
+        let rb = r1.into_body().collect().await.unwrap().to_bytes();
+        let token = val(&rb)["token"].as_str().unwrap().to_string();
+
+        // PUT + GET query
+        let r_put = app
+            .clone()
+            .oneshot(sign_req("PUT", "/api/v1/files/pages/n1~abc.json", Some(&token), now_ts, "nonce_000000000002", b"hello-sig".to_vec(), Some("application/octet-stream")))
+            .await
+            .unwrap();
+        assert_eq!(r_put.status(), StatusCode::NO_CONTENT);
+
+        let r_list = app
+            .clone()
+            .oneshot(sign_req("GET", "/api/v1/files?prefix=pages%2F", Some(&token), now_ts, "nonce_000000000003", vec![], None))
+            .await
+            .unwrap();
+        assert_eq!(r_list.status(), StatusCode::OK);
+
+        // 3. 重放同一 nonce 被拒绝
+        let r_replay = app
+            .clone()
+            .oneshot(sign_req("GET", "/api/v1/files?prefix=pages%2F", Some(&token), now_ts, "nonce_000000000003", vec![], None))
+            .await
+            .unwrap();
+        assert_eq!(r_replay.status(), StatusCode::UNAUTHORIZED);
+
+        // 4. 篡改 body 但沿用原签名被拒绝
+        let mut tampered_req = sign_req("PUT", "/api/v1/files/pages/n1~abc.json", Some(&token), now_ts, "nonce_000000000004", b"clean".to_vec(), Some("application/octet-stream"));
+        let (p, _) = tampered_req.into_parts();
+        tampered_req = Request::from_parts(p, Body::from(b"tampered".to_vec()));
+        let r_tamper = app.clone().oneshot(tampered_req).await.unwrap();
+        assert_eq!(r_tamper.status(), StatusCode::UNAUTHORIZED);
+
+        // 5. 时钟偏差超时返回 401 + x-xy-clock-skew: 1
+        let stale_ts = now_ts - 600;
+        let r_skew = app
+            .clone()
+            .oneshot(sign_req("GET", "/api/v1/account", Some(&token), stale_ts, "nonce_000000000005", vec![], None))
+            .await
+            .unwrap();
+        assert_eq!(r_skew.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(r_skew.headers().get("x-xy-clock-skew").and_then(|v| v.to_str().ok()), Some("1"));
+        assert!(r_skew.headers().get("x-xy-server-ts").is_some());
     }
 }

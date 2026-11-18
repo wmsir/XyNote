@@ -5693,7 +5693,7 @@ dependencies = [
 
 [[package]]
 name = "xynote"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "aes-gcm",
  "argon2",

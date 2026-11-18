@@ -109,39 +109,39 @@ function needDesktop(): never {
 
 export async function getLicenseStatus(): Promise<LicenseStatus> {
   if (!isTauriRuntime()) return BROWSER_STATUS;
-  return remember(await invoke<LicenseStatus>("license_status"));
+  return remember(await invoke<LicenseStatus>("x_s0"));
 }
 
 /** 用 FWPT 通行证登录；第一次登录赠送一年永久版权限 */
 export async function licenseLogin(account: string, password: string): Promise<LicenseStatus> {
   if (!isTauriRuntime()) needDesktop();
-  return remember(await invoke<LicenseStatus>("license_login", { account, password }));
+  return remember(await invoke<LicenseStatus>("x_s1", { account, password }));
 }
 
 /** 启动时向服务器报到并刷新授权（离线时保留本地授权） */
 export async function licenseRefresh(): Promise<LicenseStatus> {
   if (!isTauriRuntime()) return BROWSER_STATUS;
-  return remember(await invoke<LicenseStatus>("license_refresh"));
+  return remember(await invoke<LicenseStatus>("x_s2"));
 }
 
 /** 输入激活码（XYP-…）；也接受离线授权（XYNOTE1.…） */
 export async function activateLicense(license: string): Promise<LicenseStatus> {
   if (!isTauriRuntime()) needDesktop();
-  return remember(await invoke<LicenseStatus>("license_activate", { license }));
+  return remember(await invoke<LicenseStatus>("x_s3", { license }));
 }
 
 /** 在本机停用授权，空出激活码的一个位置 */
 export async function deactivateLicense(): Promise<LicenseStatus> {
-  return remember(await invoke<LicenseStatus>("license_deactivate"));
+  return remember(await invoke<LicenseStatus>("x_s4"));
 }
 
 export async function licenseLogout(): Promise<LicenseStatus> {
-  return remember(await invoke<LicenseStatus>("license_logout"));
+  return remember(await invoke<LicenseStatus>("x_s5"));
 }
 
 export async function createProOrder(product: ProProduct = "lifetime"): Promise<StoreOrder> {
   if (!isTauriRuntime()) needDesktop();
-  return invoke<StoreOrder>("license_create_order", { product });
+  return invoke<StoreOrder>("x_s6", { product });
 }
 
 export const PRODUCT_INFO: Record<ProProduct, { name: string; price: string }> = {
@@ -154,7 +154,7 @@ export type FeedbackCategory = "idea" | "bug" | "other";
 /** 提交意见反馈（登录时关联通行证账号） */
 export async function submitFeedback(category: FeedbackCategory, content: string, contact: string): Promise<void> {
   if (!isTauriRuntime()) needDesktop();
-  return invoke<void>("feedback_submit", { category, content, contact });
+  return invoke<void>("x_s7", { category, content, contact });
 }
 
 export async function exportPageHtml(pageId: string): Promise<{ filename: string; html: string }> {

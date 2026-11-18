@@ -12,6 +12,10 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  esbuild: {
+    legalComments: "none",
+    drop: ["debugger"],
+  },
   clearScreen: false,
   server: {
     port: 1420,
@@ -29,6 +33,7 @@ export default defineConfig({
     },
   },
   build: {
+    sourcemap: false,
     target: ["es2020", "safari13.1", "chrome87", "edge88", "firefox78"],
     cssTarget: "safari13.1",
     chunkSizeWarningLimit: 2000,

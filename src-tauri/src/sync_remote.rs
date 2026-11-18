@@ -365,19 +365,24 @@ impl ServerRemote {
     }
 
     pub fn account(&self) -> Result<AccountInfo, AppError> {
-        let res = self.agent.get(&format!("{}/api/v1/account", self.base)).set("Authorization", &self.bearer()).call();
+        let url = format!("{}{}", self.base, crate::obf!("/api/v1/account"));
+        let res = crate::security::send_signed_ureq(&self.agent, "GET", &url, Some(&self.bearer()), None, None);
         let resp = server_error(res, false)?.expect("non-404");
         serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
     }
 
     /// 兑换激活码（在官网购买），返回兑换后的账号信息
     pub fn redeem(&self, code: &str) -> Result<AccountInfo, AppError> {
-        let res = self
-            .agent
-            .post(&format!("{}/api/v1/redeem", self.base))
-            .set("Authorization", &self.bearer())
-            .set("Content-Type", "application/json")
-            .send_string(&serde_json::json!({ "code": code.trim() }).to_string());
+        let url = format!("{}{}", self.base, crate::obf!("/api/v1/redeem"));
+        let body = serde_json::json!({ "code": code.trim() }).to_string();
+        let res = crate::security::send_signed_ureq(
+            &self.agent,
+            "POST",
+            &url,
+            Some(&self.bearer()),
+            Some("application/json"),
+            Some(body.as_bytes()),
+        );
         let resp = server_error(res, false)?.expect("non-404");
         serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
     }
@@ -386,23 +391,34 @@ impl ServerRemote {
 /// 注册或登录（action = "register" | "login"）
 pub fn server_auth(url: &str, action: &str, email: &str, password: &str) -> Result<AuthResponse, AppError> {
     let base = server_base(url)?;
-    let path = if action == "register" { "register" } else { "login" };
-    let res = agent()
-        .post(&format!("{}/api/v1/auth/{}", base, path))
-        .set("Content-Type", "application/json")
-        .send_string(&serde_json::json!({ "email": email.trim(), "password": password }).to_string());
+    let endpoint = if action == "register" {
+        crate::obf!("/api/v1/auth/register")
+    } else {
+        crate::obf!("/api/v1/auth/login")
+    };
+    let full_url = format!("{}{}", base, endpoint);
+    let body = serde_json::json!({ "email": email.trim(), "password": password }).to_string();
+    let res = crate::security::send_signed_ureq(
+        &agent(),
+        "POST",
+        &full_url,
+        None,
+        Some("application/json"),
+        Some(body.as_bytes()),
+    );
     let resp = server_error(res, false)?.expect("non-404");
     serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
 }
 
 impl SyncRemote for ServerRemote {
     fn list(&self, prefix: &str) -> Result<Vec<String>, AppError> {
-        let res = self
-            .agent
-            .get(&format!("{}/api/v1/files", self.base))
-            .query("prefix", prefix)
-            .set("Authorization", &self.bearer())
-            .call();
+        let url = format!(
+            "{}{}?prefix={}",
+            self.base,
+            crate::obf!("/api/v1/files"),
+            crate::security::encode_uri_component(prefix)
+        );
+        let res = crate::security::send_signed_ureq(&self.agent, "GET", &url, Some(&self.bearer()), None, None);
         let resp = server_error(res, false)?.expect("non-404");
         let list: FileListResponse = serde_json::from_slice(&read_body(resp)?)
             .map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))?;
@@ -410,7 +426,7 @@ impl SyncRemote for ServerRemote {
     }
 
     fn read(&self, key: &str) -> Result<Option<Vec<u8>>, AppError> {
-        let res = self.agent.get(&self.file_url(key)).set("Authorization", &self.bearer()).call();
+        let res = crate::security::send_signed_ureq(&self.agent, "GET", &self.file_url(key), Some(&self.bearer()), None, None);
         match server_error(res, true)? {
             Some(r) => Ok(Some(read_body(r)?)),
             None => Ok(None),
@@ -418,17 +434,19 @@ impl SyncRemote for ServerRemote {
     }
 
     fn write(&self, key: &str, data: &[u8]) -> Result<(), AppError> {
-        let res = self
-            .agent
-            .put(&self.file_url(key))
-            .set("Authorization", &self.bearer())
-            .set("Content-Type", "application/octet-stream")
-            .send_bytes(data);
+        let res = crate::security::send_signed_ureq(
+            &self.agent,
+            "PUT",
+            &self.file_url(key),
+            Some(&self.bearer()),
+            Some("application/octet-stream"),
+            Some(data),
+        );
         server_error(res, false).map(|_| ())
     }
 
     fn remove(&self, key: &str) -> Result<(), AppError> {
-        let res = self.agent.delete(&self.file_url(key)).set("Authorization", &self.bearer()).call();
+        let res = crate::security::send_signed_ureq(&self.agent, "DELETE", &self.file_url(key), Some(&self.bearer()), None, None);
         server_error(res, true).map(|_| ())
     }
 }

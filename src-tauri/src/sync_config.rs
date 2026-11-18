@@ -35,10 +35,10 @@ const K_INTERVAL: &str = "sync.intervalMinutes";
 const K_LAST_AT: &str = "sync.lastAt";
 const K_LAST_REPORT: &str = "sync.lastReport";
 const K_LAST_ERROR: &str = "sync.lastError";
-const S_WEBDAV_PASSWORD: &str = "sync.secret.webdavPassword";
-const S_SERVER_TOKEN: &str = "sync.secret.serverToken";
-const S_OFFICIAL_TOKEN: &str = "sync.secret.officialToken";
-const S_PASSPHRASE: &str = "sync.secret.passphrase";
+fn k_webdav_password() -> String { crate::obf!("sync.secret.webdavPassword") }
+fn k_server_token() -> String { crate::obf!("sync.secret.serverToken") }
+fn k_official_token() -> String { crate::obf!("sync.secret.officialToken") }
+fn k_passphrase() -> String { crate::obf!("sync.secret.passphrase") }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -136,15 +136,15 @@ pub fn load_view(db: &Database) -> Result<SyncConfigView, AppError> {
         folder: get(db, K_FOLDER)?,
         webdav_url: get(db, K_WEBDAV_URL)?,
         webdav_user: get(db, K_WEBDAV_USER)?,
-        has_webdav_password: !get(db, S_WEBDAV_PASSWORD)?.is_empty(),
+        has_webdav_password: !get(db, &k_webdav_password())?.is_empty(),
         server_url: get(db, K_SERVER_URL)?,
         server_email: get(db, K_SERVER_EMAIL)?,
-        server_logged_in: !get(db, S_SERVER_TOKEN)?.is_empty(),
+        server_logged_in: !get(db, &k_server_token())?.is_empty(),
         official_url: official_server_url().to_string(),
         official_email: get(db, K_OFFICIAL_EMAIL)?,
-        official_logged_in: !get(db, S_OFFICIAL_TOKEN)?.is_empty(),
+        official_logged_in: !get(db, &k_official_token())?.is_empty(),
         pricing_url: official_pricing_url().to_string(),
-        has_passphrase: !get(db, S_PASSPHRASE)?.is_empty(),
+        has_passphrase: !get(db, &k_passphrase())?.is_empty(),
         auto_sync: get(db, K_AUTO)? != "false",
         interval_minutes: interval,
         last_at: db.get_setting_raw(K_LAST_AT)?,
@@ -179,18 +179,18 @@ pub fn save_config(db: &Database, input: SyncConfigInput) -> Result<SyncConfigVi
         db.set_setting(K_WEBDAV_USER, v.trim())?;
     }
     if let Some(v) = input.webdav_password {
-        put_or_clear(db, S_WEBDAV_PASSWORD, &v)?;
+        put_or_clear(db, &k_webdav_password(), &v)?;
     }
     if let Some(v) = input.server_url {
         let new_url = v.trim().trim_end_matches('/').to_string();
         if new_url != get(db, K_SERVER_URL)? {
             // 服务器换了，旧令牌作废
-            db.delete_setting(S_SERVER_TOKEN)?;
+            db.delete_setting(&k_server_token())?;
         }
         db.set_setting(K_SERVER_URL, &new_url)?;
     }
     if let Some(v) = input.passphrase {
-        put_or_clear(db, S_PASSPHRASE, &v)?;
+        put_or_clear(db, &k_passphrase(), &v)?;
     }
     if let Some(v) = input.auto_sync {
         db.set_setting(K_AUTO, if v { "true" } else { "false" })?;
@@ -220,10 +220,10 @@ pub fn auth(db: &Database, official: bool, action: &str, email: &str, password: 
     }
     let res = server_auth(&url, action, email, password)?;
     if official {
-        db.set_setting(S_OFFICIAL_TOKEN, &res.token)?;
+        db.set_setting(&k_official_token(), &res.token)?;
         db.set_setting(K_OFFICIAL_EMAIL, &res.account.email)?;
     } else {
-        db.set_setting(S_SERVER_TOKEN, &res.token)?;
+        db.set_setting(&k_server_token(), &res.token)?;
         db.set_setting(K_SERVER_EMAIL, &res.account.email)?;
     }
     Ok(res.account)
@@ -231,19 +231,19 @@ pub fn auth(db: &Database, official: bool, action: &str, email: &str, password: 
 
 pub fn logout(db: &Database, official: bool) -> Result<(), AppError> {
     if official {
-        db.delete_setting(S_OFFICIAL_TOKEN)?;
+        db.delete_setting(&k_official_token())?;
         db.delete_setting(K_OFFICIAL_EMAIL)
     } else {
-        db.delete_setting(S_SERVER_TOKEN)?;
+        db.delete_setting(&k_server_token())?;
         db.delete_setting(K_SERVER_EMAIL)
     }
 }
 
 pub fn account(db: &Database, official: bool) -> Result<AccountInfo, AppError> {
     let (url, token) = if official {
-        (official_server_url().to_string(), get(db, S_OFFICIAL_TOKEN)?)
+        (official_server_url().to_string(), get(db, &k_official_token())?)
     } else {
-        (get(db, K_SERVER_URL)?, get(db, S_SERVER_TOKEN)?)
+        (get(db, K_SERVER_URL)?, get(db, &k_server_token())?)
     };
     ServerRemote::new(&url, &token)?.account()
 }
@@ -254,9 +254,9 @@ pub fn redeem(db: &Database, official: bool, code: &str) -> Result<AccountInfo, 
         return Err(AppError::Validation("请输入激活码".into()));
     }
     let (url, token) = if official {
-        (official_server_url().to_string(), get(db, S_OFFICIAL_TOKEN)?)
+        (official_server_url().to_string(), get(db, &k_official_token())?)
     } else {
-        (get(db, K_SERVER_URL)?, get(db, S_SERVER_TOKEN)?)
+        (get(db, K_SERVER_URL)?, get(db, &k_server_token())?)
     };
     if token.is_empty() {
         return Err(AppError::Validation("请先登录".into()));
@@ -284,10 +284,10 @@ pub fn build_remote(db: &Database) -> Result<Option<Box<dyn SyncRemote>>, AppErr
         SyncMode::Webdav => Box::new(WebDavRemote::new(
             &get(db, K_WEBDAV_URL)?,
             &get(db, K_WEBDAV_USER)?,
-            &get(db, S_WEBDAV_PASSWORD)?,
+            &get(db, &k_webdav_password())?,
         )?),
-        SyncMode::Server => Box::new(ServerRemote::new(&get(db, K_SERVER_URL)?, &get(db, S_SERVER_TOKEN)?)?),
-        SyncMode::Official => Box::new(ServerRemote::new(official_server_url(), &get(db, S_OFFICIAL_TOKEN)?)?),
+        SyncMode::Server => Box::new(ServerRemote::new(&get(db, K_SERVER_URL)?, &get(db, &k_server_token())?)?),
+        SyncMode::Official => Box::new(ServerRemote::new(official_server_url(), &get(db, &k_official_token())?)?),
     };
     Ok(Some(remote))
 }
@@ -296,7 +296,7 @@ pub fn build_remote(db: &Database) -> Result<Option<Box<dyn SyncRemote>>, AppErr
 pub fn sync_now(db: &Database) -> Result<Option<SyncReport>, AppError> {
     let result = (|| -> Result<Option<SyncReport>, AppError> {
         let Some(remote) = build_remote(db)? else { return Ok(None) };
-        let passphrase = get(db, S_PASSPHRASE)?;
+        let passphrase = get(db, &k_passphrase())?;
         let device = device_name();
         let report = run_sync(
             db,

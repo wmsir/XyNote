@@ -37,6 +37,7 @@ pub fn sign(payload: &LicensePayload, key: &SigningKey) -> String {
 }
 
 /// 校验授权码；粘贴时混入的空白、换行会被忽略
+#[inline(always)]
 pub fn verify(license: &str, public_key: &[u8; 32]) -> Result<LicensePayload, String> {
     let compact: String = license.chars().filter(|c| !c.is_whitespace()).collect();
     let mut parts = compact.split('.');
