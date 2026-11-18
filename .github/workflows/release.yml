@@ -125,9 +125,11 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             label: macos-arm64
+            macos_min: "11.0"
           - platform: macos-latest
             target: x86_64-apple-darwin
             label: macos-x64
+            macos_min: "10.15"
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
@@ -138,6 +140,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check-version.outputs.sha }}
+
+      - name: 设置 macOS 最低部署目标版本
+        if: startsWith(matrix.platform, 'macos') && matrix.macos_min != ''
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos_min }}" >> "$GITHUB_ENV"
 
       - name: 安装 Linux 依赖
         if: startsWith(matrix.platform, 'ubuntu')
@@ -157,7 +164,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-${{ matrix.macos_min }}
 
       - run: npm ci
 

@@ -1571,61 +1571,94 @@ export function tryApplyInlineMarkdownAtCaret(el: HTMLElement): boolean {
 
   let matched: InlineMatchResult | null = null;
 
+  // Avoid ES2018 RegExp lookbehind `(?<!...)`: unsupported in WebKit < 16.4 (macOS 12 Monterey & older)
+  const execTrailingUnprefixed = (
+    input: string,
+    prefixChar: string,
+    trailingPattern: RegExp
+  ): { fullMatchLen: number; inner: string } | null => {
+    const m = trailingPattern.exec(input);
+    if (!m) return null;
+    const matchStart = input.length - m[0].length;
+    if (matchStart > 0 && input[matchStart - 1] === prefixChar) {
+      return null;
+    }
+    return { fullMatchLen: m[0].length, inner: m[1] };
+  };
+
   // 1. Inline code: `code` (exclude ```` ``` ```` at start of block)
-  const codeMatch = /(?<!`)`([^`\n]+)`$/.exec(textBeforeInNode);
+  const codeMatch = execTrailingUnprefixed(
+    textBeforeInNode,
+    "\x60",
+    /\x60([^\x60\n]+)\x60$/
+  );
   if (codeMatch) {
     const codeEl = document.createElement("code");
-    codeEl.textContent = codeMatch[1];
-    matched = { fullMatchLen: codeMatch[0].length, replacementNode: codeEl };
+    codeEl.textContent = codeMatch.inner;
+    matched = { fullMatchLen: codeMatch.fullMatchLen, replacementNode: codeEl };
   }
 
   // 2. Bold: **text**
   if (!matched) {
-    const boldMatch = /(?<!\*)\*\*([^\s*](?:[^*\n]*[^\s*])?)\*\*$/.exec(
-      textBeforeInNode
+    const boldMatch = execTrailingUnprefixed(
+      textBeforeInNode,
+      "*",
+      /\*\*([^\s*](?:[^*\n]*[^\s*])?)\*\*$/
     );
     if (boldMatch) {
       const bEl = document.createElement("b");
-      bEl.textContent = boldMatch[1];
-      matched = { fullMatchLen: boldMatch[0].length, replacementNode: bEl };
+      bEl.textContent = boldMatch.inner;
+      matched = { fullMatchLen: boldMatch.fullMatchLen, replacementNode: bEl };
     }
   }
 
-  // 3. Italic: *text* (negative lookbehind ensures `**bold*` never prematurely matches!)
+  // 3. Italic: *text* (unprefixed `*` ensures `**bold*` never prematurely matches!)
   if (!matched) {
-    const italicMatch = /(?<!\*)\*([^\s*](?:[^*\n]*[^\s*])?)\*$/.exec(
-      textBeforeInNode
+    const italicMatch = execTrailingUnprefixed(
+      textBeforeInNode,
+      "*",
+      /\*([^\s*](?:[^*\n]*[^\s*])?)\*$/
     );
     if (italicMatch) {
       const iEl = document.createElement("i");
-      iEl.textContent = italicMatch[1];
-      matched = { fullMatchLen: italicMatch[0].length, replacementNode: iEl };
+      iEl.textContent = italicMatch.inner;
+      matched = {
+        fullMatchLen: italicMatch.fullMatchLen,
+        replacementNode: iEl,
+      };
     }
   }
 
   // 4. Strikethrough: ~~text~~
   if (!matched) {
-    const strikeMatch = /(?<!~)~~([^\s~](?:[^~\n]*[^\s~])?)~~$/.exec(
-      textBeforeInNode
+    const strikeMatch = execTrailingUnprefixed(
+      textBeforeInNode,
+      "~",
+      /~~([^\s~](?:[^~\n]*[^\s~])?)~~$/
     );
     if (strikeMatch) {
       const sEl = document.createElement("s");
-      sEl.textContent = strikeMatch[1];
-      matched = { fullMatchLen: strikeMatch[0].length, replacementNode: sEl };
+      sEl.textContent = strikeMatch.inner;
+      matched = {
+        fullMatchLen: strikeMatch.fullMatchLen,
+        replacementNode: sEl,
+      };
     }
   }
 
   // 5. Typora Highlight: ==text== -> <mark>text</mark>
   if (!matched) {
-    const highlightMatch = /(?<!=)==([^\s=](?:[^=\n]*[^\s=])?)==$/.exec(
-      textBeforeInNode
+    const highlightMatch = execTrailingUnprefixed(
+      textBeforeInNode,
+      "=",
+      /==([^\s=](?:[^=\n]*[^\s=])?)==$/
     );
     if (highlightMatch) {
       const markEl = document.createElement("mark");
       markEl.className = "nb-inline-highlight";
-      markEl.textContent = highlightMatch[1];
+      markEl.textContent = highlightMatch.inner;
       matched = {
-        fullMatchLen: highlightMatch[0].length,
+        fullMatchLen: highlightMatch.fullMatchLen,
         replacementNode: markEl,
       };
     }
@@ -1662,11 +1695,13 @@ export function tryApplyInlineMarkdownAtCaret(el: HTMLElement): boolean {
 
   // 7. Inline KaTeX Math: $formula$ (single `$`, preserving `$$` display math!)
   if (!matched) {
-    const inlineMathMatch = /(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$$/.exec(
-      textBeforeInNode
+    const inlineMathMatch = execTrailingUnprefixed(
+      textBeforeInNode,
+      "$",
+      /\$([^\s$](?:[^$\n]*[^\s$])?)\$$/
     );
     if (inlineMathMatch) {
-      const latex = inlineMathMatch[1].trim();
+      const latex = inlineMathMatch.inner.trim();
       const spanEl = document.createElement("span");
       spanEl.className = "nb-inline-math";
       spanEl.setAttribute("contenteditable", "false");
@@ -1680,7 +1715,7 @@ export function tryApplyInlineMarkdownAtCaret(el: HTMLElement): boolean {
         spanEl.textContent = latex;
       }
       matched = {
-        fullMatchLen: inlineMathMatch[0].length,
+        fullMatchLen: inlineMathMatch.fullMatchLen,
         replacementNode: spanEl,
       };
     }

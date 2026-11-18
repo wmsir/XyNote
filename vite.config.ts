@@ -29,6 +29,8 @@ export default defineConfig({
     },
   },
   build: {
+    target: ["es2020", "safari13.1", "chrome87", "edge88", "firefox78"],
+    cssTarget: "safari13.1",
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {

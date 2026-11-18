@@ -1699,7 +1699,10 @@ const EN: Record<string, string> = {
   "资源管理器右键与打开方式": "Explorer menu & Open With",
   "路径一致": "Path matches",
   "，双击即可直接用块编辑器打开本地": ", so double-clicking opens local",
-  "，无需管理员权限也可在文件右键看到": ", no admin rights are needed to show"
+  "，无需管理员权限也可在文件右键看到": ", no admin rights are needed to show",
+  "小悦笔记界面加载异常": "XyNote display error",
+  "检测到渲染错误，本地笔记数据安全未受影响。您可以点击下方按钮重新加载：": "A rendering error occurred. Your local notes are safe. Click below to reload:",
+  "重新加载应用": "Reload app"
 };
 
 export default EN;

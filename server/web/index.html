@@ -1235,11 +1235,11 @@
           </a>
           <a class="dl-tile" id="dlMacArm" href="/downloads/xynote/XyNote-latest-macos-arm64.dmg" download>
             <span class="dl-tile-top"><span>macOS Apple 芯片</span><span class="dl-tile-fmt">arm64</span></span>
-            <span class="dl-tile-sub" data-xy-size="xynote_mac_arm64">M1–M4 · .dmg</span>
+            <span class="dl-tile-sub" data-xy-size="xynote_mac_arm64">M1–M4 · macOS 11+</span>
           </a>
           <a class="dl-tile" id="dlMacX64" href="/downloads/xynote/XyNote-latest-macos-x64.dmg" download>
             <span class="dl-tile-top"><span>macOS Intel 芯片</span><span class="dl-tile-fmt">x64</span></span>
-            <span class="dl-tile-sub" data-xy-size="xynote_mac_x64">Intel · .dmg</span>
+            <span class="dl-tile-sub" data-xy-size="xynote_mac_x64">Intel · macOS 10.15+</span>
           </a>
           <a class="dl-tile" id="dlDeb" href="/downloads/xynote/XyNote-latest-linux-amd64.deb" download>
             <span class="dl-tile-top"><span>Ubuntu / Debian</span><span class="dl-tile-fmt">.deb</span></span>
@@ -1252,7 +1252,7 @@
         </div>
 
         <div class="dl-foot-links">
-          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；Windows 便携版支持右键「用小悦笔记打开」及一键默认打开 <code>.md</code></span>
+          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；Windows 便携版支持右键「用小悦笔记打开」及一键默认打开 <code>.md</code>；macOS 支持 10.15 Catalina（Intel）/ 11.0 Big Sur（M 芯片）及以上（含 macOS 12 Monterey），首次打开如遇系统拦截可在「访达」右键应用选「打开」</span>
         </div>
       </div>
     </div>
@@ -2052,8 +2052,8 @@
       var sizeSet = {
         xynote_win_setup: resolved.winSetup.size ? ('x64 Setup · ' + resolved.winSetup.size) : '',
         xynote_win_portable: resolved.winPort.size ? ('单文件便携 · ' + resolved.winPort.size) : '',
-        xynote_mac_arm64: resolved.macArm.size ? ('M1–M4 · ' + resolved.macArm.size) : '',
-        xynote_mac_x64: resolved.macX64.size ? ('Intel · ' + resolved.macX64.size) : '',
+        xynote_mac_arm64: resolved.macArm.size ? ('macOS 11+ · ' + resolved.macArm.size) : '',
+        xynote_mac_x64: resolved.macX64.size ? ('macOS 10.15+ · ' + resolved.macX64.size) : '',
         xynote_linux_deb: resolved.deb.size ? ('amd64 · ' + resolved.deb.size) : '',
         xynote_linux_rpm: resolved.rpm.size ? ('x86_64 · ' + resolved.rpm.size) : ''
       };

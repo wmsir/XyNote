@@ -231,6 +231,45 @@ export function htmlToInlineMarkdown(html: string, pages: Page[]): string {
   return decodeHtmlEntities(out).trim();
 }
 
+/**
+ * Safari 13–16.3 / macOS 10.15–13.2 WKWebView safe replacement for
+ * `/(?<!\*)\*([^*\n]+?)\*(?!\*)/g` (and the trimmed-inner variant):
+ * Consuming runs of 2+ asterisks (`\*{2,}`) first avoids ES2018 lookbehind syntax,
+ * which throws `SyntaxError` on WebKit < 16.4 (macOS 12 Monterey and older).
+ */
+function replaceSingleAsteriskItalic(
+  input: string,
+  trimInnerWhitespace = false
+): string {
+  const pattern = trimInnerWhitespace
+    ? /(\*{2,})|\*([^\s*](?:[^*\n]*[^\s*])?)\*(?!\*)/g
+    : /(\*{2,})|\*([^*\n]+?)\*(?!\*)/g;
+  return input.replace(
+    pattern,
+    (full, multiStars: string | undefined, inner: string | undefined) => {
+      if (multiStars !== undefined || inner === undefined) return full;
+      return `<i>${inner}</i>`;
+    }
+  );
+}
+
+/**
+ * Safari 13–16.3 / macOS 10.15–13.2 WKWebView safe replacement for
+ * `/(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)/g` without RegExp lookbehind.
+ */
+function replaceSingleDollarInlineMath(
+  input: string,
+  renderFn: (latex: string) => string
+): string {
+  return input.replace(
+    /(\${2,})|\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)/g,
+    (full, multiDollars: string | undefined, latex: string | undefined) => {
+      if (multiDollars !== undefined || latex === undefined) return full;
+      return renderFn(latex);
+    }
+  );
+}
+
 export function inlineMarkdownToHtml(text: string, pages: Page[]): string {
   if (!text) return "";
 
@@ -278,18 +317,14 @@ export function inlineMarkdownToHtml(text: string, pages: Page[]): string {
     (rawLabel: string, rawHref: string) => {
       let formattedLabel = escapeHtml(rawLabel);
       formattedLabel = formattedLabel.replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>");
-      formattedLabel = formattedLabel.replace(
-        /(?<!\*)\*([^*\n]+?)\*(?!\*)/g,
-        "<i>$1</i>"
-      );
+      formattedLabel = replaceSingleAsteriskItalic(formattedLabel, false);
       return stash(buildInlineLinkHtml(formattedLabel, rawHref));
     }
   );
 
   // 5. Protect inline `$formula$` KaTeX math
-  working = working.replace(
-    /(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)/g,
-    (_f, latex: string) => stash(renderInlineMathSpan(latex))
+  working = replaceSingleDollarInlineMath(working, (latex) =>
+    stash(renderInlineMathSpan(latex))
   );
 
   // 6. Escape HTML on remaining plain text
@@ -301,7 +336,7 @@ export function inlineMarkdownToHtml(text: string, pages: Page[]): string {
     '<mark class="nb-inline-highlight">$1</mark>'
   );
   working = working.replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>");
-  working = working.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "<i>$1</i>");
+  working = replaceSingleAsteriskItalic(working, false);
   working = working.replace(/~~([^~\n]+?)~~/g, "<s>$1</s>");
   working = working.replace(/\r?\n/g, "<br>");
 
@@ -406,19 +441,14 @@ export function upgradeResidualInlineMarkdown(
         labelHtml = escapeHtml(decodeHtmlEntities(labelHtml));
       }
       labelHtml = labelHtml.replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>");
-      labelHtml = labelHtml.replace(
-        /(?<!\*)\*([^*\n]+?)\*(?!\*)/g,
-        "<i>$1</i>"
-      );
+      labelHtml = replaceSingleAsteriskItalic(labelHtml, false);
       return stash(buildInlineLinkHtml(labelHtml, decodedHref));
     }
   );
 
   // 7. Upgrade residual inline `$formula$` KaTeX math
-  working = working.replace(
-    /(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)/g,
-    (_f, rawLatex: string) =>
-      stash(renderInlineMathSpan(decodeHtmlEntities(rawLatex)))
+  working = replaceSingleDollarInlineMath(working, (rawLatex) =>
+    stash(renderInlineMathSpan(decodeHtmlEntities(rawLatex)))
   );
 
   // 8. Upgrade residual ==highlight==, **bold**, *italic*, ~~strike~~, and newlines
@@ -427,10 +457,7 @@ export function upgradeResidualInlineMarkdown(
     '<mark class="nb-inline-highlight">$1</mark>'
   );
   working = working.replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>");
-  working = working.replace(
-    /(?<!\*)\*([^\s*](?:[^*\n]*[^\s*])?)\*(?!\*)/g,
-    "<i>$1</i>"
-  );
+  working = replaceSingleAsteriskItalic(working, true);
   working = working.replace(/~~([^~\n]+?)~~/g, "<s>$1</s>");
   working = working.replace(/\r?\n/g, "<br>");
 
