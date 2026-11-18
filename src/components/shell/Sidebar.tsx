@@ -20,6 +20,7 @@ import {
   Trash2,
   Upload,
   X,
+  AppWindow,
 } from "lucide-react";
 import type { Page, WorkspaceFolder } from "../../types/notion";
 import { XyLogoIcon } from "./XyLogoIcon";
@@ -40,6 +41,8 @@ export interface SidebarProps {
   trashedCount: number;
   isTauri: boolean;
   onToggleCollapse: () => void;
+  /** 新建一个窗口 */
+  onNewWindow?: () => void;
   onSelectPage: (pageId: string) => void;
   onOpenLocalMdDialog: () => void;
   onCreateLocalMdFile: () => void;
@@ -142,6 +145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onExportMarkdown,
   onOpenSearch,
   onOpenTemplates,
+  onNewWindow,
   onOpenTrash,
   onOpenImportMarkdown,
   onOpenSettings,
@@ -375,28 +379,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
       className={`nb-sidebar${collapsed ? " is-collapsed" : ""}${resizing ? " is-resizing" : ""}`}
       style={collapsed ? undefined : { width, minWidth: width, maxWidth: width }}
     >
-      {/* Workspace Brand Header */}
-      <div className="nb-sidebar-workspace">
-        <div className="nb-workspace-brand">
-          <XyLogoIcon size={22} />
-          <div className="nb-workspace-title-wrap">
-            <span className="nb-workspace-name">小悦 (XyNote)</span>
-            <span className="nb-workspace-sub">
-              {`v${__APP_VERSION__}`}{isTauri ? "" : " · 浏览器预览"}
-            </span>
-          </div>
+      {/* 标题栏行：可拖动窗口；右侧是新建窗口与收起侧栏 */}
+      <div className="nb-sidebar-titlebar" data-tauri-drag-region>
+        <div className="nb-workspace-brand" data-tauri-drag-region title={`小悦 (XyNote) v${__APP_VERSION__}`}>
+          <XyLogoIcon size={18} />
+          <span className="nb-workspace-name" data-tauri-drag-region>
+            小悦
+          </span>
         </div>
-
         <div className="nb-sidebar-top-actions">
-          <button
-            type="button"
-            className="nb-icon-btn"
-            onClick={() => onCreateDoc(null)}
-            title="新建页面 (Ctrl+N)"
-            aria-label="新建页面"
-          >
-            <SquarePen size={16} strokeWidth={1.6} />
-          </button>
+          {onNewWindow && (
+            <button
+              type="button"
+              className="nb-icon-btn"
+              onClick={onNewWindow}
+              title="新建窗口 (Ctrl+Shift+N)"
+              aria-label="新建窗口"
+            >
+              <AppWindow size={16} strokeWidth={1.6} />
+            </button>
+          )}
           <button
             type="button"
             className="nb-icon-btn"
@@ -409,8 +411,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Quick Actions */}
+      {/* 主要操作：新建页面（醒目），搜索与模板 */}
       <div className="nb-sidebar-quick">
+        <button
+          type="button"
+          className="nb-sidebar-new"
+          onClick={() => onCreateDoc(null)}
+          title="新建页面 (Ctrl+N)"
+        >
+          <SquarePen size={16} strokeWidth={1.7} />
+          <span className="nb-sidebar-item-label">新建页面</span>
+          <kbd className="nb-kbd">Ctrl+N</kbd>
+        </button>
+
         <button
           type="button"
           className="nb-sidebar-item"
@@ -430,17 +443,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <Sparkles size={16} strokeWidth={1.6} />
           <span className="nb-sidebar-item-label">模板中心</span>
-        </button>
-
-        <button
-          type="button"
-          className="nb-sidebar-item"
-          onClick={onOpenSettings}
-          title="打开偏好设置 (Ctrl+,)"
-        >
-          <Settings size={16} strokeWidth={1.6} />
-          <span className="nb-sidebar-item-label">偏好设置</span>
-          <kbd className="nb-kbd">Ctrl+,</kbd>
         </button>
       </div>
 
@@ -691,6 +693,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {trashedCount > 0 && (
             <span className="nb-trash-count">{trashedCount}</span>
           )}
+        </button>
+
+        <button
+          type="button"
+          className="nb-sidebar-item"
+          onClick={onOpenSettings}
+          title="打开偏好设置 (Ctrl+,)"
+        >
+          <Settings size={16} strokeWidth={1.6} />
+          <span className="nb-sidebar-item-label">偏好设置</span>
+          <span className="nb-sidebar-version" data-i18n-skip="">
+            {`v${__APP_VERSION__}`}
+            {isTauri ? "" : " · Web"}
+          </span>
         </button>
       </div>
 
