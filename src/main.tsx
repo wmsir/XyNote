@@ -5,6 +5,8 @@ import "katex/dist/katex.min.css";
 import App from "./App";
 import "./styles/global.css";
 import { initUiLanguage } from "./i18n/domTranslator";
+import { markPlatformOnBody } from "./utils/platform";
+import { WindowControls } from "./components/shell/WindowControls";
 
 interface RootErrorBoundaryState {
   error: Error | null;
@@ -30,6 +32,11 @@ class RootErrorBoundary extends React.Component<
     }
     const detail = `${this.state.error.name}: ${this.state.error.message}`;
     return (
+      <>
+      {/* 无边框窗口：出错页也保留拖动区和关闭按钮 */}
+      <div data-tauri-drag-region className="nb-error-titlebar">
+        <WindowControls />
+      </div>
       <div
         style={{
           minHeight: "100vh",
@@ -89,9 +96,12 @@ class RootErrorBoundary extends React.Component<
           </button>
         </div>
       </div>
+      </>
     );
   }
 }
+
+markPlatformOnBody();
 
 // 英文界面先加载词典再渲染，避免先闪出中文
 void initUiLanguage().finally(() => {

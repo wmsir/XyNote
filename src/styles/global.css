@@ -4409,3 +4409,308 @@ a {
 .nb-topbar-font-config-link:hover {
   background: var(--accent-bg);
 }
+
+/* ============================================================================
+ * 标题栏（无边框窗口）：侧栏顶行 + 顶栏组成整条标题栏，颜色跟随主题
+ * - Windows / Linux：右上角画最小化 / 最大化 / 关闭
+ * - macOS：系统红黄绿按钮叠在左上角，留出 78px
+ * ========================================================================== */
+:root {
+  --titlebar-h: 44px;
+  --traffic-lights-w: 78px;
+}
+
+.nb-topbar {
+  height: var(--titlebar-h);
+  min-height: var(--titlebar-h);
+  padding-right: 6px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body.has-window-controls .nb-topbar {
+  padding-right: 0;
+}
+.nb-topbar-left,
+.nb-topbar-right {
+  min-width: 0;
+}
+.nb-topbar-left {
+  flex: 1;
+  align-self: stretch;
+}
+.nb-topbar-right {
+  align-self: stretch;
+}
+/* 侧栏收起时，macOS 的红黄绿按钮落在顶栏左侧 */
+body.has-traffic-lights .nb-topbar.is-sidebar-collapsed {
+  padding-left: var(--traffic-lights-w);
+}
+
+/* 窗口按钮：宽 46px，铺满标题栏高度；关闭按钮悬停变红 */
+.nb-winctl {
+  display: flex;
+  align-self: stretch;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.nb-winctl-btn {
+  width: 46px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  border-radius: 0;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+.nb-winctl-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nb-winctl-btn:active {
+  background: var(--bg-active, var(--bg-hover));
+}
+.nb-winctl-btn.is-close:hover,
+.nb-winctl-btn.is-close:focus-visible {
+  background: #e81123;
+  color: #ffffff;
+}
+.nb-winctl-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.nb-error-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 10;
+}
+
+/* 侧栏顶行：与顶栏同高，组成一整条标题栏 */
+.nb-sidebar-titlebar {
+  flex-shrink: 0;
+  height: var(--titlebar-h);
+  min-height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+}
+body.has-traffic-lights .nb-sidebar-titlebar {
+  padding-left: var(--traffic-lights-w);
+}
+.nb-sidebar-titlebar .nb-workspace-brand {
+  gap: 7px;
+}
+.nb-sidebar-titlebar .nb-workspace-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.nb-sidebar-top-actions {
+  gap: 2px;
+}
+
+/* 醒目的「新建页面」：像 Claude 客户端的「新对话」按钮 */
+.nb-sidebar-quick {
+  padding: 4px 8px 10px;
+  gap: 2px;
+}
+.nb-sidebar-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px 0 10px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 550;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.nb-sidebar-new svg {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+.nb-sidebar-new:hover {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.nb-sidebar-new:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+.nb-sidebar-new .nb-kbd {
+  margin-left: auto;
+}
+
+.nb-sidebar-version {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 顶栏「外观」快速切换 */
+.nb-themepick-wrap {
+  position: relative;
+}
+.nb-themepick {
+  right: 0;
+  top: 34px;
+  width: 316px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nb-themepick-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  padding: 0 2px;
+}
+.nb-themepick-modes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--bg-hover);
+}
+.nb-themepick-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 2px 6px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.nb-themepick-mode:hover {
+  color: var(--text-primary);
+}
+.nb-themepick-mode.is-active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.nb-themepick-mode.is-active svg {
+  color: var(--accent-color);
+}
+.nb-themepick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.nb-themepick-card {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-align: center;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.nb-themepick-card:hover {
+  background: var(--bg-hover);
+}
+.nb-themepick-card.is-active {
+  border-color: var(--accent-color);
+  background: var(--accent-bg);
+}
+.nb-themepick-card:focus-visible,
+.nb-themepick-mode:focus-visible,
+.nb-themepick-more:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+.nb-themepick-swatch {
+  width: 100%;
+  height: auto;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+.nb-themepick-name {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nb-themepick-card.is-active .nb-themepick-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.nb-themepick-check {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nb-themepick-more {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-subtle);
+}
+.nb-themepick-more:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 主题切换时，标题栏、侧栏和正文的颜色一起平滑过渡 */
+.nb-topbar,
+.nb-sidebar,
+.nb-main-area,
+.nb-statusbar,
+.nb-winctl-btn {
+  transition-property: background-color, border-color, color;
+  transition-duration: 0.18s;
+  transition-timing-function: ease;
+}
+.nb-sidebar {
+  transition-property: width, min-width, opacity, background-color, border-color;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nb-topbar,
+  .nb-sidebar,
+  .nb-main-area,
+  .nb-statusbar,
+  .nb-winctl-btn {
+    transition: none;
+  }
+}

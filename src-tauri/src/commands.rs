@@ -928,13 +928,20 @@ pub async fn open_new_window(app: AppHandle, page_id: Option<String>) -> Result<
         let safe: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
         url.push_str(&format!("?page={}", safe));
     }
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("小悦 (XyNote)")
         .inner_size(1180.0, 800.0)
         .min_inner_size(900.0, 600.0)
-        .resizable(true)
-        .build()
-        .map_err(|e| format!("无法打开新窗口：{}", e))?;
+        .resizable(true);
+    // 与主窗口一致：标题栏由界面自己绘制，跟随主题配色
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(16.0, 16.0));
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false).shadow(true);
+    builder.build().map_err(|e| format!("无法打开新窗口：{}", e))?;
     Ok(label)
 }
 

@@ -24,6 +24,7 @@ import {
 } from "./api/desktop";
 import { renderHtmlToPngParts } from "./utils/exportImage";
 import { UpdateNotice } from "./components/shell/UpdateCheck";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExportFormat } from "./components/shell/Topbar";
 import { savePageAsTemplate } from "./api/templates";
 import {
@@ -330,6 +331,12 @@ export const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", effectiveTheme);
     document.documentElement.className = `theme-${effectiveTheme}`;
+    // 系统窗口的明暗（macOS 红黄绿按钮、Windows 窗口阴影与右键菜单）跟随主题
+    if (isTauriRuntime()) {
+      getCurrentWindow()
+        .setTheme(effectiveTheme === "dark" ? "dark" : "light")
+        .catch(() => {});
+    }
   }, [effectiveTheme]);
 
   // Inject custom ThemeTokens & active CSS Snippet Plugins into <head>
@@ -1154,7 +1161,7 @@ export const App: React.FC = () => {
         setPages(activeList);
         setTrashedPages(trashList);
 
-        const launchFiles = await takePendingOpenFiles().catch(() => []);
+        const launchFiles = (await takePendingOpenFiles().catch(() => [])) ?? [];
         const launchTarget =
           launchFiles.length > 0 ? launchFiles[launchFiles.length - 1] : null;
 
@@ -2055,6 +2062,9 @@ export const App: React.FC = () => {
         trashedCount={trashedPages.length}
         isTauri={isTauriRuntime()}
         onToggleCollapse={handleToggleSidebar}
+        onNewWindow={() => {
+          openNewWindow(null).catch((err) => showToast(`无法打开新窗口：${err instanceof Error ? err.message : String(err)}`));
+        }}
         onSelectPage={(id) => {
           loadPageDetailById(id, null).catch(() => {});
         }}
@@ -2139,6 +2149,20 @@ export const App: React.FC = () => {
             }
           }}
           onChangeTheme={handleChangeThemeFromTopbar}
+          themeControl={{
+            effectiveTheme,
+            themePref,
+            styleState: stylePluginState,
+            onSelectMode: (pref) => handleChangeThemePref(pref),
+            onSelectThemePlugin: (plugin) => {
+              setThemePreviewOverride(null);
+              toggleStylePlugin(plugin.id, true)
+                .then((next) => setStylePluginState(next))
+                .catch((err) => showToast(`启用主题失败：${err instanceof Error ? err.message : String(err)}`));
+            },
+            onPreview: (preview) => setThemePreviewOverride(preview),
+            onOpenThemeSettings: () => handleOpenSettingsAtTab("themes"),
+          }}
           onChangeFontStyle={handleChangeFontStyle}
           onToggleFullWidth={handleToggleFullWidth}
           onSetFullWidth={handleSetAdaptiveWidth}

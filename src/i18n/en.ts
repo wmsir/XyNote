@@ -1702,7 +1702,22 @@ const EN: Record<string, string> = {
   "，无需管理员权限也可在文件右键看到": ", no admin rights are needed to show",
   "小悦笔记界面加载异常": "XyNote display error",
   "检测到渲染错误，本地笔记数据安全未受影响。您可以点击下方按钮重新加载：": "A rendering error occurred. Your local notes are safe. Click below to reload:",
-  "重新加载应用": "Reload app"
+  "重新加载应用": "Reload app",
+  "主题": "Themes",
+  "主题工坊与样式插件…": "Theme studio & style plugins…",
+  "向下还原": "Restore down",
+  "外观": "Appearance",
+  "外观主题：{0}": "Appearance: {0}",
+  "小悦": "XyNote",
+  "小悦 (XyNote) v{0}": "XyNote v{0}",
+  "护眼": "Sepia",
+  "新建窗口 (Ctrl+Shift+N)": "New window (Ctrl+Shift+N)",
+  "明暗模式": "Color mode",
+  "最大化": "Maximize",
+  "最小化": "Minimize",
+  "浅色": "Light",
+  "深色": "Dark",
+  "窗口": "Window"
 };
 
 export default EN;

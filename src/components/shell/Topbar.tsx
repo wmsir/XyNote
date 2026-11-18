@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { PageIcon } from "../../icons/pageIcon";
 import {
   AlignCenter,
-  BookOpen,
   Columns2,
   Copy,
   Download,
@@ -14,20 +13,20 @@ import {
   ListTree,
   Maximize2,
   Minimize2,
-  Moon,
   MoreHorizontal,
   PanelLeftOpen,
   Save,
   Search,
   Settings,
   Star,
-  Sun,
   Target,
   Trash2,
   Upload,
   LayoutTemplate,
   AppWindow,
 } from "lucide-react";
+import { ThemeQuickPicker, type ThemeQuickPickerProps } from "./ThemeQuickPicker";
+import { WindowControls } from "./WindowControls";
 import type {
   BreadcrumbItem,
   EditorViewMode,
@@ -49,7 +48,8 @@ export interface TopbarProps {
   breadcrumbs: BreadcrumbItem[];
   sidebarCollapsed: boolean;
   isSaving: boolean;
-  theme: ThemeMode;
+  /** 旧接口保留：主题现在由 themeControl 控制 */
+  theme?: ThemeMode;
   fontStyle: FontStyleMode;
   customFontName?: string | null;
   fullWidth: boolean;
@@ -61,7 +61,7 @@ export interface TopbarProps {
   onToggleSidebar: () => void;
   onNavigatePage: (pageId: string) => void;
   onToggleFavorite: () => void;
-  onChangeTheme: (theme: ThemeMode) => void;
+  onChangeTheme?: (theme: ThemeMode) => void;
   onChangeFontStyle: (font: FontStyleMode) => void;
   onToggleFullWidth: () => void;
   onSetFullWidth?: (adaptive: boolean) => void;
@@ -88,6 +88,8 @@ export interface TopbarProps {
   onOpenImportMarkdown: () => void;
   onTrashPage: () => void;
   onOpenSearch: () => void;
+  /** 顶栏「外观」按钮：主题快速切换 */
+  themeControl?: ThemeQuickPickerProps;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -97,7 +99,6 @@ export const Topbar: React.FC<TopbarProps> = ({
   breadcrumbs,
   sidebarCollapsed,
   isSaving,
-  theme,
   fontStyle,
   customFontName = null,
   fullWidth,
@@ -109,7 +110,6 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleSidebar,
   onNavigatePage,
   onToggleFavorite,
-  onChangeTheme,
   onChangeFontStyle,
   onToggleFullWidth,
   onSetFullWidth,
@@ -133,6 +133,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onOpenImportMarkdown,
   onTrashPage,
   onOpenSearch,
+  themeControl,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -151,8 +152,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   const isDocMode = !textFile && Boolean(activeLocalMd || (page && page.pageType === "doc"));
 
   return (
-    <header className="nb-topbar">
-      <div className="nb-topbar-left">
+    <header className={`nb-topbar${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`} data-tauri-drag-region>
+      <div className="nb-topbar-left" data-tauri-drag-region>
         {sidebarCollapsed && (
           <button
             type="button"
@@ -183,7 +184,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </div>
         ) : (
           page && (
-            <nav className="nb-breadcrumbs" aria-label="页面路径">
+            <nav className="nb-breadcrumbs" aria-label="页面路径" data-tauri-drag-region>
               {breadcrumbs.map((crumb, index) => {
                 const isLast = index === breadcrumbs.length - 1;
                 return (
@@ -208,7 +209,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         )}
       </div>
 
-      <div className="nb-topbar-right">
+      <div className="nb-topbar-right" data-tauri-drag-region>
         {isDocMode && (
           <>
             {/* Segmented Typora View Mode Switcher */}
@@ -281,6 +282,8 @@ export const Topbar: React.FC<TopbarProps> = ({
         >
           <Search size={16} />
         </button>
+
+        {themeControl && <ThemeQuickPicker {...themeControl} />}
 
         {page && !activeLocalMd && !textFile && (
           <button
@@ -455,40 +458,6 @@ export const Topbar: React.FC<TopbarProps> = ({
                       : "配置本地字体路径 / 教程…"}
                   </button>
                 )}
-
-                <div className="nb-menu-divider" />
-
-                <div className="nb-menu-label">外观主题</div>
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => onChangeTheme("light")}
-                >
-                  <span className="nb-menu-item-left">
-                    <Sun size={14} /> 浅色纸面 (#FFFFFF)
-                  </span>
-                  {theme === "light" && <span>✓</span>}
-                </button>
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => onChangeTheme("dark")}
-                >
-                  <span className="nb-menu-item-left">
-                    <Moon size={14} /> 深色夜间 (#191919)
-                  </span>
-                  {theme === "dark" && <span>✓</span>}
-                </button>
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => onChangeTheme("sepia")}
-                >
-                  <span className="nb-menu-item-left">
-                    <BookOpen size={14} /> 护眼暖色 (#FBF7EE)
-                  </span>
-                  {theme === "sepia" && <span>✓</span>}
-                </button>
 
                 {isDocMode && (
                   <>
@@ -683,6 +652,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </div>
         )}
       </div>
+      <WindowControls />
     </header>
   );
 };
