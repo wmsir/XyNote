@@ -1369,8 +1369,8 @@ mod tests {
         let db = Database::open_portable(&exe_dir, &fallback_dir, false).unwrap();
 
         // Confirm cold-start `open_portable` immediately created 5 `.xynote-theme.json` + 5 `.css` files on disk
-        let themes_dir = exe_dir.join("data").join("plugins").join("themes");
-        let snippets_dir = exe_dir.join("data").join("plugins").join("snippets");
+        let themes_dir = exe_dir.join("XyNote-data").join("plugins").join("themes");
+        let snippets_dir = exe_dir.join("XyNote-data").join("plugins").join("snippets");
         assert!(themes_dir.is_dir());
         assert!(snippets_dir.is_dir());
 

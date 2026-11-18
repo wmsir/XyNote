@@ -15,7 +15,13 @@ import {
   type TextFileDocument,
 } from "./api/textfile";
 import { createFolderEntry } from "./api/folders";
-import { initialPageFromUrl, openNewWindow, saveExportImages } from "./api/desktop";
+import {
+  initialPageFromUrl,
+  onExternalOpenFiles,
+  openNewWindow,
+  saveExportImages,
+  takePendingOpenFiles,
+} from "./api/desktop";
 import { renderHtmlToPngParts } from "./utils/exportImage";
 import { UpdateNotice } from "./components/shell/UpdateCheck";
 import type { ExportFormat } from "./components/shell/Topbar";
@@ -580,6 +586,34 @@ export const App: React.FC = () => {
     [openLocalMdByPath, flushPendingBlockSave, pushRecentLocalMd, showToast]
   );
 
+  const openFileByPathRef = useRef(openFileByPath);
+  useEffect(() => {
+    openFileByPathRef.current = openFileByPath;
+  }, [openFileByPath]);
+
+  // 接收单实例转发或系统「用小悦笔记打开」发来的文件路径
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    onExternalOpenFiles((paths) => {
+      if (disposed || paths.length === 0) return;
+      const target = paths[paths.length - 1];
+      if (target) {
+        openFileByPathRef.current(target).catch(() => {});
+      }
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   // 打开了 Markdown 文件时关掉文本编辑器
   useEffect(() => {
     if (activeLocalMd) setActiveTextFile(null);
@@ -1120,6 +1154,10 @@ export const App: React.FC = () => {
         setPages(activeList);
         setTrashedPages(trashList);
 
+        const launchFiles = await takePendingOpenFiles().catch(() => []);
+        const launchTarget =
+          launchFiles.length > 0 ? launchFiles[launchFiles.length - 1] : null;
+
         const remembered = settings.lastActivePageId;
         // 新窗口通过 ?page=xxx 指定要打开的页面
         const requested = initialPageFromUrl();
@@ -1134,6 +1172,38 @@ export const App: React.FC = () => {
           if (mounted) {
             setActivePageId(targetPage.id);
             setDetail(initialDetail);
+          }
+        }
+
+        if (!requested && launchTarget && mounted) {
+          try {
+            if (isMarkdownPath(launchTarget)) {
+              const doc = await openLocalMarkdownFile(launchTarget);
+              if (mounted) {
+                rememberLocalMtime(doc);
+                setActiveTextFile(null);
+                setActiveLocalMd(doc);
+                pushRecentLocalMd(doc);
+              }
+            } else {
+              const doc = await openTextFile(launchTarget);
+              if (mounted) {
+                setActiveLocalMd(null);
+                setActiveTextFile(doc);
+                pushRecentLocalMd({
+                  filePath: doc.filePath,
+                  fileName: doc.fileName,
+                  title: doc.fileName,
+                });
+              }
+            }
+          } catch (err) {
+            if (mounted) {
+              showToast(
+                `无法打开文件：${err instanceof Error ? err.message : String(err)}`,
+                3800
+              );
+            }
           }
         }
       } finally {

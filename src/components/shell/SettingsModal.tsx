@@ -66,6 +66,13 @@ import { DonatePanel } from "./DonatePanel";
 import { FeedbackPanel } from "./FeedbackPanel";
 import { openExternalUrl, type SyncConfig } from "../../api/sync";
 import {
+  getShellIntegrationStatus,
+  promptDefaultMdAssociation,
+  registerShellIntegration,
+  unregisterShellIntegration,
+  type ShellIntegrationStatus,
+} from "../../api/desktop";
+import {
   deriveFontDisplayName,
   loadAndActivateCustomFont,
   normalizeFontPathInput,
@@ -205,6 +212,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [fontPathDraft, setFontPathDraft] = useState("");
   const [fontNameDraft, setFontNameDraft] = useState("");
+  const [shellStatus, setShellStatus] = useState<ShellIntegrationStatus | null>(
+    null
+  );
   const browserFontInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeCustomFont =
@@ -221,14 +231,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const refreshDiagnostics = useCallback(async () => {
     try {
-      const [info, snapshotList] = await Promise.all([
+      const [info, snapshotList, shellInfo] = await Promise.all([
         getStorageInfo(),
         listBackups(),
+        getShellIntegrationStatus().catch(() => null),
       ]);
       setLocalInfo(info);
       setCustomDataDir(info.activeDataDir);
       setCustomMdSyncDir(info.markdownSyncDir);
       setBackups(snapshotList);
+      setShellStatus(shellInfo);
     } catch {
       // Keep existing state if transient error
     }
@@ -682,6 +694,72 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleRegisterShellIntegration = async () => {
+    setBusyAction("shell-register");
+    setBanner(null);
+    try {
+      const updated = await registerShellIntegration();
+      setShellStatus(updated);
+      const msg =
+        "已写入 Windows 右键菜单「用小悦笔记 (XyNote) 打开」与打开方式关联！";
+      setBanner({ kind: "success", text: msg });
+      onNotify("Windows 右键菜单与文件关联已更新");
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        text: `注册右键菜单失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handlePromptDefaultMd = async () => {
+    setBusyAction("shell-default");
+    setBanner(null);
+    try {
+      const updated = await promptDefaultMdAssociation();
+      setShellStatus(updated);
+      const msg = updated.isDefaultMdHandler
+        ? "已将当前小悦笔记设为系统默认 .md 打开程序！"
+        : "已在系统打开方式中注册小悦笔记；请在弹出窗口选择「小悦笔记 (XyNote)」并点「始终」即可双击直开 .md。";
+      setBanner({ kind: "success", text: msg });
+      onNotify(
+        updated.isDefaultMdHandler
+          ? "已设为默认 .md 打开程序"
+          : "请在系统窗口中选择小悦笔记并点始终"
+      );
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        text: `唤醒系统默认应用设置失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleUnregisterShellIntegration = async () => {
+    setBusyAction("shell-unregister");
+    setBanner(null);
+    try {
+      const updated = await unregisterShellIntegration();
+      setShellStatus(updated);
+      setBanner({
+        kind: "success",
+        text: "已清理当前用户在 Windows 注册表中的小悦笔记右键菜单与 .md 关联项。",
+      });
+      onNotify("已移除 Windows 右键菜单与关联");
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        text: `移除右键菜单失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const navItems: Array<{
     id: SettingsTabId;
     label: string;
@@ -794,6 +872,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     默认存储在当前软件目录: <code>{defaultPortableDisplay}</code>
                   </div>
                 </div>
+
+                {shellStatus?.supported && (
+                  <div className="nb-settings-card-box">
+                    <div className="nb-settings-row-head">
+                      <div>
+                        <div className="nb-settings-label">
+                          Windows 右键菜单与默认打开 .md 文件（免管理员即时生效）
+                        </div>
+                        <div className="nb-settings-sub">
+                          即使使用便携版 <code>portable.exe</code>，无需管理员权限也可在文件右键看到{" "}
+                          <b>「用小悦笔记 (XyNote) 打开」</b>，双击即可直接用块编辑器打开本地{" "}
+                          <code>.md</code> 文档
+                        </div>
+                      </div>
+                      <span
+                        className="nb-storage-meta"
+                        style={
+                          shellStatus.isDefaultMdHandler
+                            ? undefined
+                            : { color: "var(--text-secondary)" }
+                        }
+                      >
+                        {shellStatus.isDefaultMdHandler
+                          ? "✓ 已设为默认 .md 程序"
+                          : shellStatus.contextMenuRegistered &&
+                              shellStatus.pathMatchesCurrentExe
+                            ? "✓ 右键菜单已就绪"
+                            : "尚未关联当前程序路径"}
+                      </span>
+                    </div>
+
+                    <div className="nb-storage-kv-grid">
+                      <div className="nb-storage-kv-item">
+                        <span className="nb-storage-kv-key">当前绑定程序路径</span>
+                        <code className="nb-storage-kv-val" title={shellStatus.currentExePath}>
+                          {shellStatus.registeredExePath || shellStatus.currentExePath}
+                        </code>
+                        <span className="nb-storage-kv-tag">
+                          {shellStatus.pathMatchesCurrentExe ? "路径一致" : "待刷新"}
+                        </span>
+                      </div>
+                      <div className="nb-storage-kv-item">
+                        <span className="nb-storage-kv-key">资源管理器右键与打开方式</span>
+                        <span className="nb-storage-kv-tag">
+                          {shellStatus.contextMenuRegistered ? "右键菜单已开启" : "未开启右键"}
+                        </span>
+                        <span className="nb-storage-kv-tag">
+                          {shellStatus.openWithRegistered ? "打开方式列表已注册" : "未注册打开方式"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="nb-settings-actions-bar">
+                      <button
+                        type="button"
+                        className="nb-btn-primary"
+                        disabled={busyAction !== null}
+                        onClick={() => {
+                          handlePromptDefaultMd().catch(() => {});
+                        }}
+                      >
+                        <Sparkles size={14} />
+                        {busyAction === "shell-default"
+                          ? "正在唤醒系统选择..."
+                          : "设为默认打开 .md 程序"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        disabled={busyAction !== null}
+                        onClick={() => {
+                          handleRegisterShellIntegration().catch(() => {});
+                        }}
+                      >
+                        <RefreshCw size={14} />
+                        {busyAction === "shell-register"
+                          ? "正在写入注册表..."
+                          : "一键注册 / 修复右键菜单"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        disabled={busyAction !== null}
+                        onClick={() => {
+                          handleUnregisterShellIntegration().catch(() => {});
+                        }}
+                      >
+                        <Trash2 size={14} /> 移除右键菜单与关联
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Active Data Directory Editor */}
                 <div className="nb-settings-card-box">

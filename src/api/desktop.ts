@@ -47,6 +47,59 @@ export function initialPageFromUrl(): string | null {
   }
 }
 
+export interface ShellIntegrationStatus {
+  supported: boolean;
+  contextMenuRegistered: boolean;
+  openWithRegistered: boolean;
+  isDefaultMdHandler: boolean;
+  currentExePath: string;
+  registeredExePath: string | null;
+  pathMatchesCurrentExe: boolean;
+  currentUserChoiceProgId: string | null;
+}
+
+export async function takePendingOpenFiles(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  return invoke<string[]>("take_pending_open_files");
+}
+
+export async function onExternalOpenFiles(
+  handler: (paths: string[]) => void
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string[]>("xynote://open-files", (ev) => {
+    const paths = Array.isArray(ev.payload) ? ev.payload : [];
+    if (paths.length > 0) handler(paths);
+  });
+}
+
+export async function getShellIntegrationStatus(): Promise<ShellIntegrationStatus | null> {
+  if (!isTauriRuntime()) return null;
+  return invoke<ShellIntegrationStatus>("get_shell_integration_status");
+}
+
+export async function registerShellIntegration(): Promise<ShellIntegrationStatus> {
+  if (!isTauriRuntime()) {
+    throw new Error("Windows 右键菜单与文件关联仅支持桌面客户端");
+  }
+  return invoke<ShellIntegrationStatus>("register_shell_integration");
+}
+
+export async function unregisterShellIntegration(): Promise<ShellIntegrationStatus> {
+  if (!isTauriRuntime()) {
+    throw new Error("Windows 右键菜单与文件关联仅支持桌面客户端");
+  }
+  return invoke<ShellIntegrationStatus>("unregister_shell_integration");
+}
+
+export async function promptDefaultMdAssociation(): Promise<ShellIntegrationStatus> {
+  if (!isTauriRuntime()) {
+    throw new Error("设置默认 .md 打开程序仅支持桌面客户端");
+  }
+  return invoke<ShellIntegrationStatus>("prompt_default_md_association");
+}
+
 /* ---------------- 自动检查更新的设置 ---------------- */
 
 const LS_AUTO = "xynote.update.autoCheck";

@@ -13,6 +13,7 @@ pub mod export_formats;
 #[cfg(not(test))]
 pub mod commands;
 pub mod db;
+pub mod file_assoc;
 pub mod importer;
 pub mod markdown;
 pub mod models;
@@ -27,8 +28,16 @@ pub fn run() {
     use db::Database;
     use tauri::Manager;
 
-    tauri::Builder::default()
-        .setup(|app| {
+    let cli_files = file_assoc::collect_cli_open_files();
+    let ipc_server = match file_assoc::acquire_or_forward_single_instance(&cli_files) {
+        file_assoc::SingleInstanceOutcome::Forwarded => return,
+        file_assoc::SingleInstanceOutcome::Primary(srv) => srv,
+    };
+    let mut ipc_server_opt = Some(ipc_server);
+    let mut cli_files_opt = Some(cli_files);
+
+    let app = tauri::Builder::default()
+        .setup(move |app| {
             let fallback_app_data_dir = app
                 .path()
                 .app_data_dir()
@@ -46,8 +55,31 @@ pub fn run() {
             };
             let database = Database::open_portable(&exe_dir, &fallback_app_data_dir, true)
                 .map_err(|e| format!("Failed to initialize portable SQLite database: {}", e))?;
+
+            #[cfg(target_os = "windows")]
+            {
+                let should_register = database
+                    .get_settings()
+                    .ok()
+                    .and_then(|s| s.get("winShellIntegration").cloned())
+                    .map(|v| v != "disabled")
+                    .unwrap_or(true);
+                if should_register {
+                    std::thread::spawn(|| {
+                        let _ = file_assoc::ensure_windows_shell_registered_silent();
+                    });
+                }
+            }
+
+            let initial_files = cli_files_opt.take().unwrap_or_default();
+            app.manage(file_assoc::LaunchFilesState::new(initial_files));
             app.manage(database);
             app.manage(watch::FsWatcher::default());
+
+            if let Some(srv) = ipc_server_opt.take().flatten() {
+                file_assoc::spawn_ipc_listener(Some(srv), app.handle().clone());
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,6 +122,11 @@ pub fn run() {
             commands::pick_font_file_dialog,
             commands::load_custom_font_file,
             commands::import_font_to_data_dir,
+            commands::take_pending_open_files,
+            commands::get_shell_integration_status,
+            commands::register_shell_integration,
+            commands::unregister_shell_integration,
+            commands::prompt_default_md_association,
             commands::open_local_markdown_file,
             commands::save_local_markdown_file,
             commands::convert_markdown_blocks,
@@ -147,6 +184,19 @@ pub fn run() {
             commands::import_style_plugin_content,
             commands::export_style_plugin_dialog,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Notion Desktop Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building XyNote Tauri application");
+
+    app.run(|#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = event {
+            let paths: Vec<String> = urls
+                .into_iter()
+                .filter_map(|u| u.to_file_path().ok())
+                .filter(|p| p.is_file())
+                .map(|p| win_dialogs::normalize_win32_path_str(&p.to_string_lossy()))
+                .collect();
+            file_assoc::enqueue_or_emit_open_files(app_handle, paths);
+        }
+    });
 }

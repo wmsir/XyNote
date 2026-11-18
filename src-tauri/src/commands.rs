@@ -971,3 +971,54 @@ pub fn page_version_restore(db: State<'_, Database>, version_id: String) -> Resu
     };
     Ok(page_id)
 }
+
+#[tauri::command]
+pub fn take_pending_open_files(
+    launch: State<'_, crate::file_assoc::LaunchFilesState>,
+) -> Vec<String> {
+    launch.take_pending()
+}
+
+#[tauri::command]
+pub fn get_shell_integration_status() -> crate::file_assoc::ShellIntegrationStatus {
+    crate::file_assoc::get_shell_integration_status()
+}
+
+#[tauri::command]
+pub async fn register_shell_integration(
+    app: AppHandle,
+) -> Result<crate::file_assoc::ShellIntegrationStatus, String> {
+    use tauri::Manager;
+    let status = tauri::async_runtime::spawn_blocking(crate::file_assoc::register_windows_shell_integration)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(String::from)?;
+    let _ = app.state::<Database>().set_setting("winShellIntegration", "enabled");
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn unregister_shell_integration(
+    app: AppHandle,
+) -> Result<crate::file_assoc::ShellIntegrationStatus, String> {
+    use tauri::Manager;
+    let status = tauri::async_runtime::spawn_blocking(crate::file_assoc::unregister_windows_shell_integration)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(String::from)?;
+    let _ = app.state::<Database>().set_setting("winShellIntegration", "disabled");
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn prompt_default_md_association(
+    app: AppHandle,
+) -> Result<crate::file_assoc::ShellIntegrationStatus, String> {
+    use tauri::Manager;
+    let status = tauri::async_runtime::spawn_blocking(crate::file_assoc::prompt_windows_default_md_dialog)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(String::from)?;
+    let _ = app.state::<Database>().set_setting("winShellIntegration", "enabled");
+    Ok(status)
+}
