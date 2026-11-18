@@ -126,6 +126,10 @@
   font-family: var(--font-mono, "JetBrains Mono", Consolas, monospace);
 }
 
+.nb-editor-root.nb-editor-font-custom {
+  font-family: var(--font-custom, var(--font-sans));
+}
+
 .nb-editor-list {
   display: flex;
   flex-direction: column;
@@ -2797,6 +2801,13 @@
   color: var(--text-primary, #37352f);
 }
 
+.nb-mermaid-tool-btn.is-active {
+  background: var(--accent-bg, rgba(35, 131, 226, 0.12));
+  border-color: var(--accent-color, #2383e2);
+  color: var(--accent-color, #2383e2);
+  font-weight: 600;
+}
+
 .nb-mermaid-tool-btn.is-copied {
   color: var(--success-color, #0f7b6c);
   border-color: var(--success-color, #0f7b6c);
@@ -2951,13 +2962,19 @@
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: transform 0.14s ease;
+  justify-content: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
 }
 
-.nb-mermaid-stage.is-fit-width .nb-mermaid-svg-canvas svg {
-  max-width: 100% !important;
-  height: auto !important;
+.nb-mermaid-svg-canvas svg {
+  width: var(--mmd-w, auto) !important;
+  height: var(--mmd-h, auto) !important;
+  max-width: none !important;
+  margin: 0 auto;
+  flex-shrink: 0;
+  display: block;
 }
 
 .nb-mermaid-svg-canvas svg foreignObject {
@@ -3073,6 +3090,13 @@
 
 .nb-mermaid-lightbox-btn:hover {
   background: rgba(255, 255, 255, 0.16);
+}
+
+.nb-mermaid-lightbox-btn.is-active {
+  background: rgba(59, 130, 246, 0.3);
+  border-color: rgba(96, 165, 250, 0.72);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .nb-mermaid-lightbox-btn.is-close {

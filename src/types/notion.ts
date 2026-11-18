@@ -367,6 +367,13 @@ export interface SavedAssetResult {
   assetUrl: string;
 }
 
+export interface ImportedCustomFont {
+  storedPath: string;
+  resolvedPath: string;
+  displayName: string;
+  byteSize: number;
+}
+
 /* ============================================================================
  * 侧栏「文件夹」：磁盘文件夹树
  * ========================================================================== */

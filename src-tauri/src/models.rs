@@ -388,6 +388,15 @@ pub struct SavedAssetResult {
     pub asset_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedCustomFont {
+    pub stored_path: String,
+    pub resolved_path: String,
+    pub display_name: String,
+    pub byte_size: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeTokens {
@@ -643,6 +652,17 @@ mod tests {
         let av = serde_json::to_value(&asset).unwrap();
         assert_eq!(av["filePath"], "C:\\Notion\\data\\assets\\img.png");
         assert_eq!(av["assetUrl"], "data:image/png;base64,AAAA");
+
+        let custom_font = ImportedCustomFont {
+            stored_path: "fonts/LXGWWenKai.ttf".into(),
+            resolved_path: "C:\\XyNote\\XyNote-data\\fonts\\LXGWWenKai.ttf".into(),
+            display_name: "LXGWWenKai".into(),
+            byte_size: 123456,
+        };
+        let cfv = serde_json::to_value(&custom_font).unwrap();
+        assert_eq!(cfv["storedPath"], "fonts/LXGWWenKai.ttf");
+        assert_eq!(cfv["displayName"], "LXGWWenKai");
+        assert_eq!(cfv["byteSize"], 123456);
 
         let v021_props = BlockProps {
             mermaid_view: Some("split".into()),

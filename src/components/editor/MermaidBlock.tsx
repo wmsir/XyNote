@@ -212,11 +212,97 @@ function formatMermaidError(err: unknown): string {
   return String(err || "Mermaid 语法解析失败，请检查节点括号或箭头格式");
 }
 
+function normalizeMermaidSvg(rawSvg: string): {
+  svg: string;
+  width: number;
+  height: number;
+} {
+  const openMatch = /<svg\b([^>]*)>/i.exec(rawSvg);
+  if (!openMatch) {
+    return { svg: rawSvg, width: 640, height: 360 };
+  }
+
+  let attrs = openMatch[1];
+  let width = 0;
+  let height = 0;
+
+  const viewBoxMatch = /\bviewBox\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(attrs);
+  const viewBoxRaw = (viewBoxMatch?.[1] || viewBoxMatch?.[2] || "").trim();
+  if (viewBoxRaw) {
+    const nums = viewBoxRaw
+      .split(/[\s,]+/)
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n));
+    if (nums.length >= 4 && nums[2] > 1 && nums[3] > 1) {
+      width = nums[2];
+      height = nums[3];
+    }
+  }
+
+  if (width <= 1 || height <= 1) {
+    const styleMatch = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
+    const styleVal = styleMatch?.[1] || styleMatch?.[2] || "";
+    const maxWMatch = /max-width\s*:\s*([0-9]+(?:\.[0-9]+)?)px/i.exec(styleVal);
+    if (maxWMatch) {
+      const mw = Number(maxWMatch[1]);
+      if (Number.isFinite(mw) && mw > 1) width = mw;
+    }
+
+    const wAttrMatch = /\bwidth\s*=\s*(?:"([0-9]+(?:\.[0-9]+)?)(?:px)?"|'([0-9]+(?:\.[0-9]+)?)(?:px)?')/i.exec(
+      attrs
+    );
+    const wAttrNum = Number(wAttrMatch?.[1] || wAttrMatch?.[2] || 0);
+    if (width <= 1 && Number.isFinite(wAttrNum) && wAttrNum > 1) {
+      width = wAttrNum;
+    }
+
+    const hAttrMatch = /\bheight\s*=\s*(?:"([0-9]+(?:\.[0-9]+)?)(?:px)?"|'([0-9]+(?:\.[0-9]+)?)(?:px)?')/i.exec(
+      attrs
+    );
+    const hAttrNum = Number(hAttrMatch?.[1] || hAttrMatch?.[2] || 0);
+    if (height <= 1 && Number.isFinite(hAttrNum) && hAttrNum > 1) {
+      height = hAttrNum;
+    }
+  }
+
+  if (!Number.isFinite(width) || width <= 1) width = 640;
+  if (!Number.isFinite(height) || height <= 1) height = 360;
+
+  const roundedW = Math.round(width);
+  const roundedH = Math.round(height);
+
+  // Strip fluid width="100%" & inline max-width so SVG keeps predictable intrinsic aspect ratio
+  attrs = attrs
+    .replace(/\s+\bwidth\s*=\s*(?:"[^"]*"|'[^']*')/gi, "")
+    .replace(/\s+\bheight\s*=\s*(?:"[^"]*"|'[^']*')/gi, "")
+    .replace(/\bstyle\s*=\s*"([^"]*)"/gi, (_full, inner: string) => {
+      const cleaned = inner.replace(/max-width\s*:[^;]+;?/gi, "").trim();
+      return cleaned ? `style="${cleaned}"` : "";
+    })
+    .replace(/\bstyle\s*=\s*'([^']*)'/gi, (_full, inner: string) => {
+      const cleaned = inner.replace(/max-width\s*:[^;]+;?/gi, "").trim();
+      return cleaned ? `style='${cleaned}'` : "";
+    });
+
+  const normalizedOpenTag = `<svg${attrs} width="${roundedW}" height="${roundedH}">`;
+  const normalizedSvg =
+    rawSvg.slice(0, openMatch.index) +
+    normalizedOpenTag +
+    rawSvg.slice(openMatch.index + openMatch[0].length);
+
+  return {
+    svg: normalizedSvg,
+    width: roundedW,
+    height: roundedH,
+  };
+}
+
 /* ============================================================================
  * Typora-Grade Offline Mermaid Diagram Component
  * ========================================================================== */
 
 export const MermaidBlock: React.FC<MermaidBlockProps> = ({
+  blockId,
   code,
   mermaidView = "preview",
   readOnly = false,
@@ -232,6 +318,14 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   );
   const [localView, setLocalView] = useState<MermaidViewMode>(mermaidView);
   const [svgHtml, setSvgHtml] = useState<string>("");
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  }>({ width: 640, height: 360 });
+  const [stageInnerWidth, setStageInnerWidth] = useState<number>(0);
+  const [viewportHeight, setViewportHeight] = useState<number>(() =>
+    typeof window !== "undefined" ? window.innerHeight : 900
+  );
   const [syntaxError, setSyntaxError] = useState<string | null>(null);
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [fitWidth, setFitWidth] = useState<boolean>(true);
@@ -239,8 +333,9 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   const [exportedSvg, setExportedSvg] = useState<boolean>(false);
   const [templatesOpen, setTemplatesOpen] = useState<boolean>(false);
 
-  // Fullscreen Lightbox state (pan + wheel zoom)
+  // Fullscreen Lightbox state (pan + wheel zoom, default auto-fit)
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
+  const [lightboxFit, setLightboxFit] = useState<boolean>(true);
   const [lightboxScale, setLightboxScale] = useState<number>(1);
   const [lightboxPan, setLightboxPan] = useState<{ x: number; y: number }>({
     x: 0,
@@ -250,6 +345,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const lightboxViewportRef = useRef<HTMLDivElement | null>(null);
   const templateMenuRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{
     startX: number;
@@ -257,6 +353,12 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
     origX: number;
     origY: number;
   } | null>(null);
+
+  // Always default to auto-fit when switching blocks
+  useEffect(() => {
+    setFitWidth(true);
+    setZoomPct(100);
+  }, [blockId]);
 
   // Sync external `mermaidView` prop when changed
   useEffect(() => {
@@ -327,6 +429,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
     const trimmed = code.trim();
     if (!trimmed) {
       setSvgHtml("");
+      setNaturalSize({ width: 640, height: 360 });
       setSyntaxError(null);
       return;
     }
@@ -335,7 +438,12 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
       enqueueMermaidSvgRender(trimmed, activeTheme)
         .then(({ svg }) => {
           if (cancelled) return;
-          setSvgHtml(svg);
+          const normalized = normalizeMermaidSvg(svg);
+          setSvgHtml(normalized.svg);
+          setNaturalSize({
+            width: normalized.width,
+            height: normalized.height,
+          });
           setSyntaxError(null);
         })
         .catch((err: unknown) => {
@@ -349,6 +457,74 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
       window.clearTimeout(timer);
     };
   }, [code, activeTheme]);
+
+  // Measure inline Mermaid stage container width + viewport height for true auto-fit scaling
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    const syncStageSize = () => {
+      if (el) {
+        const innerW = Math.max(180, el.clientWidth - 36);
+        setStageInnerWidth((prev) => (prev === innerW ? prev : innerW));
+      }
+      if (typeof window !== "undefined") {
+        setViewportHeight((prev) =>
+          prev === window.innerHeight ? prev : window.innerHeight
+        );
+      }
+    };
+    syncStageSize();
+
+    let ro: ResizeObserver | null = null;
+    if (el && typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(syncStageSize);
+      ro.observe(el);
+    }
+    window.addEventListener("resize", syncStageSize);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", syncStageSize);
+    };
+  }, [effectiveView, svgHtml]);
+
+  const computeLightboxFitScale = useCallback(() => {
+    const vp = lightboxViewportRef.current;
+    const availW = vp
+      ? Math.max(240, vp.clientWidth - 96)
+      : Math.max(240, (typeof window !== "undefined" ? window.innerWidth : 1280) - 112);
+    const availH = vp
+      ? Math.max(220, vp.clientHeight - 96)
+      : Math.max(220, (typeof window !== "undefined" ? window.innerHeight : 800) - 150);
+    const ratio = Math.min(
+      availW / Math.max(1, naturalSize.width),
+      availH / Math.max(1, naturalSize.height),
+      1.5
+    );
+    return Math.max(0.2, Math.min(2.0, Math.round(ratio * 1000) / 1000));
+  }, [naturalSize.height, naturalSize.width]);
+
+  // Re-sync fullscreen lightbox auto-fit scale on open & viewport resize
+  useLayoutEffect(() => {
+    if (!lightboxOpen || !lightboxFit) return;
+    const syncFit = () => {
+      setLightboxScale(computeLightboxFitScale());
+      setLightboxPan({ x: 0, y: 0 });
+    };
+    syncFit();
+    window.addEventListener("resize", syncFit);
+    return () => window.removeEventListener("resize", syncFit);
+  }, [lightboxOpen, lightboxFit, computeLightboxFitScale]);
+
+  const fitScale = useMemo(() => {
+    const maxStageH = Math.max(260, Math.min(680, Math.round(viewportHeight * 0.68)));
+    const wRatio = stageInnerWidth > 0 ? stageInnerWidth / naturalSize.width : 1;
+    const hRatio = maxStageH / naturalSize.height;
+    const raw = Math.min(1, wRatio, hRatio);
+    return Math.max(0.15, Math.min(1, Math.round(raw * 1000) / 1000));
+  }, [naturalSize.height, naturalSize.width, stageInnerWidth, viewportHeight]);
+
+  const activeScale = fitWidth ? fitScale : zoomPct / 100;
+  const displayWidth = Math.max(48, Math.round(naturalSize.width * activeScale));
+  const displayHeight = Math.max(32, Math.round(naturalSize.height * activeScale));
 
   // Auto-resize Mermaid code textarea in `code` or `split` mode
   useLayoutEffect(() => {
@@ -411,7 +587,8 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
 
   const openLightbox = () => {
     if (!svgHtml) return;
-    setLightboxScale(1);
+    setLightboxFit(true);
+    setLightboxScale(computeLightboxFitScale());
     setLightboxPan({ x: 0, y: 0 });
     setLightboxOpen(true);
   };
@@ -543,12 +720,10 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
         <div
           className="nb-mermaid-svg-canvas"
           style={
-            fitWidth
-              ? undefined
-              : {
-                  transform: `scale(${zoomPct / 100})`,
-                  transformOrigin: "top center",
-                }
+            {
+              "--mmd-w": `${displayWidth}px`,
+              "--mmd-h": `${displayHeight}px`,
+            } as React.CSSProperties
           }
           dangerouslySetInnerHTML={{ __html: svgHtml }}
         />
@@ -627,8 +802,9 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
                 className="nb-mermaid-tool-btn is-icon"
                 title="缩小图表"
                 onClick={() => {
+                  const base = fitWidth ? Math.round(activeScale * 100) : zoomPct;
                   setFitWidth(false);
-                  setZoomPct((z) => Math.max(40, z - 15));
+                  setZoomPct(Math.max(25, base - 15));
                 }}
               >
                 <ZoomOut size={13} />
@@ -636,38 +812,38 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
               <button
                 type="button"
                 className="nb-mermaid-zoom-readout"
-                title="点击重置为 100% 比例"
+                title="点击切换为 100% 原始尺寸"
                 onClick={() => {
                   setFitWidth(false);
                   setZoomPct(100);
                 }}
               >
-                {fitWidth ? "自适应" : `${zoomPct}%`}
+                {Math.round(activeScale * 100)}%
               </button>
               <button
                 type="button"
                 className="nb-mermaid-tool-btn is-icon"
                 title="放大图表"
                 onClick={() => {
+                  const base = fitWidth ? Math.round(activeScale * 100) : zoomPct;
                   setFitWidth(false);
-                  setZoomPct((z) => Math.min(260, z + 15));
+                  setZoomPct(Math.min(300, base + 15));
                 }}
               >
                 <ZoomIn size={13} />
               </button>
-              {!fitWidth && (
-                <button
-                  type="button"
-                  className="nb-mermaid-tool-btn"
-                  title="恢复自适应宽度"
-                  onClick={() => {
-                    setFitWidth(true);
-                    setZoomPct(100);
-                  }}
-                >
-                  自适应
-                </button>
-              )}
+              <button
+                type="button"
+                aria-pressed={fitWidth}
+                className={`nb-mermaid-tool-btn${fitWidth ? " is-active" : ""}`}
+                title="自动适配容器可视尺寸（小图保持 1:1 清晰比例，大图自动等比缩放）"
+                onClick={() => {
+                  setFitWidth(true);
+                  setZoomPct(100);
+                }}
+              >
+                自适应
+              </button>
               <button
                 type="button"
                 className="nb-mermaid-tool-btn"
@@ -801,9 +977,11 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
                 <button
                   type="button"
                   className="nb-mermaid-lightbox-btn"
-                  onClick={() =>
-                    setLightboxScale((s) => Math.max(0.25, +(s - 0.2).toFixed(2)))
-                  }
+                  title="缩小"
+                  onClick={() => {
+                    setLightboxFit(false);
+                    setLightboxScale((s) => Math.max(0.2, +(s - 0.2).toFixed(2)));
+                  }}
                 >
                   <ZoomOut size={14} />
                 </button>
@@ -813,22 +991,39 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
                 <button
                   type="button"
                   className="nb-mermaid-lightbox-btn"
-                  onClick={() =>
-                    setLightboxScale((s) => Math.min(4, +(s + 0.2).toFixed(2)))
-                  }
+                  title="放大"
+                  onClick={() => {
+                    setLightboxFit(false);
+                    setLightboxScale((s) => Math.min(4.5, +(s + 0.2).toFixed(2)));
+                  }}
                 >
                   <ZoomIn size={14} />
                 </button>
                 <button
                   type="button"
-                  className="nb-mermaid-lightbox-btn"
+                  aria-pressed={lightboxFit}
+                  className={`nb-mermaid-lightbox-btn${lightboxFit ? " is-active" : ""}`}
+                  title="自动适配全屏视口尺寸"
                   onClick={() => {
+                    setLightboxFit(true);
+                    setLightboxScale(computeLightboxFitScale());
+                    setLightboxPan({ x: 0, y: 0 });
+                  }}
+                >
+                  <span>自适应</span>
+                </button>
+                <button
+                  type="button"
+                  className="nb-mermaid-lightbox-btn"
+                  title="重置为 100% 原始大小"
+                  onClick={() => {
+                    setLightboxFit(false);
                     setLightboxScale(1);
                     setLightboxPan({ x: 0, y: 0 });
                   }}
                 >
                   <RotateCcw size={13} />
-                  <span>重置视图</span>
+                  <span>100%</span>
                 </button>
                 <button
                   type="button"
@@ -859,14 +1054,16 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
             </div>
 
             <div
+              ref={lightboxViewportRef}
               className={`nb-mermaid-lightbox-viewport ${
                 isPanning ? "is-panning" : ""
               }`}
               onWheel={(e) => {
                 e.preventDefault();
                 const delta = e.deltaY < 0 ? 0.14 : -0.14;
+                setLightboxFit(false);
                 setLightboxScale((s) =>
-                  Math.max(0.25, Math.min(4.5, +(s + delta).toFixed(2)))
+                  Math.max(0.2, Math.min(4.5, +(s + delta).toFixed(2)))
                 );
               }}
               onMouseDown={(e) => {

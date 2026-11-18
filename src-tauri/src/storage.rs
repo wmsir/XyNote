@@ -5,8 +5,8 @@ use crate::markdown::{
     sanitize_windows_segment, serialize_save_blocks_to_markdown, ParsedBlockDraft,
 };
 use crate::models::{
-    AppError, BackupEntry, Block, LocalMarkdownDocument, Page, SaveBlockItem, SavedAssetResult,
-    StorageConfigInfo, UpdateStorageConfigInput,
+    AppError, BackupEntry, Block, ImportedCustomFont, LocalMarkdownDocument, Page, SaveBlockItem,
+    SavedAssetResult, StorageConfigInfo, UpdateStorageConfigInput,
 };
 use crate::win_dialogs::normalize_win32_path_str;
 use base64::Engine;
@@ -1572,6 +1572,158 @@ impl Database {
 
         Ok(cursor.into_inner())
     }
+
+    pub fn resolve_and_read_custom_font(&self, raw_path: &str) -> Result<Vec<u8>, AppError> {
+        let (active_dir, exe_dir) = {
+            let inner = self.lock()?;
+            (
+                inner.storage.as_ref().map(|st| st.active_data_path()),
+                inner.storage.as_ref().map(|st| st.exe_dir.clone()),
+            )
+        };
+        let resolved =
+            resolve_custom_font_file_path(raw_path, active_dir.as_deref(), exe_dir.as_deref())?;
+        Ok(std::fs::read(&resolved)?)
+    }
+
+    pub fn import_custom_font_to_data_dir(
+        &self,
+        raw_path: &str,
+    ) -> Result<ImportedCustomFont, AppError> {
+        let (active_dir_opt, exe_dir_opt) = {
+            let inner = self.lock()?;
+            (
+                inner.storage.as_ref().map(|st| st.active_data_path()),
+                inner.storage.as_ref().map(|st| st.exe_dir.clone()),
+            )
+        };
+        let active_dir = active_dir_opt.ok_or_else(|| {
+            AppError::Validation("当前为内存工作区，无法拷入本地 fonts/ 目录".into())
+        })?;
+        let source = resolve_custom_font_file_path(
+            raw_path,
+            Some(&active_dir),
+            exe_dir_opt.as_deref(),
+        )?;
+        let meta = std::fs::metadata(&source)?;
+        let ext = source
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_else(|| "ttf".to_string());
+        let stem_raw = source
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("custom-font");
+        let safe_stem = sanitize_windows_segment(stem_raw);
+        let file_name = format!("{}.{}", safe_stem, ext);
+        let fonts_dir = active_dir.join("fonts");
+        std::fs::create_dir_all(&fonts_dir)?;
+        let dest = fonts_dir.join(&file_name);
+
+        let same_target = normalize_path_key(&source) == normalize_path_key(&dest)
+            || (dest.exists()
+                && std::fs::canonicalize(&source).ok() == std::fs::canonicalize(&dest).ok());
+        if !same_target {
+            std::fs::copy(&source, &dest)?;
+        }
+
+        Ok(ImportedCustomFont {
+            stored_path: format!("fonts/{}", file_name),
+            resolved_path: clean_display_path(&dest),
+            display_name: safe_stem,
+            byte_size: meta.len(),
+        })
+    }
+}
+
+const MAX_CUSTOM_FONT_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(crate) fn normalize_custom_font_path_input(raw_path: &str) -> String {
+    let mut cleaned = raw_path.trim();
+    loop {
+        if cleaned.len() >= 2
+            && ((cleaned.starts_with('"') && cleaned.ends_with('"'))
+                || (cleaned.starts_with('\'') && cleaned.ends_with('\'')))
+        {
+            cleaned = cleaned[1..cleaned.len() - 1].trim();
+        } else {
+            break;
+        }
+    }
+    let cleaned = cleaned.trim_matches('"').trim_matches('\'').trim();
+    if let Some(rest) = cleaned.strip_prefix("file:///") {
+        let rest_norm = normalize_win32_path_str(rest);
+        if cfg!(not(target_os = "windows")) && !rest_norm.starts_with('/') {
+            return format!("/{}", rest_norm);
+        }
+        return rest_norm;
+    }
+    if let Some(sub) = cleaned.strip_prefix("~/").or_else(|| cleaned.strip_prefix("~\\")) {
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            return normalize_win32_path_str(&PathBuf::from(home).join(sub).to_string_lossy());
+        }
+    }
+    normalize_win32_path_str(cleaned)
+}
+
+fn validate_custom_font_file(path: &Path) -> Result<u64, AppError> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "ttf" | "otf" | "woff" | "woff2" | "ttc") {
+        return Err(AppError::Validation(format!(
+            "不支持的字体格式（仅支持 .ttf / .otf / .woff2 / .woff / .ttc）：{}",
+            path.display()
+        )));
+    }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Err(AppError::Validation(format!(
+            "找不到字体文件：{}，请检查路径是否正确",
+            path.display()
+        )));
+    };
+    if !meta.is_file() {
+        return Err(AppError::Validation(format!(
+            "字体路径不是有效文件：{}",
+            path.display()
+        )));
+    }
+    let len = meta.len();
+    if len == 0 || len > MAX_CUSTOM_FONT_BYTES {
+        return Err(AppError::Validation(format!(
+            "字体文件大小超出限制（需在 1B ~ 64MB 之间）：{}",
+            path.display()
+        )));
+    }
+    Ok(len)
+}
+
+fn resolve_custom_font_file_path(
+    raw_path: &str,
+    active_data_dir: Option<&Path>,
+    exe_dir: Option<&Path>,
+) -> Result<PathBuf, AppError> {
+    let clean = normalize_custom_font_path_input(raw_path);
+    if clean.is_empty() {
+        return Err(AppError::Validation("请输入字体文件路径".into()));
+    }
+    let input_path = PathBuf::from(&clean);
+    let candidate = if input_path.is_absolute() {
+        input_path
+    } else if let Some(in_data) = active_data_dir.map(|d| d.join(&input_path)).filter(|p| p.is_file()) {
+        in_data
+    } else if let Some(in_exe) = exe_dir.map(|d| d.join(&input_path)).filter(|p| p.is_file()) {
+        in_exe
+    } else if let Some(d) = active_data_dir {
+        d.join(&input_path)
+    } else {
+        input_path
+    };
+    validate_custom_font_file(&candidate)?;
+    Ok(candidate)
 }
 
 fn create_pre_overwrite_backup(existing_db: &Path, backups_dir: &Path) -> Result<(), AppError> {
@@ -1968,6 +2120,47 @@ mod tests {
                 .unwrap();
         assert_eq!(converted.blocks.len(), 3);
         assert_eq!(converted.blocks[0].page_id, "p1");
+
+        drop(db);
+    }
+
+    #[test]
+    fn test_custom_font_path_resolution_and_portable_import() {
+        let exe_root = TempTestDir::new("custom-font-exe");
+        let appdata_fallback = TempTestDir::new("custom-font-appdata");
+        let external_fonts = TempTestDir::new("external-fonts");
+
+        let db = Database::open_portable(exe_root.path(), appdata_fallback.path(), false).unwrap();
+
+        let fake_ttf = b"\x00\x01\x00\x00FAKE_TTF_DATA_FOR_TEST";
+        let font_src = external_fonts.path().join("MyKaiTi.ttf");
+        std::fs::write(&font_src, fake_ttf).unwrap();
+
+        // 1. Reads quoted path (as copied by Windows "Copy as path")
+        let quoted = format!("  \"{}\"  ", font_src.to_string_lossy());
+        let read_bytes = db.resolve_and_read_custom_font(&quoted).unwrap();
+        assert_eq!(read_bytes, fake_ttf);
+
+        // 2. Copies into `XyNote-data/fonts/` and returns relative `fonts/MyKaiTi.ttf`
+        let imported = db.import_custom_font_to_data_dir(&quoted).unwrap();
+        assert_eq!(imported.stored_path, "fonts/MyKaiTi.ttf");
+        assert_eq!(imported.display_name, "MyKaiTi");
+        assert_eq!(imported.byte_size, fake_ttf.len() as u64);
+        assert!(Path::new(&imported.resolved_path).is_file());
+
+        // 3. Resolves relative `fonts/MyKaiTi.ttf` against `active_data_dir`
+        let read_rel = db.resolve_and_read_custom_font(&imported.stored_path).unwrap();
+        assert_eq!(read_rel, fake_ttf);
+
+        // 4. Rejects unsupported extensions & missing files cleanly
+        let bad_ext = external_fonts.path().join("note.txt");
+        std::fs::write(&bad_ext, b"not-a-font").unwrap();
+        assert!(db
+            .resolve_and_read_custom_font(&bad_ext.to_string_lossy())
+            .is_err());
+        assert!(db
+            .resolve_and_read_custom_font(&external_fonts.path().join("missing.ttf").to_string_lossy())
+            .is_err());
 
         drop(db);
     }

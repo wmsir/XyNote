@@ -14,6 +14,7 @@ import type {
   DatabaseFull,
   DbColumn,
   DbRow,
+  ImportedCustomFont,
   LocalMarkdownDocument,
   MarkdownExport,
   MarkdownTreeEntry,
@@ -3131,6 +3132,35 @@ export async function pickMarkdownFileDialog(): Promise<string | null> {
     return invoke<string | null>("pick_markdown_file_dialog");
   }
   return null;
+}
+
+export async function pickFontFileDialog(
+  defaultDir?: string
+): Promise<string | null> {
+  if (isTauriRuntime()) {
+    return invoke<string | null>("pick_font_file_dialog", {
+      defaultDir: defaultDir ?? null,
+    });
+  }
+  return null;
+}
+
+export async function importFontToDataDir(
+  path: string
+): Promise<ImportedCustomFont> {
+  if (isTauriRuntime()) {
+    return invoke<ImportedCustomFont>("import_font_to_data_dir", { path });
+  }
+  const clean = path.trim();
+  const stem =
+    clean.replace(/\\/g, "/").split("/").pop()?.replace(/\.(ttf|otf|woff2?|ttc)$/i, "") ||
+    "custom-font";
+  return {
+    storedPath: clean,
+    resolvedPath: clean,
+    displayName: stem,
+    byteSize: 0,
+  };
 }
 
 export async function saveMarkdownFileDialog(

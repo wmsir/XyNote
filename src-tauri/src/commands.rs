@@ -1,10 +1,11 @@
 use crate::db::Database;
 use crate::models::{
     AppError, BackupEntry, BatchImportResult, Block, CreatePageInput, DatabaseFull, DbColumn,
-    DbRow, LocalMarkdownDocument, MarkdownExport, MarkdownTreeEntry, Page, PageDetail,
-    SaveBlockItem, SaveStylePluginInput, SavedAssetResult, SearchResult, StorageConfigInfo,
-    StylePluginItem, StylePluginState, UpdatePagePatch, UpdateStorageConfigInput,
-    UpsertBlockInput, UpsertDbColumnInput, UpsertDbRowInput, UrlMetadata,
+    DbRow, ImportedCustomFont, LocalMarkdownDocument, MarkdownExport, MarkdownTreeEntry, Page,
+    PageDetail, SaveBlockItem, SaveStylePluginInput, SavedAssetResult, SearchResult,
+    StorageConfigInfo, StylePluginItem, StylePluginState, UpdatePagePatch,
+    UpdateStorageConfigInput, UpsertBlockInput, UpsertDbColumnInput, UpsertDbRowInput,
+    UrlMetadata,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -343,6 +344,40 @@ pub async fn save_svg_file_dialog(
         crate::win_dialogs::save_svg_file_dialog_sync(default_name, content)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn pick_font_file_dialog(
+    app: AppHandle,
+    default_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    run_dialog(&app, move || {
+        crate::win_dialogs::pick_font_file_dialog_sync(default_dir)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn load_custom_font_file(
+    app: AppHandle,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    use tauri::Manager;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        db.resolve_and_read_custom_font(&path).map_err(String::from)
+    })
+    .await
+    .map_err(|e| format!("字体加载线程错误：{}", e))??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub fn import_font_to_data_dir(
+    db: State<'_, Database>,
+    path: String,
+) -> Result<ImportedCustomFont, String> {
+    db.import_custom_font_to_data_dir(&path).map_err(Into::into)
 }
 
 #[tauri::command]

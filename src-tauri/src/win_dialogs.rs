@@ -790,6 +790,46 @@ pub fn open_path_in_explorer_sync(path: &str) -> Result<(), AppError> {
     }
 }
 
+pub fn pick_font_file_dialog_sync(
+    default_dir: Option<String>,
+) -> Result<Option<String>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        imp::execute_file_dialog_sta(
+            imp::DialogSpec {
+                is_save: false,
+                pick_folders: false,
+                title: Some("选择本地字体文件 (.ttf / .otf / .woff2 / .ttc)".to_string()),
+                default_dir,
+                default_filename: None,
+                default_ext: Some("ttf".to_string()),
+                filters: vec![
+                    (
+                        "字体文件 (*.ttf;*.otf;*.woff2;*.woff;*.ttc)".to_string(),
+                        "*.ttf;*.otf;*.woff2;*.woff;*.ttc".to_string(),
+                    ),
+                    ("TrueType 字体 (*.ttf;*.ttc)".to_string(), "*.ttf;*.ttc".to_string()),
+                    ("OpenType / Web 字体 (*.otf;*.woff2;*.woff)".to_string(), "*.otf;*.woff2;*.woff".to_string()),
+                    ("所有文件 (*.*)".to_string(), "*.*".to_string()),
+                ],
+            },
+            true,
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let dialog = apply_default_dir(
+            rfd::FileDialog::new()
+                .set_title("选择本地字体文件 (.ttf / .otf / .woff2 / .ttc)")
+                .add_filter("字体文件", &["ttf", "otf", "woff2", "woff", "ttc"]),
+            default_dir.as_deref(),
+        );
+        Ok(dialog
+            .pick_file()
+            .map(|p| normalize_win32_path_str(&p.to_string_lossy())))
+    }
+}
+
 pub fn pick_style_plugin_file_dialog_sync(
     default_dir: Option<String>,
 ) -> Result<Option<String>, AppError> {
@@ -1084,7 +1124,7 @@ mod tests {
                 is_save: false,
                 pick_folders: false,
                 title: Some("导入主题或样式插件".into()),
-                default_dir: Some(temp_dir),
+                default_dir: Some(temp_dir.clone()),
                 default_filename: None,
                 default_ext: Some("css".into()),
                 filters: vec![(
@@ -1096,5 +1136,23 @@ mod tests {
         )
         .expect("COM StylePlugin OpenDialog initialization must succeed");
         assert_eq!(plugin_open_res, None);
+
+        let font_open_res = imp::execute_file_dialog_sta(
+            imp::DialogSpec {
+                is_save: false,
+                pick_folders: false,
+                title: Some("选择本地字体文件".into()),
+                default_dir: Some(temp_dir),
+                default_filename: None,
+                default_ext: Some("ttf".into()),
+                filters: vec![(
+                    "字体文件 (*.ttf;*.otf;*.woff2;*.woff;*.ttc)".into(),
+                    "*.ttf;*.otf;*.woff2;*.woff;*.ttc".into(),
+                )],
+            },
+            false,
+        )
+        .expect("COM Font OpenDialog initialization must succeed");
+        assert_eq!(font_open_res, None);
     }
 }

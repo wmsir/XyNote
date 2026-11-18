@@ -39,7 +39,7 @@ import type {
 export type ExportFormat = "html" | "pdf" | "docx" | "epub" | "png" | "latex" | "opml";
 
 export type ThemeMode = "light" | "dark" | "sepia";
-export type FontStyleMode = "sans" | "serif" | "mono";
+export type FontStyleMode = "sans" | "serif" | "mono" | "custom";
 
 export interface TopbarProps {
   page: Page | null;
@@ -51,6 +51,7 @@ export interface TopbarProps {
   isSaving: boolean;
   theme: ThemeMode;
   fontStyle: FontStyleMode;
+  customFontName?: string | null;
   fullWidth: boolean;
   viewMode: EditorViewMode;
   focusMode: boolean;
@@ -70,6 +71,7 @@ export interface TopbarProps {
   onToggleOutline: () => void;
   onToggleZenMode: () => void;
   onOpenSettings: () => void;
+  onOpenFontSettings?: () => void;
   onOpenLocalMdDialog: () => void;
   onSaveImmediate: () => void;
   onSaveAsMarkdown: () => void;
@@ -97,6 +99,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   isSaving,
   theme,
   fontStyle,
+  customFontName = null,
   fullWidth,
   viewMode,
   focusMode,
@@ -116,6 +119,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleOutline,
   onToggleZenMode,
   onOpenSettings,
+  onOpenFontSettings,
   onOpenLocalMdDialog,
   onSaveImmediate,
   onSaveAsMarkdown,
@@ -414,7 +418,43 @@ export const Topbar: React.FC<TopbarProps> = ({
                     <span className="nb-font-option-sample">Ag</span>
                     <span className="nb-font-option-name">等宽</span>
                   </button>
+                  <button
+                    type="button"
+                    className={`nb-font-option nb-font-custom${
+                      fontStyle === "custom" ? " is-active" : ""
+                    }`}
+                    title={
+                      customFontName
+                        ? `启用自定义字体：${customFontName}`
+                        : "点击前往设置字体文件路径或官网教程"
+                    }
+                    onClick={() => {
+                      if (!customFontName && onOpenFontSettings) {
+                        onOpenFontSettings();
+                        setMenuOpen(false);
+                      } else {
+                        onChangeFontStyle("custom");
+                      }
+                    }}
+                  >
+                    <span className="nb-font-option-sample">字</span>
+                    <span className="nb-font-option-name">自定义</span>
+                  </button>
                 </div>
+                {onOpenFontSettings && (
+                  <button
+                    type="button"
+                    className="nb-topbar-font-config-link"
+                    onClick={() => {
+                      onOpenFontSettings();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {customFontName
+                      ? `管理自定义字体（当前：${customFontName}）…`
+                      : "配置本地字体路径 / 教程…"}
+                  </button>
+                )}
 
                 <div className="nb-menu-divider" />
 

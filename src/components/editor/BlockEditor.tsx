@@ -64,7 +64,7 @@ export interface BlockEditorProps {
   blocks: Block[];
   pages: Page[];
   fullWidth?: boolean;
-  fontStyle?: "sans" | "serif" | "mono";
+  fontStyle?: "sans" | "serif" | "mono" | "custom";
   highlightBlockId?: string | null;
   preferences?: EditorPreferences;
   rawMarkdownOverride?: string | null;
@@ -1837,6 +1837,8 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       ? "nb-editor-font-serif"
       : fontStyle === "mono"
       ? "nb-editor-font-mono"
+      : fontStyle === "custom"
+      ? "nb-editor-font-custom"
       : "nb-editor-font-sans";
 
   const activeFocusedId =

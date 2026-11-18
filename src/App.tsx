@@ -80,6 +80,13 @@ import {
   ThemeMode,
   Topbar,
 } from "./components/shell/Topbar";
+import {
+  DEFAULT_CUSTOM_FONT_CONFIG,
+  parseCustomFontConfig,
+  serializeCustomFontConfig,
+  syncCustomFontDomVariables,
+  type CustomFontConfig,
+} from "./utils/customFont";
 import { PageHeader } from "./components/shell/PageHeader";
 import { CommandPalette } from "./components/shell/CommandPalette";
 import { TemplatesModal } from "./components/shell/TemplatesModal";
@@ -196,6 +203,9 @@ export const App: React.FC = () => {
       : false
   );
   const [fontStyle, setFontStyle] = useState<FontStyleMode>("sans");
+  const [customFontConfig, setCustomFontConfig] = useState<CustomFontConfig>(
+    DEFAULT_CUSTOM_FONT_CONFIG
+  );
   const [editorFontSize, setEditorFontSize] = useState<number>(16);
   const [editorLineHeight, setEditorLineHeight] = useState<number>(1.68);
   const [fullWidth, setFullWidth] = useState(true);
@@ -332,6 +342,11 @@ export const App: React.FC = () => {
       String(editorLineHeight)
     );
   }, [editorFontSize, editorLineHeight]);
+
+  // Load & sync active user-configured custom font into `--font-custom` / `--font-sans`
+  useEffect(() => {
+    syncCustomFontDomVariables(customFontConfig, fontStyle).catch(() => {});
+  }, [customFontConfig, fontStyle]);
 
   // Keep baseline stats synchronized when switching documents
   useEffect(() => {
@@ -1021,10 +1036,16 @@ export const App: React.FC = () => {
         ) {
           setThemePref(settings.theme);
         }
+        if (settings["appearance.customFonts"]) {
+          setCustomFontConfig(
+            parseCustomFontConfig(settings["appearance.customFonts"])
+          );
+        }
         if (
           settings.fontStyle === "sans" ||
           settings.fontStyle === "serif" ||
-          settings.fontStyle === "mono"
+          settings.fontStyle === "mono" ||
+          settings.fontStyle === "custom"
         ) {
           setFontStyle(settings.fontStyle);
         }
@@ -1198,6 +1219,13 @@ export const App: React.FC = () => {
   const handleChangeFontStyle = useCallback((next: FontStyleMode) => {
     setFontStyle(next);
     setSetting("fontStyle", next).catch(() => {});
+  }, []);
+
+  const handleChangeCustomFontConfig = useCallback((next: CustomFontConfig) => {
+    setCustomFontConfig(next);
+    setSetting("appearance.customFonts", serializeCustomFontConfig(next)).catch(
+      () => {}
+    );
   }, []);
 
   const handleChangeFontSize = useCallback((next: number) => {
@@ -1906,11 +1934,18 @@ export const App: React.FC = () => {
     handleUpdateEditorPrefs({ viewMode: next });
   }, [handleUpdateEditorPrefs]);
 
+  const activeCustomFont =
+    customFontConfig.fonts.find((f) => f.id === customFontConfig.activeId) ??
+    customFontConfig.fonts[0] ??
+    null;
+
   const fontClass =
     fontStyle === "serif"
       ? "nb-font-serif"
       : fontStyle === "mono"
       ? "nb-font-mono"
+      : fontStyle === "custom"
+      ? "nb-font-custom"
       : "nb-font-sans";
 
   const activeViewMode = editorPrefs.viewMode ?? "wysiwyg";
@@ -2017,6 +2052,7 @@ export const App: React.FC = () => {
           isSaving={isSaving || isBatchImporting}
           theme={effectiveTheme}
           fontStyle={fontStyle}
+          customFontName={activeCustomFont?.name ?? null}
           fullWidth={fullWidth}
           viewMode={editorPrefs.viewMode ?? "wysiwyg"}
           focusMode={Boolean(editorPrefs.focusMode)}
@@ -2050,6 +2086,7 @@ export const App: React.FC = () => {
           }
           onToggleZenMode={handleToggleZenMode}
           onOpenSettings={() => handleOpenSettingsAtTab("storage")}
+          onOpenFontSettings={() => handleOpenSettingsAtTab("appearance")}
           onOpenLocalMdDialog={() => {
             handleOpenLocalMdDialog().catch(() => {});
           }}
@@ -2459,6 +2496,7 @@ export const App: React.FC = () => {
         styleState={stylePluginState}
         themePref={themePref}
         fontStyle={fontStyle}
+        customFontConfig={customFontConfig}
         fontSize={editorFontSize}
         lineHeight={editorLineHeight}
         fullWidth={fullWidth}
@@ -2472,6 +2510,7 @@ export const App: React.FC = () => {
         onRefreshStylePlugins={handleRefreshStylePlugins}
         onChangeThemePref={handleChangeThemePref}
         onChangeFontStyle={handleChangeFontStyle}
+        onChangeCustomFontConfig={handleChangeCustomFontConfig}
         onChangeFontSize={handleChangeFontSize}
         onChangeLineHeight={handleChangeLineHeight}
         onToggleFullWidth={handleToggleFullWidth}

@@ -28,16 +28,21 @@ import {
   Sliders,
   Sparkles,
   Sun,
+  Trash2,
+  Type,
+  ExternalLink,
   X,
 } from "lucide-react";
 import {
   createBackupNow,
   exportWorkspaceZip,
   getStorageInfo,
+  importFontToDataDir,
   isTauriRuntime,
   listBackups,
   openPathInExplorer,
   pickFolderDialog,
+  pickFontFileDialog,
   resetStorageToDefault,
   restoreBackup,
   syncAllPagesToMarkdown,
@@ -59,7 +64,16 @@ import { XyLogoIcon } from "./XyLogoIcon";
 import { SyncSettingsPanel } from "./SyncSettingsPanel";
 import { DonatePanel } from "./DonatePanel";
 import { FeedbackPanel } from "./FeedbackPanel";
-import type { SyncConfig } from "../../api/sync";
+import { openExternalUrl, type SyncConfig } from "../../api/sync";
+import {
+  deriveFontDisplayName,
+  loadAndActivateCustomFont,
+  normalizeFontPathInput,
+  registerBrowserFontBuffer,
+  XYNOTE_FONT_GUIDE_URL,
+  type CustomFontConfig,
+  type CustomFontEntry,
+} from "../../utils/customFont";
 
 export type SettingsTabId =
   | "storage"
@@ -84,6 +98,7 @@ export interface SettingsModalProps {
   styleState: StylePluginState | null;
   themePref: ThemePreference;
   fontStyle: FontStyleMode;
+  customFontConfig?: CustomFontConfig;
   fontSize: number;
   lineHeight: number;
   fullWidth: boolean;
@@ -106,6 +121,7 @@ export interface SettingsModalProps {
   onRefreshStylePlugins: () => Promise<StylePluginState | null>;
   onChangeThemePref: (next: ThemePreference) => void;
   onChangeFontStyle: (next: FontStyleMode) => void;
+  onChangeCustomFontConfig?: (next: CustomFontConfig) => void;
   onChangeFontSize: (next: number) => void;
   onChangeLineHeight: (next: number) => void;
   onToggleFullWidth: () => void;
@@ -150,6 +166,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   styleState,
   themePref,
   fontStyle,
+  customFontConfig = { activeId: null, applyGlobalUi: false, fonts: [] },
   fontSize,
   lineHeight,
   fullWidth,
@@ -163,6 +180,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRefreshStylePlugins,
   onChangeThemePref,
   onChangeFontStyle,
+  onChangeCustomFontConfig,
   onChangeFontSize,
   onChangeLineHeight,
   onToggleFullWidth,
@@ -184,6 +202,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     kind: "success" | "error";
     text: string;
   } | null>(null);
+
+  const [fontPathDraft, setFontPathDraft] = useState("");
+  const [fontNameDraft, setFontNameDraft] = useState("");
+  const browserFontInputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeCustomFont =
+    customFontConfig.fonts.find((f) => f.id === customFontConfig.activeId) ??
+    customFontConfig.fonts[0] ??
+    null;
 
   const prevOpenRef = useRef(false);
 
@@ -211,6 +238,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (open && !prevOpenRef.current) {
       setActiveTab(initialTab);
       setBanner(null);
+      if (activeCustomFont?.path) {
+        setFontPathDraft(activeCustomFont.path);
+      }
       refreshDiagnostics().catch(() => {});
       onRefreshStylePlugins().catch(() => {});
     } else if (!open && prevOpenRef.current) {
@@ -220,10 +250,155 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [
     open,
     initialTab,
+    activeCustomFont?.path,
     onPreviewThemeOverride,
     onRefreshStylePlugins,
     refreshDiagnostics,
   ]);
+
+  const activateCustomFontFromInput = useCallback(
+    async (rawPath: string, rawName?: string, portable?: boolean) => {
+      const cleanPath = normalizeFontPathInput(rawPath);
+      if (!cleanPath) {
+        setBanner({
+          kind: "error",
+          text: "请粘贴本地字体文件路径（例如 C:\\Windows\\Fonts\\simkai.ttf），或点击「浏览选择字体文件…」",
+        });
+        return;
+      }
+      setBusyAction("custom-font");
+      setBanner(null);
+      try {
+        const loaded = await loadAndActivateCustomFont(cleanPath);
+        const displayName =
+          rawName?.trim() ||
+          loaded.resolvedDisplayName ||
+          deriveFontDisplayName(cleanPath);
+        const normKey = cleanPath.toLowerCase();
+        const existing = customFontConfig.fonts.find(
+          (f) => f.path.toLowerCase() === normKey
+        );
+        const entryId = existing?.id ?? `cfont-${Date.now().toString(36)}`;
+        const nextEntry: CustomFontEntry = {
+          id: entryId,
+          name: displayName,
+          path: cleanPath,
+          portable: portable ?? existing?.portable ?? cleanPath.toLowerCase().startsWith("fonts/"),
+          addedAt: existing?.addedAt ?? new Date().toISOString(),
+        };
+        const nextFonts = existing
+          ? customFontConfig.fonts.map((f) => (f.id === entryId ? nextEntry : f))
+          : [nextEntry, ...customFontConfig.fonts];
+
+        onChangeCustomFontConfig?.({
+          ...customFontConfig,
+          activeId: entryId,
+          fonts: nextFonts,
+        });
+        onChangeFontStyle("custom");
+        setFontPathDraft(cleanPath);
+        setFontNameDraft("");
+        const msg = `已加载并启用自定义字体「${displayName}」`;
+        setBanner({ kind: "success", text: msg });
+        onNotify(msg);
+      } catch (err) {
+        setBanner({
+          kind: "error",
+          text: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [customFontConfig, onChangeCustomFontConfig, onChangeFontStyle, onNotify]
+  );
+
+  const handleBrowseCustomFont = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      browserFontInputRef.current?.click();
+      return;
+    }
+    try {
+      const picked = await pickFontFileDialog();
+      if (!picked) return;
+      setFontPathDraft(picked);
+      await activateCustomFontFromInput(picked, fontNameDraft, false);
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [activateCustomFontFromInput, fontNameDraft]);
+
+  const handleBrowserFontFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      try {
+        const buffer = await file.arrayBuffer();
+        registerBrowserFontBuffer(file.name, buffer);
+        setFontPathDraft(file.name);
+        await activateCustomFontFromInput(file.name, fontNameDraft, false);
+      } catch (err) {
+        setBanner({
+          kind: "error",
+          text: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [activateCustomFontFromInput, fontNameDraft]
+  );
+
+  const handleImportFontPortable = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      onNotify("拷入 XyNote-data/fonts 便携保存仅支持桌面客户端");
+      return;
+    }
+    let srcPath = normalizeFontPathInput(fontPathDraft);
+    if (!srcPath) {
+      const picked = await pickFontFileDialog().catch(() => null);
+      if (!picked) return;
+      srcPath = picked;
+    }
+    setBusyAction("import-portable-font");
+    setBanner(null);
+    try {
+      const imported = await importFontToDataDir(srcPath);
+      await activateCustomFontFromInput(
+        imported.storedPath,
+        fontNameDraft.trim() || imported.displayName,
+        true
+      );
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activateCustomFontFromInput, fontNameDraft, fontPathDraft, onNotify]);
+
+  const handleDeleteSavedFont = useCallback(
+    (fontId: string) => {
+      const nextFonts = customFontConfig.fonts.filter((f) => f.id !== fontId);
+      const nextActiveId =
+        customFontConfig.activeId === fontId
+          ? nextFonts[0]?.id ?? null
+          : customFontConfig.activeId;
+      onChangeCustomFontConfig?.({
+        ...customFontConfig,
+        activeId: nextActiveId,
+        fonts: nextFonts,
+      });
+      if (!nextActiveId && fontStyle === "custom") {
+        onChangeFontStyle("sans");
+      }
+    },
+    [customFontConfig, fontStyle, onChangeCustomFontConfig, onChangeFontStyle]
+  );
 
   useEffect(() => {
     if (storageInfo) {
@@ -1206,6 +1381,233 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <span className="nb-font-option-sample">Ag 01</span>
                       <span className="nb-font-option-name">等宽代码体 (Mono)</span>
                     </button>
+                    <button
+                      type="button"
+                      className={`nb-font-option nb-font-custom${
+                        fontStyle === "custom" ? " is-active" : ""
+                      }`}
+                      onClick={() => {
+                        if (!activeCustomFont) {
+                          setBanner({
+                            kind: "error",
+                            text: "请先在下方粘贴本地字体文件路径并点击「加载并启用字体」",
+                          });
+                          return;
+                        }
+                        onChangeFontStyle("custom");
+                      }}
+                    >
+                      <span className="nb-font-option-sample">Ag 字</span>
+                      <span className="nb-font-option-name">
+                        {activeCustomFont
+                          ? `自定义：${activeCustomFont.name}`
+                          : "自定义字体 (Custom)"}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="nb-custom-font-panel">
+                    <div className="nb-custom-font-head">
+                      <div>
+                        <div className="nb-settings-label">
+                          自定义本地字体（输入字体路径即可使用）
+                        </div>
+                        <div className="nb-settings-sub">
+                          支持 <code>.ttf</code> / <code>.otf</code> / <code>.woff2</code> /{" "}
+                          <code>.woff</code> / <code>.ttc</code>，粘贴文件地址或直接浏览选择即可生效
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="nb-custom-font-guide-btn"
+                        onClick={() => {
+                          openExternalUrl(XYNOTE_FONT_GUIDE_URL).catch(() => {});
+                        }}
+                      >
+                        <ExternalLink size={13} />
+                        <span>不会配置？查看官网字体配置与使用教程</span>
+                      </button>
+                    </div>
+
+                    <input
+                      ref={browserFontInputRef}
+                      type="file"
+                      accept=".ttf,.otf,.woff2,.woff,.ttc"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        handleBrowserFontFileSelected(e).catch(() => {});
+                      }}
+                    />
+
+                    <div className="nb-custom-font-fields">
+                      <input
+                        type="text"
+                        className="nb-custom-font-input nb-mono-input"
+                        value={fontPathDraft}
+                        onChange={(e) => setFontPathDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            activateCustomFontFromInput(fontPathDraft, fontNameDraft).catch(
+                              () => {}
+                            );
+                          }
+                        }}
+                        placeholder="粘贴字体路径，如 C:\Windows\Fonts\simkai.ttf 或 D:\Fonts\LXGWWenKai.ttf"
+                        aria-label="自定义字体文件路径"
+                      />
+                      <input
+                        type="text"
+                        className="nb-custom-font-input"
+                        value={fontNameDraft}
+                        onChange={(e) => setFontNameDraft(e.target.value)}
+                        placeholder="显示名称（选填，留空自动识别）"
+                        aria-label="自定义字体显示名称"
+                      />
+                    </div>
+
+                    <div className="nb-custom-font-hint-line">
+                      <span>Windows 技巧：按住 Shift + 右键点击字体文件 →「复制文件地址」直接粘贴；也可点击教程查看 macOS / Linux 路径与开源字体推荐</span>
+                    </div>
+
+                    <div className="nb-settings-actions-bar">
+                      <button
+                        type="button"
+                        className="nb-btn-primary"
+                        disabled={busyAction !== null}
+                        onClick={() => {
+                          activateCustomFontFromInput(fontPathDraft, fontNameDraft).catch(
+                            () => {}
+                          );
+                        }}
+                      >
+                        <Type size={14} />
+                        {busyAction === "custom-font"
+                          ? "正在加载字体..."
+                          : "加载并启用字体"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        disabled={busyAction !== null}
+                        onClick={() => {
+                          handleBrowseCustomFont().catch(() => {});
+                        }}
+                      >
+                        <FolderOpen size={14} /> 浏览选择字体文件…
+                      </button>
+
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        disabled={busyAction !== null}
+                        title="把字体复制到 XyNote-data/fonts 目录并用相对路径保存，U 盘便携带走不丢字体"
+                        onClick={() => {
+                          handleImportFontPortable().catch(() => {});
+                        }}
+                      >
+                        <Archive size={14} />
+                        {busyAction === "import-portable-font"
+                          ? "正在拷入便携库..."
+                          : "拷入 XyNote-data/fonts 便携保存"}
+                      </button>
+                    </div>
+
+                    {customFontConfig.fonts.length > 0 && (
+                      <div className="nb-custom-font-list">
+                        {customFontConfig.fonts.map((entry) => {
+                          const isCurrent =
+                            activeCustomFont?.id === entry.id &&
+                            fontStyle === "custom";
+                          return (
+                            <div
+                              key={entry.id}
+                              className={`nb-custom-font-item${
+                                isCurrent ? " is-active" : ""
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="nb-custom-font-item-main"
+                                onClick={() => {
+                                  setFontPathDraft(entry.path);
+                                  activateCustomFontFromInput(
+                                    entry.path,
+                                    entry.name,
+                                    entry.portable
+                                  ).catch(() => {});
+                                }}
+                              >
+                                <div className="nb-custom-font-item-title">
+                                  <span>{entry.name}</span>
+                                  <span
+                                    className={`nb-custom-font-tag${
+                                      entry.portable ? " is-portable" : ""
+                                    }`}
+                                  >
+                                    {entry.portable ? "便携库内" : "本地路径"}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="nb-custom-font-tag is-portable">
+                                      当前使用中
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="nb-custom-font-item-path" title={entry.path}>
+                                  {entry.path}
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className="nb-link-btn"
+                                title="从列表中移除此字体"
+                                aria-label={`删除自定义字体 ${entry.name}`}
+                                onClick={() => handleDeleteSavedFont(entry.id)}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="nb-settings-toggle-row">
+                      <div>
+                        <div className="nb-settings-label">
+                          同时应用到侧边栏与软件全局界面
+                        </div>
+                        <div className="nb-settings-sub">
+                          开启并选用自定义字体后，不仅正文文档生效，侧边栏、弹窗与界面文字也会同步换肤
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`nb-toggle-switch${
+                          customFontConfig.applyGlobalUi ? " is-on" : ""
+                        }`}
+                        aria-label="同时应用到侧边栏与软件全局界面"
+                        onClick={() => {
+                          onChangeCustomFontConfig?.({
+                            ...customFontConfig,
+                            applyGlobalUi: !customFontConfig.applyGlobalUi,
+                          });
+                        }}
+                      />
+                    </div>
+
+                    {activeCustomFont && (
+                      <div className="nb-custom-font-preview">
+                        <div className="nb-custom-font-preview-label">
+                          实时字体效果预览（{activeCustomFont.name}）：
+                        </div>
+                        <div className="nb-custom-font-preview-sample">
+                          春江潮水连海平，海上明月共潮生。XyNote 块级笔记 0123456789 ABCdef!
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

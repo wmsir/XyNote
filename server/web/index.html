@@ -776,6 +776,74 @@
   }
   .spec-code-wrap pre.codeblock { border: none; border-radius: 0; }
 
+  /* Font Guide Section */
+  .band { scroll-margin-top: 76px; }
+  .font-os-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .font-os-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px 22px;
+    box-shadow: var(--sh-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .font-os-card h3 { font-size: 15.5px; font-weight: 800; }
+  .font-os-card p, .font-os-card li { font-size: 13px; color: var(--ink-2); line-height: 1.7; }
+  .font-os-card ul { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+  .font-path-list { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  .font-path-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--card-muted);
+    color: var(--ink);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .font-path-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .font-path-chip code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--accent-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .font-path-chip span { flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--ink-3); }
+  .font-rec-grid {
+    margin-top: 16px;
+    padding: 18px 22px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .font-rec-item h4 { font-size: 14px; font-weight: 800; margin-bottom: 4px; }
+  .font-rec-item p { font-size: 12.5px; color: var(--ink-2); line-height: 1.65; }
+  @media (max-width: 1024px) {
+    .font-os-grid { grid-template-columns: 1fr; }
+    .font-rec-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 720px) {
+    .font-rec-grid { grid-template-columns: 1fr; }
+  }
+
   /* Marketplace */
   .mp-stats-strip {
     display: flex;
@@ -1106,6 +1174,7 @@
     <nav class="topnav" aria-label="页面导航">
       <a href="#features">软件功能</a>
       <a href="#templates">模板与插件指南</a>
+      <a href="#font-guide">字体教程</a>
       <a href="#marketplace">插件市场</a>
       <a href="#feedback">反馈共创</a>
       <a href="#donate">支持作者</a>
@@ -1120,6 +1189,7 @@
     <a href="/">← FWPT 官网</a>
     <a href="#features">软件功能</a>
     <a href="#templates">模板设计</a>
+    <a href="#font-guide">字体教程</a>
     <a href="#marketplace">插件市场</a>
     <a href="#feedback">问题反馈</a>
     <a href="#donate">赞赏</a>
@@ -1406,6 +1476,105 @@
     </div>
   </section>
 
+  <!-- 2.5 自定义字体配置与使用教程 -->
+  <section class="band" id="font-guide">
+    <div class="section-head">
+      <div>
+        <span class="section-kicker">Custom Typography · 自定义字体配置与使用教程</span>
+        <h2>使用自己喜欢的本地字体：填入字体路径即可生效</h2>
+        <p>除了默认的现代无衬线、人文衬线与等宽代码字体外，小悦笔记支持直接加载本机任意 <code>.ttf</code> / <code>.otf</code> / <code>.woff2</code> / <code>.woff</code> / <code>.ttc</code> 字体文件，也可以一键拷入 <code>XyNote-data/fonts/</code> 随 U 盘便携使用。</p>
+      </div>
+    </div>
+
+    <div class="steps-grid">
+      <article class="step-card">
+        <span class="step-num">STEP 01 · 获取字体文件路径</span>
+        <h3>系统自带字体或下载外部字体均可</h3>
+        <ul>
+          <li>支持格式：<b>.ttf</b>（最常见）、<b>.otf</b>、<b>.woff2</b>、<b>.woff</b>、<b>.ttc</b>（Windows 系统合集字体）。</li>
+          <li>如果从网络下载字体压缩包，请先解压得到具体的 <code>.ttf</code> 或 <code>.otf</code> 文件（不要直接填 <code>.zip</code>）。</li>
+        </ul>
+      </article>
+      <article class="step-card">
+        <span class="step-num">STEP 02 · 填入路径一键启用</span>
+        <h3>打开「设置 → 外观与排版 → 自定义本地字体」</h3>
+        <ul>
+          <li>直接粘贴完整字体文件路径并点击 <b>「加载并启用字体」</b>（Windows 复制路径自带双引号 <code>"..."</code> 也会自动清理，直接贴入即可）。</li>
+          <li>或点击 <b>「浏览选择字体文件…」</b> 选定文件后立即自动激活，也可切入顶部菜单栏「字体风格 → <b>自定义</b>」。</li>
+        </ul>
+      </article>
+      <article class="step-card">
+        <span class="step-num">STEP 03 · 便携保存与全局应用</span>
+        <h3>换电脑不丢字体、界面文字同步换肤</h3>
+        <ul>
+          <li>经常用 U 盘 / 网盘同步？点击 <b>「拷入 XyNote-data/fonts 便携保存」</b>，程序会自动保存相对路径 <code>fonts/xxx.ttf</code>，到任意电脑直接识别。</li>
+          <li>打开 <b>「同时应用到侧边栏与软件全局界面」</b> 开关，侧边栏目录与弹窗按钮都会同步切换为你的专属字体。</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="font-os-grid">
+      <article class="font-os-card">
+        <h3>🪟 Windows 查找与复制字体路径</h3>
+        <ul>
+          <li><b>方法一（任意磁盘字体文件）：</b>按住键盘 <code>Shift</code> 键不放 + 鼠标右键点击 <code>.ttf</code> / <code>.otf</code> 文件 → 点击 <b>「复制文件地址」</b> → 粘贴到小悦笔记即可。</li>
+          <li><b>方法二（点击下方常用系统字体一键复制）：</b></li>
+        </ul>
+        <div class="font-path-list">
+          <button class="font-path-chip" type="button" data-copy-path="C:\Windows\Fonts\simkai.ttf">
+            <code>C:\Windows\Fonts\simkai.ttf</code><span>复制 · 楷体</span>
+          </button>
+          <button class="font-path-chip" type="button" data-copy-path="C:\Windows\Fonts\simfang.ttf">
+            <code>C:\Windows\Fonts\simfang.ttf</code><span>复制 · 仿宋</span>
+          </button>
+          <button class="font-path-chip" type="button" data-copy-path="C:\Windows\Fonts\msyh.ttc">
+            <code>C:\Windows\Fonts\msyh.ttc</code><span>复制 · 微软雅黑</span>
+          </button>
+          <button class="font-path-chip" type="button" data-copy-path="C:\Windows\Fonts\simsun.ttc">
+            <code>C:\Windows\Fonts\simsun.ttc</code><span>复制 · 宋体</span>
+          </button>
+        </div>
+      </article>
+
+      <article class="font-os-card">
+        <h3>🍎 macOS 查找与复制字体路径</h3>
+        <ul>
+          <li>打开访达（Finder），按 <code>Command + Shift + G</code> 前往系统字体目录 <code>/Library/Fonts/</code> 或当前用户目录 <code>~/Library/Fonts/</code>。</li>
+          <li>点击选中任意字体文件，按下快捷键 <b><code>Option + Command + C</code></b> 即可拷贝完整路径。</li>
+          <li>回到小悦笔记设置中粘贴路径，或点击「浏览选择字体文件…」直接定位并启用。</li>
+        </ul>
+      </article>
+
+      <article class="font-os-card">
+        <h3>🐧 Linux 查找字体路径 &amp; 常见问题</h3>
+        <ul>
+          <li>系统字体通常存放于 <code>/usr/share/fonts/</code>，当前用户安装的字体位于 <code>~/.local/share/fonts/</code>。</li>
+          <li><b>提示找不到文件？</b>确认路径指向的是具体字体文件（以 <code>.ttf/.otf/.ttc</code> 结尾）而非文件夹目录。</li>
+          <li><b>加载后未生效？</b>请确保字体文件未损坏且大小不超过 64 MB，完成后顶栏「字体风格」处于「自定义」高亮状态。</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="font-rec-grid">
+      <div class="font-rec-item">
+        <h4>✒️ 霞鹜文楷 (LXGW WenKai)</h4>
+        <p>免费开源可商用，兼具楷书温润笔锋与屏幕清晰度，极适合「康奈尔读书笔记」与长文日记排版。</p>
+      </div>
+      <div class="font-rec-item">
+        <h4>📖 思源宋体 / 思源黑体</h4>
+        <p>Adobe &amp; Google 联合开源字族，笔画严谨舒展，适合撰写学术论文、方案文档与导出 PDF/Word。</p>
+      </div>
+      <div class="font-rec-item">
+        <h4>⌨️ 更纱黑体 (Sarasa Gothic)</h4>
+        <p>中英文严格 2:1 宽比对齐，适合同时书写中文笔记、Markdown 表格与嵌入式代码块的技术作者。</p>
+      </div>
+      <div class="font-rec-item">
+        <h4>🧩 Maple Mono / JetBrains Mono</h4>
+        <p>高辨识度编程等宽字体，支持优雅连字（Ligatures），配合小悦代码/双栏源码视图阅读更省力。</p>
+      </div>
+    </div>
+  </section>
+
   <!-- 3. 插件与模板社区市场 -->
   <section class="band" id="marketplace">
     <div class="section-head">
@@ -1504,6 +1673,7 @@
     <a href="/">返回 FWPT 门户首页</a><span>·</span>
     <a href="#download">软件下载</a><span>·</span>
     <a href="#templates">模板设计指南</a><span>·</span>
+    <a href="#font-guide">字体教程</a><span>·</span>
     <a href="#marketplace">插件市场</a><span>·</span>
     <a href="/terms">服务条款</a><span>·</span>
     <a href="/privacy">隐私政策</a><span>·</span>
@@ -2670,6 +2840,23 @@
     if (!e || !e.key || ['xynote_token', 'fwpt_auth_token', 'fwpt_token', 'wmdb_token', 'pacer_token'].indexOf(e.key) >= 0) {
       refreshAuth().then(loadMarketplace);
     }
+  });
+
+  // 字体配置教程：常用路径一键复制
+  document.querySelectorAll('[data-copy-path]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var val = btn.dataset.copyPath || '';
+      if (!val) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(val).then(function () {
+          toast('已复制字体路径：' + val);
+        }).catch(function () {
+          toast('请手动复制：' + val);
+        });
+      } else {
+        toast('请手动复制：' + val);
+      }
+    });
   });
 
   // 初始化
