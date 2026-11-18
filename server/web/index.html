@@ -1025,13 +1025,23 @@
     margin: auto;
     box-shadow: var(--sh-lg);
   }
-  dialog.sm-dlg { width: min(440px, 94vw); }
+  dialog.sm-dlg { width: min(460px, 94vw); }
+  dialog:not([open]) { display: none; }
+  dialog[open] { display: block; }
   dialog::backdrop { background: rgba(15, 23, 42, 0.62); backdrop-filter: blur(5px); }
   .dlg-body { padding: 24px 26px; display: flex; flex-direction: column; gap: 14px; }
   .dlg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 11px; background: var(--card-muted); border: 1px solid var(--line); }
+  .auth-tab { font: inherit; font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 8px; border: none; background: transparent; color: var(--ink-3); cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+  .auth-tab[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: var(--sh-xs); }
+  .reg-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .reg-pill { font: inherit; font-size: 12px; font-weight: 600; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--card-muted); color: var(--ink-2); cursor: pointer; }
+  .reg-pill[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+  .inline-auth-btn { font: inherit; font-size: inherit; font-weight: 700; color: var(--accent-ink); background: none; border: none; padding: 0 2px; cursor: pointer; text-decoration: underline; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .muted { color: var(--ink-3); font-size: 12.5px; }
   .alert { padding: 10px 13px; border-radius: 10px; font-size: 13px; font-weight: 600; background: rgba(220, 38, 38, 0.11); color: var(--bad); }
+  .alert.ok { background: var(--ok-soft); color: var(--ok); }
   .empty { text-align: center; padding: 40px 18px; color: var(--ink-3); border: 1px dashed var(--line-strong); border-radius: 14px; grid-column: 1 / -1; }
   ol.guide { padding-left: 18px; font-size: 13.5px; color: var(--ink-2); line-height: 1.75; }
 
@@ -1103,7 +1113,7 @@
     <div class="nav-right">
       <button class="btn sm ghost" type="button" id="themeBtn" title="切换深浅主题" aria-label="切换深浅主题">🌓</button>
       <a class="btn sm primary" href="#download">免费下载</a>
-      <span id="userArea"><button class="btn sm" type="button" id="openLoginBtn">通行证登录</button></span>
+      <span id="userArea"><button class="btn sm" type="button" id="openLoginBtn">通行证登录</button><button class="btn sm ghost" type="button" data-open-auth="register">极速注册</button></span>
     </div>
   </div>
   <nav class="mobile-subnav" aria-label="移动端快捷导航">
@@ -1594,22 +1604,57 @@
   </div>
 </dialog>
 
-<!-- 登录弹窗 -->
+<!-- 通行证登录与极速注册弹窗 -->
 <dialog id="loginDlg" class="sm-dlg" aria-labelledby="loginTitle">
-  <form class="dlg-body" id="loginForm">
+  <div class="dlg-body">
     <div class="dlg-head">
-      <h2 id="loginTitle" style="font-size:17.5px; font-weight:800;">登录 FWPT 通行证</h2>
+      <div>
+        <h2 id="loginTitle" style="font-size:17.5px; font-weight:800;">FWPT · OneID 统一通行证</h2>
+        <p class="muted" style="margin-top:2px;">一次登录/注册，小悦笔记与全站各系统实时互通。</p>
+      </div>
       <button class="btn sm" type="button" data-close>关闭</button>
     </div>
-    <p class="muted">与 FWPT 主站及全平台共享同一个 OneID 通行证。登录后可在「我的分享」管理已发布的插件与模板，并查看官方反馈回复。</p>
-    <label class="field">通行证账号<input id="lAccount" autocomplete="username" placeholder="手机号 / 邮箱 / 用户名" required></label>
-    <label class="field">密码<input id="lPassword" type="password" autocomplete="current-password" required></label>
-    <div class="alert" id="loginError" hidden></div>
-    <div class="row" style="justify-content:space-between;">
-      <a class="muted" href="/?action=register">还没有通行证？去注册</a>
-      <button class="btn primary" type="submit" id="lSubmit">登录</button>
+
+    <div class="auth-tabs" role="tablist" aria-label="通行证认证模式">
+      <button class="auth-tab" type="button" role="tab" data-auth-tab="login" aria-selected="true">通行证登录</button>
+      <button class="auth-tab" type="button" role="tab" data-auth-tab="register" aria-selected="false">免费极速注册</button>
     </div>
-  </form>
+
+    <div class="alert" id="loginError" hidden></div>
+
+    <form id="loginForm" style="display:flex; flex-direction:column; gap:13px;" autocomplete="on">
+      <label class="field">通行证账号<input id="lAccount" autocomplete="username" placeholder="用户名 / 手机号 / 邮箱" required></label>
+      <label class="field">登录密码<input id="lPassword" type="password" autocomplete="current-password" placeholder="请输入登录密码" required></label>
+      <div class="row" style="justify-content:space-between;">
+        <button class="btn sm ghost" type="button" data-auth-tab="register">没有账号？10 秒极速注册 →</button>
+        <button class="btn primary" type="submit" id="lSubmit">立即登录</button>
+      </div>
+    </form>
+
+    <form id="regForm" style="display:flex; flex-direction:column; gap:12px;" autocomplete="on" hidden>
+      <div class="reg-pills" role="group" aria-label="注册方式">
+        <button class="reg-pill" type="button" data-reg-type="ACCOUNT" aria-pressed="true">⚡ 账号快速注册（即注即用）</button>
+        <button class="reg-pill" type="button" data-reg-type="EMAIL" aria-pressed="false">✉️ 邮箱验证码注册</button>
+      </div>
+      <div id="rEmailWrap" style="display:flex; flex-direction:column; gap:12px;" hidden>
+        <label class="field">电子邮箱 *<input id="rEmail" type="email" autocomplete="email" placeholder="name@example.com"></label>
+        <label class="field">邮箱验证码 *
+          <div class="row">
+            <input id="rCode" maxlength="6" placeholder="6 位验证码" style="flex:1;">
+            <button class="btn sm" type="button" id="rSendCodeBtn">获取验证码</button>
+          </div>
+        </label>
+      </div>
+      <label class="field">通行证用户名 *<input id="rUsername" autocomplete="username" placeholder="3-32 位字母、数字或下划线" required></label>
+      <label class="field">显示昵称（选填）<input id="rNickname" maxlength="40" placeholder="例如：小悦同学"></label>
+      <label class="field">设置密码 *<input id="rPassword" type="password" autocomplete="new-password" minlength="6" placeholder="至少 6 位字符" required></label>
+      <label class="field">确认密码 *<input id="rConfirm" type="password" autocomplete="new-password" minlength="6" placeholder="请再次输入密码" required></label>
+      <div class="row" style="justify-content:space-between;">
+        <button class="btn sm ghost" type="button" data-auth-tab="login">已有通行证？去登录 →</button>
+        <button class="btn primary" type="submit" id="rSubmit">注册并立即使用</button>
+      </div>
+    </form>
+  </div>
 </dialog>
 
 <div class="toast" id="toast" role="status"></div>
@@ -1645,8 +1690,101 @@
     clearTimeout(tt);
     tt = setTimeout(function () { t.classList.remove('show'); }, 2600);
   }
+  function decodeJwtPayload(tok) {
+    if (!tok || typeof tok !== 'string') return null;
+    var parts = tok.split('.');
+    if (parts.length !== 3 || !parts[1]) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      var bin = window.atob(b64);
+      var str = decodeURIComponent(bin.split('').map(function (c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      return JSON.parse(str);
+    } catch (e) { return null; }
+  }
+  function isJwtExpired(tok) {
+    var p = decodeJwtPayload(tok);
+    return !!(p && typeof p.exp === 'number' && p.exp * 1000 <= Date.now() + 5000);
+  }
+  function syncOneIdSession(tok, userHint) {
+    if (!tok || isJwtExpired(tok)) { clearOneIdSession(); return; }
+    if (window.FWPTHub && typeof window.FWPTHub.setSession === 'function') {
+      window.FWPTHub.setSession(tok, userHint, { silent: true });
+      return;
+    }
+    try {
+      var claims = decodeJwtPayload(tok) || {};
+      var h = (userHint && typeof userHint === 'object') ? userHint : {};
+      var uname = String(h.username || claims.username || claims.sub || '').trim();
+      var rname = String(h.realName || h.nickname || claims.realName || uname).trim();
+      var role = String(h.role || claims.role || (uname.toLowerCase() === 'admin' ? 'ADMIN' : 'USER')).trim();
+      var userObj = uname ? { id: h.id || claims.userId, username: uname, nickname: rname, realName: rname, role: role, email: h.email } : null;
+      localStorage.setItem('xynote_token', tok);
+      localStorage.setItem('fwpt_auth_token', tok);
+      localStorage.setItem('fwpt_token', tok);
+      localStorage.setItem('wmdb_token', tok);
+      localStorage.setItem('pacer_token', tok);
+      localStorage.setItem('seahorse_token', tok);
+      if (userObj) {
+        var uj = JSON.stringify(userObj);
+        localStorage.setItem('fwpt_auth_user', uj);
+        localStorage.setItem('fwpt_user', uj);
+        localStorage.setItem('fwpt_current_user', uj);
+        localStorage.setItem('wm_erp_user', uj);
+        if (!localStorage.getItem('seahorse_username') || localStorage.getItem('fwpt_seahorse_oneid') === '1') {
+          localStorage.setItem('seahorse_user', rname);
+          localStorage.setItem('seahorse_username', uname);
+          localStorage.setItem('seahorse_real_name', rname);
+          localStorage.setItem('seahorse_role', uname.toLowerCase() === 'admin' || role.toUpperCase() === 'ADMIN' ? 'PLATFORM_DEVELOPER' : 'SUPER_ADMIN');
+          if (!localStorage.getItem('seahorse_store_id')) localStorage.setItem('seahorse_store_id', 'S001');
+          if (!localStorage.getItem('seahorse_tenant_id')) localStorage.setItem('seahorse_tenant_id', 'T001');
+          if (!localStorage.getItem('seahorse_tenant_name')) localStorage.setItem('seahorse_tenant_name', '海马智慧商业连锁集团');
+          if (!localStorage.getItem('seahorse_plan')) localStorage.setItem('seahorse_plan', 'FLAGSHIP');
+          localStorage.setItem('fwpt_seahorse_oneid', '1');
+        }
+      }
+    } catch (e) {}
+  }
+  function clearOneIdSession() {
+    if (window.FWPTHub && typeof window.FWPTHub.clearSession === 'function') {
+      window.FWPTHub.clearSession({ silent: true });
+      return;
+    }
+    try {
+      var prev = localStorage.getItem('fwpt_auth_token') || localStorage.getItem('xynote_token');
+      ['xynote_token', 'fwpt_auth_token', 'fwpt_auth_user', 'fwpt_token', 'fwpt_user', 'fwpt_current_user', 'wmdb_token', 'pacer_token', 'wm_erp_user'].forEach(function (k) {
+        localStorage.removeItem(k);
+      });
+      if (localStorage.getItem('fwpt_seahorse_oneid') === '1' || (prev && localStorage.getItem('seahorse_token') === prev)) {
+        localStorage.removeItem('seahorse_token');
+        if (localStorage.getItem('fwpt_seahorse_oneid') === '1') {
+          ['seahorse_user', 'seahorse_username', 'seahorse_real_name', 'seahorse_role'].forEach(function (k) { localStorage.removeItem(k); });
+        }
+        localStorage.removeItem('fwpt_seahorse_oneid');
+      }
+      sessionStorage.removeItem('fwpt_token');
+      sessionStorage.removeItem('xynote_admin_token');
+    } catch (e) {}
+  }
   function token() {
-    try { return localStorage.getItem('xynote_token') || localStorage.getItem('fwpt_auth_token') || localStorage.getItem('fwpt_token'); } catch (e) { return null; }
+    if (window.FWPTHub && typeof window.FWPTHub.getToken === 'function') {
+      var ht = window.FWPTHub.getToken();
+      if (ht) return ht;
+    }
+    try {
+      var keys = ['xynote_token', 'fwpt_auth_token', 'fwpt_token', 'wmdb_token', 'pacer_token'];
+      var expiredFound = false;
+      for (var i = 0; i < keys.length; i++) {
+        var v = localStorage.getItem(keys[i]);
+        if (!v) continue;
+        if (isJwtExpired(v)) { expiredFound = true; continue; }
+        return v;
+      }
+      if (expiredFound) clearOneIdSession();
+    } catch (e) {}
+    return null;
   }
   function api(path, opts) {
     opts = opts || {};
@@ -1794,65 +1932,285 @@
     try { localStorage.setItem('fwpt_theme', next); } catch (e) {}
   });
 
-  // 弹窗关闭通用处理
+  // 弹窗开闭通用处理（兼容非 :modal 环境降级）
+  function openDlg(dlg) {
+    if (!dlg) return;
+    if (dlg.open) return;
+    if (typeof dlg.showModal === 'function') {
+      try { dlg.showModal(); return; } catch (e) {}
+    }
+    dlg.setAttribute('open', '');
+    dlg.style.position = 'fixed';
+    dlg.style.inset = '0';
+    dlg.style.margin = 'auto';
+    dlg.style.zIndex = '80';
+  }
+  function closeDlg(dlg) {
+    if (!dlg) return;
+    if (dlg.open && typeof dlg.close === 'function') {
+      try { dlg.close(); return; } catch (e) {}
+    }
+    dlg.removeAttribute('open');
+  }
+
   document.querySelectorAll('dialog').forEach(function (dlg) {
     dlg.querySelectorAll('[data-close]').forEach(function (btn) {
-      btn.addEventListener('click', function () { dlg.close(); });
+      btn.addEventListener('click', function () { closeDlg(dlg); });
     });
     dlg.addEventListener('click', function (e) {
-      if (e.target === dlg) dlg.close();
+      if (e.target === dlg) closeDlg(dlg);
     });
   });
 
-  // 登录与用户状态
+  // OneID 登录 / 极速注册弹窗控制
+  var curAuthTab = 'login';
+  var curRegType = 'ACCOUNT';
+
+  function showAuthAlert(msg, isOk) {
+    var box = $('loginError');
+    if (!box) return;
+    if (!msg) { box.hidden = true; box.textContent = ''; box.className = 'alert'; return; }
+    box.textContent = msg;
+    box.className = 'alert' + (isOk ? ' ok' : '');
+    box.hidden = false;
+  }
+
+  function setAuthTab(tab) {
+    curAuthTab = tab === 'register' ? 'register' : 'login';
+    showAuthAlert('');
+    document.querySelectorAll('[data-auth-tab]').forEach(function (b) {
+      if (b.getAttribute('role') === 'tab') {
+        b.setAttribute('aria-selected', String(b.getAttribute('data-auth-tab') === curAuthTab));
+      }
+    });
+    if ($('loginForm')) $('loginForm').hidden = curAuthTab !== 'login';
+    if ($('regForm')) $('regForm').hidden = curAuthTab !== 'register';
+    setTimeout(function () {
+      var el = curAuthTab === 'register'
+        ? (curRegType === 'EMAIL' ? $('rEmail') : $('rUsername'))
+        : $('lAccount');
+      if (el && el.focus) el.focus();
+    }, 30);
+  }
+
+  function setRegType(t) {
+    curRegType = t === 'EMAIL' ? 'EMAIL' : 'ACCOUNT';
+    showAuthAlert('');
+    document.querySelectorAll('[data-reg-type]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-reg-type') === curRegType));
+    });
+    if ($('rEmailWrap')) {
+      $('rEmailWrap').hidden = curRegType !== 'EMAIL';
+      $('rEmailWrap').style.display = curRegType === 'EMAIL' ? 'flex' : 'none';
+    }
+    if ($('rEmail')) $('rEmail').required = curRegType === 'EMAIL';
+    if ($('rCode')) $('rCode').required = curRegType === 'EMAIL';
+  }
+
+  function openAuthDlg(mode) {
+    setRegType(curRegType);
+    setAuthTab(mode || 'login');
+    openDlg($('loginDlg'));
+  }
+  window.__FWPT_PAGE_AUTH_OPENER__ = openAuthDlg;
+
+  function renderLoggedOut() {
+    me = null;
+    $('userArea').innerHTML =
+      '<button class="btn sm" type="button" id="openLoginBtn">通行证登录</button>' +
+      '<button class="btn sm ghost" type="button" data-open-auth="register">极速注册</button>';
+    $('mineFilterBtn').hidden = true;
+    $('fbWhoNote').innerHTML =
+      '当前可匿名提交；或 <button type="button" class="inline-auth-btn" data-open-auth="login">登录</button> / <button type="button" class="inline-auth-btn" data-open-auth="register">10 秒注册</button> FWPT 通行证追踪官方回复。';
+    renderSessionFeedback();
+  }
+
+  // 登录与用户状态（全局事件委托，不阻塞于异步 /api/v1/me）
+  var _authRefreshing = false;
   function refreshAuth() {
     var t = token();
     if (!t) {
-      me = null;
-      $('userArea').innerHTML = '<button class="btn sm" type="button" id="openLoginBtn">通行证登录</button>';
-      $('openLoginBtn').addEventListener('click', function () { $('loginError').hidden = true; $('loginDlg').showModal(); });
-      $('mineFilterBtn').hidden = true;
-      $('fbWhoNote').textContent = '当前可直接匿名提交；登录 FWPT 通行证后可跨设备追踪官方回复。';
-      renderSessionFeedback();
+      renderLoggedOut();
       return Promise.resolve();
     }
+    if (_authRefreshing) return Promise.resolve();
+    _authRefreshing = true;
     return api('/api/v1/me').then(function (u) {
+      _authRefreshing = false;
       me = u;
+      syncOneIdSession(t, {
+        username: u.account,
+        nickname: u.account,
+        realName: u.account,
+        email: u.email,
+        role: u.isAdmin ? 'ADMIN' : 'USER'
+      });
       $('userArea').innerHTML = '<span class="muted" style="font-weight:600;color:var(--ink-2);">' + esc(me.account) + '</span>' +
         (me.isAdmin ? '<a class="btn sm" href="admin/">管理后台</a>' : '') +
         '<button class="btn sm ghost" type="button" id="logoutBtn">退出</button>';
-      $('logoutBtn').addEventListener('click', function () {
-        try { localStorage.removeItem('xynote_token'); localStorage.removeItem('fwpt_auth_token'); } catch (e) {}
-        if (state.kind === 'mine') state.kind = 'all';
-        refreshAuth().then(loadMarketplace);
-      });
       $('mineFilterBtn').hidden = false;
       $('fbWhoNote').textContent = '已登录为 ' + me.account + '，提交的反馈会自动关联你的账号，官方回复会直接展示在下方。';
       if (me.email && !$('fbContact').value) $('fbContact').value = me.email;
       if (!$('sAuthor').value) $('sAuthor').value = me.account;
-      return api('/api/v1/feedback/mine').then(function (d) { renderFeedbackList(d.feedback || []); });
-    }).catch(function () {
-      me = null;
-      try { localStorage.removeItem('xynote_token'); } catch (e) {}
-      refreshAuth();
+      return api('/api/v1/feedback/mine').then(function (d) { renderFeedbackList(d.feedback || []); }).catch(function () {});
+    }).catch(function (err) {
+      _authRefreshing = false;
+      if (err && (err.status === 401 || err.status === 403)) {
+        clearOneIdSession();
+      }
+      renderLoggedOut();
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#openLoginBtn')) {
+      openAuthDlg('login');
+      return;
+    }
+    var authOpenEl = t.closest('[data-open-auth]');
+    if (authOpenEl) {
+      openAuthDlg(authOpenEl.getAttribute('data-open-auth') || 'login');
+      return;
+    }
+    if (t.closest('#logoutBtn')) {
+      clearOneIdSession();
+      if (state.kind === 'mine') state.kind = 'all';
+      refreshAuth().then(loadMarketplace);
+      return;
+    }
+    var tabBtn = t.closest('#loginDlg [data-auth-tab]');
+    if (tabBtn) {
+      setAuthTab(tabBtn.getAttribute('data-auth-tab'));
+      return;
+    }
+    var regTypeBtn = t.closest('#loginDlg [data-reg-type]');
+    if (regTypeBtn) {
+      setRegType(regTypeBtn.getAttribute('data-reg-type'));
+    }
+  });
+
+  if ($('rEmail')) {
+    $('rEmail').addEventListener('blur', function () {
+      var v = ($('rEmail').value || '').trim();
+      if (v.indexOf('@') > 0 && $('rUsername') && !$('rUsername').value.trim()) {
+        $('rUsername').value = v.split('@')[0].replace(/[^A-Za-z0-9_]/g, '_').slice(0, 24);
+      }
+    });
+  }
+
+  if ($('rSendCodeBtn')) {
+    $('rSendCodeBtn').addEventListener('click', function () {
+      var btn = $('rSendCodeBtn');
+      var email = ($('rEmail').value || '').trim();
+      if (!email || email.indexOf('@') < 1) {
+        showAuthAlert('请先输入有效的电子邮箱地址');
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '发送中…';
+      fetch('/api/v1/auth/send-email-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (res && (res.code === '00000' || res.code === 200)) {
+          showAuthAlert('安全验证码已由 admin@fwpt.cn 发送至您的邮箱，5 分钟内有效！', true);
+          var sec = 60;
+          var timer = setInterval(function () {
+            sec--;
+            if (sec <= 0) {
+              clearInterval(timer);
+              btn.disabled = false;
+              btn.textContent = '获取验证码';
+            } else {
+              btn.textContent = sec + 's 后重发';
+            }
+          }, 1000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = '获取验证码';
+          showAuthAlert((res && (res.message || res.detail)) || '发送失败，请稍后重试');
+        }
+      }).catch(function () {
+        btn.disabled = false;
+        btn.textContent = '获取验证码';
+        showAuthAlert('发送验证码失败，请检查网络连接或改用「账号快速注册」');
+      });
     });
   }
 
   $('loginForm').addEventListener('submit', function (e) {
     e.preventDefault();
     $('lSubmit').disabled = true;
-    $('loginError').hidden = true;
-    api('/api/v1/auth/login', { method: 'POST', body: { email: $('lAccount').value.trim(), password: $('lPassword').value } })
+    showAuthAlert('');
+    var acc = $('lAccount').value.trim();
+    api('/api/v1/auth/login', { method: 'POST', body: { email: acc, password: $('lPassword').value } })
       .then(function (d) {
-        localStorage.setItem('xynote_token', d.token);
+        var displayAcc = (d && d.account && d.account.email) || acc;
+        syncOneIdSession(d.token, { username: acc, realName: displayAcc, nickname: displayAcc });
         $('lPassword').value = '';
-        $('loginDlg').close();
-        toast('登录成功');
+        closeDlg($('loginDlg'));
+        toast('登录成功，全站 OneID 会话已同步');
         return refreshAuth().then(loadMarketplace);
       })
-      .catch(function (err) { $('loginError').textContent = err.message; $('loginError').hidden = false; })
+      .catch(function (err) { showAuthAlert(err.message); })
       .then(function () { $('lSubmit').disabled = false; });
   });
+
+  if ($('regForm')) {
+    $('regForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var uname = ($('rUsername').value || '').trim();
+      var nick = ($('rNickname').value || '').trim() || uname;
+      var pwd = $('rPassword').value || '';
+      var pwd2 = $('rConfirm').value || '';
+      var email = ($('rEmail').value || '').trim();
+      var code = ($('rCode').value || '').trim();
+      if (uname.length < 2) { showAuthAlert('通行证用户名至少 2 个字符'); return; }
+      if (pwd.length < 6) { showAuthAlert('登录密码长度至少需要 6 位字符'); return; }
+      if (pwd !== pwd2) { showAuthAlert('两次输入的密码不一致，请重新核对'); return; }
+      if (curRegType === 'EMAIL' && (!email || !code)) { showAuthAlert('请输入电子邮箱及收到的 6 位验证码'); return; }
+      $('rSubmit').disabled = true;
+      showAuthAlert('');
+      fetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          registerType: curRegType,
+          username: uname,
+          realName: nick,
+          password: pwd,
+          email: curRegType === 'EMAIL' ? email : undefined,
+          code: curRegType === 'EMAIL' ? code : undefined,
+          source: 'XYNOTE_WEB'
+        })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        var d = (res && res.data) ? res.data : res;
+        var tok = d && (d.token || d.access_token);
+        if (!tok) {
+          throw new Error((res && (res.message || res.detail)) || '注册失败，请检查填写内容');
+        }
+        syncOneIdSession(tok, {
+          username: uname,
+          nickname: nick,
+          realName: nick,
+          email: curRegType === 'EMAIL' ? email : undefined,
+          role: 'DEV'
+        });
+        $('rPassword').value = '';
+        $('rConfirm').value = '';
+        closeDlg($('loginDlg'));
+        toast('通行证注册成功！已为您自动登录全平台');
+        return refreshAuth().then(loadMarketplace);
+      }).catch(function (err) {
+        showAuthAlert(err.message || '注册请求失败，请稍后重试');
+      }).then(function () {
+        $('rSubmit').disabled = false;
+      });
+    });
+  }
 
   // 模板与插件开发规范选项卡
   var SPECS = {
@@ -1917,7 +2275,7 @@
     $('sKind').value = k;
     if (!$('sContent').value) $('sContent').value = SPECS[state.spec].code;
     if (me && !$('sAuthor').value) $('sAuthor').value = me.account;
-    $('shareDlg').showModal();
+    openDlg($('shareDlg'));
   });
   renderSpec('tpl');
 
@@ -2083,7 +2441,7 @@
       var pid = Number(btn.dataset.preview);
       $('pvTitle').textContent = '加载中…';
       $('pvCode').textContent = '';
-      $('previewDlg').showModal();
+      openDlg($('previewDlg'));
       api('/api/v1/marketplace/' + pid)
         .then(function (d) {
           previewContent = d.content || '';
@@ -2122,7 +2480,7 @@
   $('openShareBtn').addEventListener('click', function () {
     $('shareErr').hidden = true;
     if (me && !$('sAuthor').value) $('sAuthor').value = me.account;
-    $('shareDlg').showModal();
+    openDlg($('shareDlg'));
   });
 
   function applyLocalFile(file) {
@@ -2218,7 +2576,7 @@
         content: $('sContent').value
       }
     }).then(function () {
-      $('shareDlg').close();
+      closeDlg($('shareDlg'));
       $('sName').value = '';
       $('sDesc').value = '';
       $('sTags').value = '';
@@ -2304,11 +2662,27 @@
     });
   });
 
+  // 跨页签 / 悬浮切换器认证实时同步
+  window.addEventListener('fwpt:auth-change', function () {
+    refreshAuth().then(loadMarketplace);
+  });
+  window.addEventListener('storage', function (e) {
+    if (!e || !e.key || ['xynote_token', 'fwpt_auth_token', 'fwpt_token', 'wmdb_token', 'pacer_token'].indexOf(e.key) >= 0) {
+      refreshAuth().then(loadMarketplace);
+    }
+  });
+
   // 初始化
   refreshAuth();
   loadMarketplace();
+  try {
+    var qs = new URLSearchParams(location.search);
+    var act = qs.get('action');
+    if (qs.get('register') === '1' || act === 'register') openAuthDlg('register');
+    else if (qs.get('login') === '1' || act === 'login') openAuthDlg('login');
+  } catch (e) {}
 })();
 </script>
-<script src="/js/fwpt-hub.js" data-fwpt-app="xynote" data-fwpt-offset="20" defer></script>
+<script src="/js/fwpt-hub.js?v=20261118c" data-fwpt-app="xynote" data-fwpt-offset="20" defer></script>
 </body>
 </html>

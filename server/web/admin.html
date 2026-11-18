@@ -108,8 +108,31 @@
   var tt;
   function toast(m) { var t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); }, 2600); }
 
+  function isJwtExpired(tok) {
+    if (!tok || typeof tok !== 'string') return false;
+    var p = tok.split('.');
+    if (p.length !== 3 || !p[1]) return false;
+    try {
+      var b64 = p[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      var payload = JSON.parse(window.atob(b64));
+      return !!(payload && typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now() + 5000);
+    } catch (e) { return false; }
+  }
+  function clearAuthTokens() {
+    try {
+      sessionStorage.removeItem('xynote_admin_token');
+      ['xynote_token', 'fwpt_auth_token', 'fwpt_token'].forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
+  }
   function token() {
-    try { return sessionStorage.getItem('xynote_admin_token') || localStorage.getItem('xynote_token') || localStorage.getItem('fwpt_auth_token') || localStorage.getItem('fwpt_token'); } catch (e) { return null; }
+    try {
+      var keys = [sessionStorage.getItem('xynote_admin_token'), localStorage.getItem('xynote_token'), localStorage.getItem('fwpt_auth_token'), localStorage.getItem('fwpt_token')];
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i] && !isJwtExpired(keys[i])) return keys[i];
+      }
+      return null;
+    } catch (e) { return null; }
   }
   function api(path, opts) {
     opts = opts || {};
@@ -136,7 +159,14 @@
     $('loginForm').addEventListener('submit', function (e) {
       e.preventDefault();
       api('/api/v1/auth/login', { method: 'POST', body: { email: $('lAcc').value.trim(), password: $('lPwd').value } })
-        .then(function (d) { localStorage.setItem('xynote_token', d.token); boot(); })
+        .then(function (d) {
+          try {
+            localStorage.setItem('xynote_token', d.token);
+            localStorage.setItem('fwpt_auth_token', d.token);
+            localStorage.setItem('fwpt_token', d.token);
+          } catch (x) {}
+          boot();
+        })
         .catch(function (err) { showLogin(err.message); });
     });
     $('lTokBtn').addEventListener('click', function () { var v = $('lTok').value.trim(); if (v) { sessionStorage.setItem('xynote_admin_token', v); boot(); } });
@@ -262,7 +292,12 @@
   }
 
   function fail(e) {
-    if (e.status === 401 || e.status === 403) { try { sessionStorage.removeItem('xynote_admin_token'); } catch (x) {} showLogin(e.status === 403 ? '这个通行证不是管理员' : '请先登录'); return; }
+    if (e.status === 401 || e.status === 403) {
+      if (e.status === 401) clearAuthTokens();
+      else { try { sessionStorage.removeItem('xynote_admin_token'); } catch (x) {} }
+      showLogin(e.status === 403 ? '这个通行证不是管理员' : '请先登录');
+      return;
+    }
     $('main').innerHTML = '<div class="alert">' + esc(e.message) + '</div>';
   }
 
@@ -301,7 +336,11 @@
       if (countsOnly) return;
       $('nav').hidden = false;
       $('who').innerHTML = '<a href="../">用户中心</a><button class="btn" type="button" id="logout">退出</button>';
-      $('logout').addEventListener('click', function () { try { sessionStorage.removeItem('xynote_admin_token'); localStorage.removeItem('xynote_token'); } catch (x) {} showLogin(); });
+      $('logout').addEventListener('click', function () {
+        clearAuthTokens();
+        try { ['fwpt_auth_user', 'fwpt_user', 'fwpt_current_user', 'wmdb_token', 'pacer_token'].forEach(function (k) { localStorage.removeItem(k); }); } catch (x) {}
+        showLogin();
+      });
       setView(view);
     }).catch(fail);
   }

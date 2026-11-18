@@ -47,7 +47,12 @@ pub fn parse_profile(body: &Value) -> Option<OneIdUser> {
         Some(Value::String(s)) if !s.trim().is_empty() => format!("oneid:{}", s.trim()),
         _ => format!("oneid_user:{}", text("username")?.to_lowercase()),
     };
-    let display = text("nickname").or_else(|| text("username")).or_else(|| text("email")).unwrap_or_else(|| key.clone());
+    let display = text("nickname")
+        .or_else(|| text("realName"))
+        .or_else(|| text("displayName"))
+        .or_else(|| text("username"))
+        .or_else(|| text("email"))
+        .unwrap_or_else(|| key.clone());
     Some(OneIdUser {
         key,
         display,
@@ -107,6 +112,8 @@ mod tests {
     fn parses_profiles() {
         let u = parse_profile(&json!({"code":"00000","data":{"id":42,"username":"wm","nickname":"小王","role":"admin"}})).unwrap();
         assert_eq!(u, OneIdUser { key: "oneid:42".into(), display: "小王".into(), role: "ADMIN".into(), email: None });
+        let u = parse_profile(&json!({"code":"00000","data":{"id":7,"username":"wm","realName":"王明","role":"ADMIN"}})).unwrap();
+        assert_eq!(u, OneIdUser { key: "oneid:7".into(), display: "王明".into(), role: "ADMIN".into(), email: None });
         let u = parse_profile(&json!({"success":true,"data":{"username":"Bob","email":"b@x.cn"}})).unwrap();
         assert_eq!(u.key, "oneid_user:bob");
         assert_eq!(u.email.as_deref(), Some("b@x.cn"));
