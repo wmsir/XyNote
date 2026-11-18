@@ -679,7 +679,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title="批量导入 Markdown 文件夹或 Notion .zip 导出包"
         >
           <Upload size={16} strokeWidth={1.6} />
-          <span className="nb-sidebar-item-label">导入 / 数据迁移</span>
+          <span className="nb-sidebar-item-label">导入 / 导出</span>
         </button>
 
         <button

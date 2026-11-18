@@ -7,8 +7,10 @@ export async function openNewWindow(pageId?: string | null): Promise<string> {
   if (!isTauriRuntime()) {
     // 浏览器预览：在新标签页打开
     const url = new URL(window.location.href);
+    url.searchParams.delete("page");
+    url.searchParams.delete("fresh");
     if (pageId) url.searchParams.set("page", pageId);
-    else url.searchParams.delete("page");
+    else url.searchParams.set("fresh", "1");
     window.open(url.toString(), "_blank");
     return "browser";
   }
@@ -39,6 +41,15 @@ export async function saveExportImages(filename: string, parts: string[]): Promi
 }
 
 /** 从启动地址 ?page=xxx 里读出要打开的页面（新窗口用） */
+/** 是否是「新建窗口」打开的全新窗口（不恢复上次的页面） */
+export function isFreshWindow(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get("fresh") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function initialPageFromUrl(): string | null {
   try {
     return new URLSearchParams(window.location.search).get("page");

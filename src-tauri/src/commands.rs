@@ -927,6 +927,9 @@ pub async fn open_new_window(app: AppHandle, page_id: Option<String>) -> Result<
     if let Some(id) = page_id.filter(|v| !v.trim().is_empty()) {
         let safe: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
         url.push_str(&format!("?page={}", safe));
+    } else {
+        // 全新窗口：不恢复上次的页面和侧栏状态
+        url.push_str("?fresh=1");
     }
     let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("小悦 (XyNote)")
