@@ -10,7 +10,17 @@ import {
   FolderOpen,
   Upload,
   X,
+  ChevronDown,
+  Globe,
+  Printer,
+  FileType2,
+  BookOpen,
+  Image as ImageIcon,
+  Sigma,
+  ListTree,
+  Database,
 } from "lucide-react";
+import type { ExportFormat } from "./Topbar";
 import {
   importMarkdownTree,
   importNotionZipBytes,
@@ -43,7 +53,25 @@ export interface MarkdownModalProps {
   ) => Promise<void>;
   onBatchImported?: (result: BatchImportResult) => Promise<void> | void;
   onRequestExportCurrent?: () => Promise<void> | void;
+  /** 导出针对的页面 */
+  exportTarget?: { id: string; title: string } | null;
+  /** 导出为其他格式（HTML、PDF、Word…） */
+  onExportAs?: (format: ExportFormat) => void;
+  /** 打开「备份与数据安全」，整库导出 */
+  onOpenWorkspaceExport?: () => void;
 }
+
+/** 导出格式卡片 */
+const EXPORT_FORMATS: { id: ExportFormat | "md"; name: string; ext: string; desc: string; icon: React.ReactNode }[] = [
+  { id: "md", name: "Markdown", ext: ".md", desc: "通用纯文本，可在任何笔记软件里打开", icon: <FileText size={18} /> },
+  { id: "html", name: "网页", ext: ".html", desc: "单个网页文件，图片一并内嵌", icon: <Globe size={18} /> },
+  { id: "pdf", name: "PDF", ext: ".pdf", desc: "通过打印另存为 PDF，适合分享和打印", icon: <Printer size={18} /> },
+  { id: "docx", name: "Word", ext: ".docx", desc: "用 Word、WPS 继续编辑", icon: <FileType2 size={18} /> },
+  { id: "epub", name: "电子书", ext: ".epub", desc: "带目录，可在阅读器和手机上看", icon: <BookOpen size={18} /> },
+  { id: "png", name: "图片", ext: ".png", desc: "长页面自动分成多张，方便发群聊", icon: <ImageIcon size={18} /> },
+  { id: "latex", name: "LaTeX", ext: ".tex", desc: "用 XeLaTeX 编译排版，公式原样保留", icon: <Sigma size={18} /> },
+  { id: "opml", name: "大纲", ext: ".opml", desc: "按标题分层，可导入思维导图工具", icon: <ListTree size={18} /> },
+];
 
 export const MarkdownModal: React.FC<MarkdownModalProps> = ({
   mode,
@@ -54,7 +82,11 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
   onImportSubmit,
   onBatchImported,
   onRequestExportCurrent,
+  exportTarget = null,
+  onExportAs,
+  onOpenWorkspaceExport,
 }) => {
+  const [showMdSource, setShowMdSource] = useState(false);
   const [activeTab, setActiveTab] = useState<ImportModalTab>("files");
   const [title, setTitle] = useState("");
   const [markdown, setMarkdown] = useState("");
@@ -349,7 +381,7 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
         <div className="nb-modal-header">
           <div className="nb-modal-title">
             <Upload size={17} />
-            <span>导入、导出与 Notion 迁移中心</span>
+            <span>导入与导出</span>
           </div>
           <button type="button" className="nb-icon-btn" onClick={onClose}>
             <X size={16} />
@@ -406,7 +438,7 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
               }
             }}
           >
-            <Download size={14} /> 导出当前页 Markdown
+            <Download size={14} /> 导出当前页面
           </button>
         </div>
 
@@ -756,48 +788,82 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
             </>
           )}
 
-          {/* TAB 4: Export Current Page Markdown */}
+          {/* TAB 4: 导出当前页面（多种格式） */}
           {activeTab === "export" && (
             <>
-              <textarea
-                readOnly
-                className="nb-textarea"
-                style={{
-                  minHeight: "240px",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "12.5px",
-                }}
-                value={
-                  exportData?.markdown ??
-                  "当前尚未选中可导出的页面，请先在左侧选择一篇文档或数据库。"
-                }
-              />
+              {!exportTarget ? (
+                <div className="nb-export-empty">先在左侧打开一篇页面，再来这里导出。</div>
+              ) : (
+                <>
+                  <div className="nb-export-head">
+                    <span className="nb-export-head-label">导出页面</span>
+                    <span className="nb-export-head-title" data-i18n-skip="">
+                      {exportTarget.title}
+                    </span>
+                  </div>
+                  <div className="nb-export-grid">
+                    {EXPORT_FORMATS.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className="nb-export-card"
+                        disabled={f.id === "md" ? !exportData : !onExportAs}
+                        onClick={() => {
+                          if (f.id === "md") handleDownloadExport();
+                          else onExportAs?.(f.id);
+                        }}
+                      >
+                        <span className="nb-export-card-icon">{f.icon}</span>
+                        <span className="nb-export-card-text">
+                          <span className="nb-export-card-name">
+                            {f.name}
+                            <span className="nb-export-card-ext" data-i18n-skip="">
+                              {f.ext}
+                            </span>
+                          </span>
+                          <span className="nb-export-card-desc">{f.desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: "8px",
-                }}
-              >
-                <button
-                  type="button"
-                  className="nb-btn-secondary"
-                  disabled={!exportData}
-                  onClick={handleCopyExport}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                  {copied ? "已复制到剪贴板" : "复制 Markdown"}
+                  <div className="nb-export-md">
+                    <button
+                      type="button"
+                      className="nb-export-md-toggle"
+                      aria-expanded={showMdSource}
+                      onClick={() => setShowMdSource((v) => !v)}
+                    >
+                      <ChevronDown size={14} className={showMdSource ? "is-open" : ""} />
+                      Markdown 源码
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-btn-secondary nb-export-copy"
+                      disabled={!exportData}
+                      onClick={handleCopyExport}
+                    >
+                      {copied ? <Check size={14} /> : <Copy size={14} />}
+                      {copied ? "已复制到剪贴板" : "复制 Markdown"}
+                    </button>
+                  </div>
+                  {showMdSource && (
+                    <textarea
+                      readOnly
+                      className="nb-textarea"
+                      style={{ minHeight: "200px", fontFamily: "var(--font-mono)", fontSize: "12.5px" }}
+                      value={exportData?.markdown ?? "正在读取…"}
+                    />
+                  )}
+                </>
+              )}
+
+              {onOpenWorkspaceExport && (
+                <button type="button" className="nb-export-workspace" onClick={onOpenWorkspaceExport}>
+                  <Database size={14} />
+                  <span>想导出整个工作区？到「偏好设置 → 备份与数据安全」整库导出为 ZIP</span>
                 </button>
-                <button
-                  type="button"
-                  className="nb-btn-primary"
-                  disabled={!exportData}
-                  onClick={handleDownloadExport}
-                >
-                  <Download size={14} /> 下载 .md 文件
-                </button>
-              </div>
+              )}
             </>
           )}
         </div>

@@ -17,6 +17,7 @@ import {
 import { createFolderEntry } from "./api/folders";
 import {
   initialPageFromUrl,
+  isFreshWindow,
   onExternalOpenFiles,
   openNewWindow,
   saveExportImages,
@@ -26,6 +27,7 @@ import { renderHtmlToPngParts } from "./utils/exportImage";
 import { UpdateNotice } from "./components/shell/UpdateCheck";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExportFormat } from "./components/shell/Topbar";
+import { FreshStart } from "./components/shell/FreshStart";
 import { savePageAsTemplate } from "./api/templates";
 import {
   convertMarkdownBlocks,
@@ -199,7 +201,9 @@ export const App: React.FC = () => {
   const [activeTextFile, setActiveTextFile] = useState<TextFileDocument | null>(null);
 
   // Appearance & Layout
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  /** 「新建窗口」打开的全新窗口：不恢复上次的页面，侧栏默认收起且不写回设置 */
+  const freshWindowRef = useRef(isFreshWindow());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(freshWindowRef.current);
   const [zenMode, setZenMode] = useState(false);
   const preZenSidebarRef = useRef(false);
 
@@ -1106,7 +1110,7 @@ export const App: React.FC = () => {
         if (settings.showStatusBar === "false") {
           setShowStatusBar(false);
         }
-        if (settings.sidebarCollapsed === "true") {
+        if (settings.sidebarCollapsed === "true" && !freshWindowRef.current) {
           setSidebarCollapsed(true);
         }
         if (settings.editorPreferences) {
@@ -1161,18 +1165,22 @@ export const App: React.FC = () => {
         setPages(activeList);
         setTrashedPages(trashList);
 
-        const launchFiles = (await takePendingOpenFiles().catch(() => [])) ?? [];
+        // 启动时双击打开的文件交给主窗口处理，全新窗口不抢
+        const launchFiles = freshWindowRef.current
+          ? []
+          : (await takePendingOpenFiles().catch(() => [])) ?? [];
         const launchTarget =
           launchFiles.length > 0 ? launchFiles[launchFiles.length - 1] : null;
 
         const remembered = settings.lastActivePageId;
         // 新窗口通过 ?page=xxx 指定要打开的页面
         const requested = initialPageFromUrl();
-        const targetPage =
-          (requested ? activeList.find((p) => p.id === requested) ?? (await getPageDetail(requested).then((d) => d.page).catch(() => null)) : null) ??
-          activeList.find((p) => p.id === remembered) ??
-          activeList[0] ??
-          null;
+        const targetPage = freshWindowRef.current
+          ? null
+          : (requested ? activeList.find((p) => p.id === requested) ?? (await getPageDetail(requested).then((d) => d.page).catch(() => null)) : null) ??
+            activeList.find((p) => p.id === remembered) ??
+            activeList[0] ??
+            null;
 
         if (targetPage) {
           const initialDetail = await getPageDetail(targetPage.id);
@@ -1341,7 +1349,9 @@ export const App: React.FC = () => {
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
-      setSetting("sidebarCollapsed", String(next)).catch(() => {});
+      if (!freshWindowRef.current) {
+        setSetting("sidebarCollapsed", String(next)).catch(() => {});
+      }
       return next;
     });
   }, []);
@@ -1915,14 +1925,20 @@ export const App: React.FC = () => {
     [flushPendingBlockSave, loadPageDetailById, refreshSidebarLists, showToast]
   );
 
+  /** 导入 / 导出中心里「导出」针对的页面 */
+  const [exportTarget, setExportTarget] = useState<{ id: string; title: string } | null>(null);
+
   const handleExportMarkdown = useCallback(
     async (pageId: string) => {
       await flushPendingBlockSave();
+      const target = pages.find((p) => p.id === pageId) ?? (detail?.page.id === pageId ? detail.page : null);
+      setExportTarget({ id: pageId, title: target?.title || "无标题" });
+      setExportPayload(null);
+      setMarkdownModalMode("export");
       const exported = await exportPageMarkdown(pageId);
       setExportPayload(exported);
-      setMarkdownModalMode("export");
     },
-    [flushPendingBlockSave]
+    [flushPendingBlockSave, pages, detail]
   );
 
   /** 导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
@@ -2385,6 +2401,25 @@ export const App: React.FC = () => {
                 />
               </div>
             </>
+          ) : freshWindowRef.current ? (
+            <FreshStart
+              onCreateDoc={(title) => {
+                handleCreatePage({ pageType: "doc", icon: "📄", title: title || "无标题" }).catch(() => {});
+              }}
+              onCreateDatabase={() => {
+                handleCreatePage({ pageType: "database", icon: "🗃️", title: "无标题数据库" }).catch(() => {});
+              }}
+              onOpenTemplates={() => setTemplatesOpen(true)}
+              onOpenFile={() => {
+                handleOpenLocalMdDialog().catch(() => {});
+              }}
+              onOpenFolder={() => {
+                setSidebarCollapsed(false);
+                handleAddWorkspaceFolder().catch(() => {});
+              }}
+              onShowWorkspace={() => setSidebarCollapsed(false)}
+              onOpenSearch={() => setSearchOpen(true)}
+            />
           ) : (
             <div
               style={{
@@ -2470,7 +2505,7 @@ export const App: React.FC = () => {
           )}
         </div>
 
-        {showStatusBar && !activeTextFile && (
+        {showStatusBar && !activeTextFile && !(freshWindowRef.current && !detail && !activeLocalMd) && (
           <StatusBar
             storageInfo={storageInfo}
             activeLocalMd={activeLocalMd}
@@ -2674,11 +2709,22 @@ export const App: React.FC = () => {
           detail?.page.pageType === "doc" ? detail.page.id : null
         }
         onClose={() => setMarkdownModalMode(null)}
+        exportTarget={exportTarget}
+        onExportAs={(fmt) => {
+          if (!exportTarget) return;
+          setMarkdownModalMode(null);
+          handleExportAs(exportTarget.id, fmt).catch(() => {});
+        }}
+        onOpenWorkspaceExport={() => {
+          setMarkdownModalMode(null);
+          handleOpenSettingsAtTab("backup");
+        }}
         onImportSubmit={handleImportMarkdownSubmit}
         onBatchImported={handleBatchImportSuccess}
         onRequestExportCurrent={async () => {
           if (detail?.page) {
             await flushPendingBlockSave();
+            setExportTarget({ id: detail.page.id, title: detail.page.title || "无标题" });
             const exported = await exportPageMarkdown(detail.page.id);
             setExportPayload(exported);
           }

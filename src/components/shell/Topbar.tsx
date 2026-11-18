@@ -8,7 +8,6 @@ import {
   Eye,
   FileCode2,
   FileInput,
-  FolderOpen,
   History,
   ListTree,
   Maximize2,
@@ -17,11 +16,9 @@ import {
   PanelLeftOpen,
   Save,
   Search,
-  Settings,
   Star,
   Target,
   Trash2,
-  Upload,
   LayoutTemplate,
   AppWindow,
 } from "lucide-react";
@@ -70,22 +67,22 @@ export interface TopbarProps {
   onToggleTypewriterMode: () => void;
   onToggleOutline: () => void;
   onToggleZenMode: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings?: () => void;
   onOpenFontSettings?: () => void;
-  onOpenLocalMdDialog: () => void;
+  onOpenLocalMdDialog?: () => void;
   onSaveImmediate: () => void;
   onSaveAsMarkdown: () => void;
   onImportLocalMdToWorkspace: () => void;
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
   /** 导出：html / pdf / docx */
-  onExportAs: (format: ExportFormat) => void;
+  onExportAs?: (format: ExportFormat) => void;
   /** 在新窗口中打开当前页面 */
   onOpenInNewWindow?: () => void;
   onOpenHistory: () => void;
   /** 把当前页面存为自定义模板 */
   onSaveAsTemplate?: () => void;
-  onOpenImportMarkdown: () => void;
+  onOpenImportMarkdown?: () => void;
   onTrashPage: () => void;
   onOpenSearch: () => void;
   /** 顶栏「外观」按钮：主题快速切换 */
@@ -118,19 +115,15 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleTypewriterMode,
   onToggleOutline,
   onToggleZenMode,
-  onOpenSettings,
   onOpenFontSettings,
-  onOpenLocalMdDialog,
   onSaveImmediate,
   onSaveAsMarkdown,
   onImportLocalMdToWorkspace,
   onDuplicatePage,
   onExportMarkdown,
-  onExportAs,
   onOpenInNewWindow,
   onOpenHistory,
   onSaveAsTemplate,
-  onOpenImportMarkdown,
   onTrashPage,
   onOpenSearch,
   themeControl,
@@ -491,34 +484,6 @@ export const Topbar: React.FC<TopbarProps> = ({
                   </>
                 )}
 
-                <div className="nb-menu-divider" />
-
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => {
-                    onOpenLocalMdDialog();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <span className="nb-menu-item-left">
-                    <FolderOpen size={14} /> 打开 .md 文件… (Ctrl+O)
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  className="nb-menu-item"
-                  onClick={() => {
-                    onOpenSettings();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <span className="nb-menu-item-left">
-                    <Settings size={14} /> 偏好设置中心 (Ctrl+,)
-                  </span>
-                </button>
-
                 {page && !activeLocalMd && (
                   <>
                     <div className="nb-menu-divider" />
@@ -588,47 +553,9 @@ export const Topbar: React.FC<TopbarProps> = ({
                       }}
                     >
                       <span className="nb-menu-item-left">
-                        <Download size={14} /> 导出 Markdown
+                        <Download size={14} /> 导出此页…
                       </span>
-                    </button>
-
-                    {(
-                      [
-                        ["html", "导出 HTML"],
-                        ["pdf", "导出 PDF"],
-                        ["docx", "导出 Word"],
-                        ["epub", "导出 EPUB 电子书"],
-                        ["png", "导出为图片"],
-                        ["latex", "导出 LaTeX"],
-                        ["opml", "导出 OPML 大纲"],
-                      ] as const
-                    ).map(([fmt, label]) => (
-                      <button
-                        key={fmt}
-                        type="button"
-                        className="nb-menu-item"
-                        onClick={() => {
-                          onExportAs(fmt);
-                          setMenuOpen(false);
-                        }}
-                      >
-                        <span className="nb-menu-item-left">
-                          <Download size={14} /> {label}
-                        </span>
-                      </button>
-                    ))}
-
-                    <button
-                      type="button"
-                      className="nb-menu-item"
-                      onClick={() => {
-                        onOpenImportMarkdown();
-                        setMenuOpen(false);
-                      }}
-                    >
-                      <span className="nb-menu-item-left">
-                        <Upload size={14} /> 导入 Markdown
-                      </span>
+                      <span className="nb-menu-item-hint">8 种格式</span>
                     </button>
 
                     <div className="nb-menu-divider" />
