@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Download, ExternalLink, RefreshCw, X } from "lucide-react";
 import {
-  autoCheckDue,
   checkForUpdate,
   getAutoUpdateCheck,
+  getCachedUpdateInfo,
   getSkippedVersion,
   markAutoChecked,
   setAutoUpdateCheck,
+  setCachedUpdateInfo,
   skipVersion,
+  subscribeUpdateInfo,
   type UpdateInfo,
 } from "../../api/desktop";
 import { isTauriRuntime } from "../../api/client";
@@ -27,16 +29,25 @@ function open(url: string) {
 /** 设置 → 关于软件：检查更新 */
 export function UpdateCard() {
   const [checking, setChecking] = useState(false);
-  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [info, setInfo] = useState<UpdateInfo | null>(() => getCachedUpdateInfo());
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(getAutoUpdateCheck());
   const [showNotes, setShowNotes] = useState(false);
+
+  useEffect(() => {
+    setInfo(getCachedUpdateInfo());
+    return subscribeUpdateInfo((latest) => {
+      setInfo(latest);
+    });
+  }, []);
 
   const run = async () => {
     setChecking(true);
     setError(null);
     try {
-      setInfo(await checkForUpdate());
+      const latest = await checkForUpdate();
+      setInfo(latest);
+      setCachedUpdateInfo(latest);
       markAutoChecked();
     } catch (e) {
       setError(errText(e));
@@ -93,29 +104,47 @@ export function UpdateCard() {
             setAutoUpdateCheck(e.target.checked);
           }}
         />
-        启动时自动检查更新（每天最多一次）
+        启动时自动检查更新
       </label>
     </div>
   );
 }
 
-/** 启动后自动检查；有新版本时在右下角提示一次 */
+/** 启动后自动检查；有新版本时在右下角提示一次（无 24h 锁死，弱网自动重试一次） */
 export function UpdateNotice({ onOpenAbout }: { onOpenAbout: () => void }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     // 只在主窗口自动检查，避免每开一个窗口都提示
-    if (!isTauriRuntime() || new URLSearchParams(window.location.search).has("page")) return;
-    if (!getAutoUpdateCheck() || !autoCheckDue()) return;
-    const timer = window.setTimeout(() => {
+    if (!isTauriRuntime() || params.has("page") || params.has("fresh")) return;
+    if (!getAutoUpdateCheck()) return;
+
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const runCheck = (allowRetry: boolean) => {
       checkForUpdate()
         .then((res) => {
+          if (cancelled) return;
           markAutoChecked();
-          if (res.hasUpdate && res.latestVersion !== getSkippedVersion()) setInfo(res);
+          setCachedUpdateInfo(res);
+          if (res.hasUpdate && res.latestVersion !== getSkippedVersion()) {
+            setInfo(res);
+          }
         })
-        .catch(() => {});
-    }, 8000);
-    return () => window.clearTimeout(timer);
+        .catch(() => {
+          if (cancelled || !allowRetry) return;
+          retryTimer = window.setTimeout(() => runCheck(false), 12000);
+        });
+    };
+
+    const initialTimer = window.setTimeout(() => runCheck(true), 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initialTimer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
   }, []);
 
   if (!info) return null;

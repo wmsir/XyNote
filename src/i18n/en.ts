@@ -1843,7 +1843,11 @@ const EN: Record<string, string> = {
   "隐藏关联知识面板": "Hide related knowledge panel",
   "零内存占用 · 主库无入侵": "Zero RAM overhead · Zero main DB impact",
   "默认关闭，开启后在同目录独立维护": "Disabled by default. When enabled, maintains an isolated",
-  "（绝不修改主笔记库": " (never modifies"
+  "（绝不修改主笔记库": " (never modifies",
+  "加载更多": "Load more",
+  "启动时自动检查更新": "Check for updates automatically on startup",
+  "已显示 {0} / 共 {1} 项": "Showing {0} of {1} items",
+  "显示全部": "Show all"
 };
 
 export default EN;

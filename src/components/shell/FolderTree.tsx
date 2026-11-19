@@ -76,6 +76,57 @@ interface MenuState {
 }
 
 const EXPANDED_KEY = "xynote.folderTree.expanded";
+const INITIAL_VISIBLE = 100;
+const LOAD_MORE_STEP = 200;
+
+function LoadMoreSentinel({
+  depth,
+  shown,
+  total,
+  onMore,
+  onShowAll,
+}: {
+  depth: number;
+  shown: number;
+  total: number;
+  onMore: () => void;
+  onShowAll: () => void;
+}) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const triggeredForShownRef = useRef(-1);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver !== "function") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && triggeredForShownRef.current !== shown) {
+          triggeredForShownRef.current = shown;
+          onMore();
+        }
+      },
+      { rootMargin: "160px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onMore, shown]);
+
+  return (
+    <div
+      ref={sentinelRef}
+      className="nb-folder-hint"
+      style={{ paddingLeft: `${30 + depth * 14}px`, flexWrap: "wrap" }}
+    >
+      <span>{`已显示 ${shown} / 共 ${total} 项`}</span>
+      <button type="button" className="nb-folder-link" onClick={onMore}>
+        加载更多
+      </button>
+      <button type="button" className="nb-folder-link" onClick={onShowAll}>
+        显示全部
+      </button>
+    </div>
+  );
+}
 
 function loadExpanded(): Record<string, boolean> {
   try {
@@ -143,6 +194,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
 }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [listings, setListings] = useState<Record<string, Listing>>({});
+  const [visibleLimits, setVisibleLimits] = useState<Record<string, number>>({});
   const [edit, setEdit] = useState<EditState>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirmTrash, setConfirmTrash] = useState(false);
@@ -154,6 +206,9 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   listingsRef.current = listings;
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const lastLoadedAtRef = useRef<Record<string, number>>({});
+  const fsTimersRef = useRef<Map<string, number>>(new Map());
 
   const persistExpanded = useCallback((next: Record<string, boolean>) => {
     try {
@@ -169,26 +224,41 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   }, []);
 
   const load = useCallback(async (dir: string, quiet = false) => {
-    setListings((prev) => ({
-      ...prev,
-      [dir]: {
-        entries: prev[dir]?.entries ?? [],
-        truncated: prev[dir]?.truncated ?? false,
-        error: null,
-        loading: !quiet || !prev[dir],
-      },
-    }));
-    try {
-      const res = await listFolderEntries(dir);
+    const key = normPath(dir);
+    if (inFlightRef.current.has(key)) return;
+    inFlightRef.current.add(key);
+    lastLoadedAtRef.current[key] = Date.now();
+    if (!quiet || !listingsRef.current[dir]) {
       setListings((prev) => ({
         ...prev,
-        [dir]: { entries: res.entries, truncated: res.truncated, error: null, loading: false },
+        [dir]: {
+          entries: prev[dir]?.entries ?? [],
+          truncated: prev[dir]?.truncated ?? false,
+          error: null,
+          loading: !quiet || !prev[dir],
+        },
       }));
+    }
+    try {
+      const res = await listFolderEntries(dir);
+      lastLoadedAtRef.current[key] = Date.now();
+      const apply = () =>
+        setListings((prev) => ({
+          ...prev,
+          [dir]: { entries: res.entries, truncated: res.truncated, error: null, loading: false },
+        }));
+      if (res.entries.length > 80) {
+        React.startTransition(apply);
+      } else {
+        apply();
+      }
     } catch (err) {
       setListings((prev) => ({
         ...prev,
         [dir]: { entries: [], truncated: false, error: errText(err), loading: false },
       }));
+    } finally {
+      inFlightRef.current.delete(key);
     }
   }, []);
 
@@ -217,34 +287,50 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     });
   }, [expanded, folders, isTauri, load]);
 
-  // 磁盘监听：变化路径所在的目录（以及变化的目录本身）若已读取过，静默刷新
+  // 磁盘监听：变化路径所在的目录（以及变化的目录本身）若已读取过，按 350ms 防抖静默刷新
   useEffect(() => {
     if (!isTauri) return;
-    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const timers = fsTimersRef.current;
     const onChanged = (e: Event) => {
       const paths = (e as CustomEvent<string[]>).detail ?? [];
       const loaded = Object.keys(listingsRef.current);
       const targets = new Set<string>();
       paths.forEach((p) => {
-        const np = norm(p);
+        const np = normPath(p);
         const parent = np.slice(0, Math.max(np.lastIndexOf("/"), 0));
         loaded.forEach((dir) => {
-          const nd = norm(dir);
+          const nd = normPath(dir);
           if (nd === parent || nd === np) targets.add(dir);
         });
       });
-      targets.forEach((dir) => void load(dir, true));
+      targets.forEach((dir) => {
+        const prevTimer = timers.get(dir);
+        if (prevTimer !== undefined) window.clearTimeout(prevTimer);
+        const timer = window.setTimeout(() => {
+          timers.delete(dir);
+          void load(dir, true);
+        }, 350);
+        timers.set(dir, timer);
+      });
     };
     window.addEventListener("xynote:fs-changed", onChanged);
-    return () => window.removeEventListener("xynote:fs-changed", onChanged);
+    return () => {
+      window.removeEventListener("xynote:fs-changed", onChanged);
+      timers.forEach((t) => window.clearTimeout(t));
+      timers.clear();
+    };
   }, [isTauri, load]);
 
-  // 回到窗口时静默刷新已展开的目录，反映在文件管理器里做的改动
+  // 回到窗口时静默刷新已展开的目录；刚加载过（< 5 秒，如关闭选择文件夹弹窗时）直接跳过
   useEffect(() => {
     if (!isTauri) return;
     const onFocus = () => {
+      const now = Date.now();
       Object.keys(listingsRef.current).forEach((dir) => {
-        if (expandedRef.current[dir]) void load(dir, true);
+        if (!expandedRef.current[dir]) return;
+        const lastAt = lastLoadedAtRef.current[normPath(dir)] ?? 0;
+        if (now - lastAt < 5000) return;
+        void load(dir, true);
       });
     };
     window.addEventListener("focus", onFocus);
@@ -268,6 +354,15 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   }, [menu]);
 
   const toggle = (dir: string, force?: boolean) => {
+    const nextOpen = force ?? !expandedRef.current[dir];
+    if (!nextOpen) {
+      setVisibleLimits((prev) => {
+        if (prev[dir] === undefined) return prev;
+        const next = { ...prev };
+        delete next[dir];
+        return next;
+      });
+    }
     setExpanded((prev) => {
       const next = { ...prev, [dir]: force ?? !prev[dir] };
       persistExpanded(next);
@@ -497,18 +592,45 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     }
     const dirs = listing.entries.filter((e) => e.isDir);
     const files = listing.entries.filter((e) => !e.isDir);
+    const totalCount = dirs.length + files.length;
+    const limit = visibleLimits[dir] ?? INITIAL_VISIBLE;
+    const visibleDirs = dirs.slice(0, limit);
+    const remainingSlots = Math.max(0, limit - visibleDirs.length);
+    const visibleFiles = files.slice(0, remainingSlots);
+    const visibleCount = visibleDirs.length + visibleFiles.length;
+
     return (
       <>
         {creatingHere?.kind === "new-dir" && renderEditRow(depth, true)}
-        {dirs.map((entry) => renderEntry(entry, dir, depth))}
+        {visibleDirs.map((entry) => renderEntry(entry, dir, depth))}
         {creatingHere?.kind === "new-file" && renderEditRow(depth, false)}
-        {files.map((entry) => renderEntry(entry, dir, depth))}
+        {visibleFiles.map((entry) => renderEntry(entry, dir, depth))}
         {listing.entries.length === 0 && !creatingHere && (
           <div className="nb-folder-hint" style={{ paddingLeft: `${30 + depth * 14}px` }}>
             空文件夹
           </div>
         )}
-        {listing.truncated && (
+        {totalCount > visibleCount && (
+          <LoadMoreSentinel
+            depth={depth}
+            shown={visibleCount}
+            total={totalCount}
+            onMore={() =>
+              React.startTransition(() => {
+                setVisibleLimits((prev) => ({
+                  ...prev,
+                  [dir]: (prev[dir] ?? INITIAL_VISIBLE) + LOAD_MORE_STEP,
+                }));
+              })
+            }
+            onShowAll={() =>
+              React.startTransition(() => {
+                setVisibleLimits((prev) => ({ ...prev, [dir]: totalCount }));
+              })
+            }
+          />
+        )}
+        {listing.truncated && totalCount <= visibleCount && (
           <div className="nb-folder-hint" style={{ paddingLeft: `${30 + depth * 14}px` }}>
             条目太多，只显示前 2000 项
           </div>

@@ -92,12 +92,23 @@ export function useDiskSync({
 
   // ===== 监听磁盘变化：挂载的文件夹（递归）+ 正在编辑的文件 =====
   const activeLocalPath = activeLocalMd?.filePath ?? null;
+  const lastWatchedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    setWatchedPaths(
-      workspaceFolders.map((f) => f.path),
-      [activeLocalPath, activeTextPath].filter((p): p is string => !!p)
-    ).catch(() => {});
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const dirs = workspaceFolders.map((f) => f.path);
+    const normDirs = dirs.map(norm);
+    const isCoveredByFolder = (filePath: string) => {
+      const nf = norm(filePath);
+      return normDirs.some((nd) => nf === nd || nf.startsWith(nd + "/"));
+    };
+    const standaloneFiles = [activeLocalPath, activeTextPath].filter(
+      (p): p is string => Boolean(p) && !isCoveredByFolder(p as string)
+    );
+    const watchKey = JSON.stringify([dirs, standaloneFiles]);
+    if (watchKey === lastWatchedKeyRef.current) return;
+    lastWatchedKeyRef.current = watchKey;
+    setWatchedPaths(dirs, standaloneFiles).catch(() => {});
   }, [workspaceFolders, activeLocalPath, activeTextPath]);
 
   // 正在编辑的文件被其他程序改了：没有未写入的改动就直接载入新内容，否则弹出冲突处理

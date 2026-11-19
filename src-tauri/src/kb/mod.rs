@@ -10,8 +10,8 @@ use crate::storage::clean_display_path;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 
 pub use index::{kb_index_disk_stats, KB_DB_FILENAME};
 pub use query::{KbEntitySummary, KbRelatedResponse, KbSearchHit, KbSearchResponse};
@@ -50,6 +50,9 @@ struct KbRuntime {
 pub struct KbEngine {
     enabled_flag: Arc<AtomicBool>,
     indexing_flag: Arc<AtomicBool>,
+    cached_sources: AtomicUsize,
+    cached_events: AtomicUsize,
+    cached_entities: AtomicUsize,
     runtime: Mutex<KbRuntime>,
 }
 
@@ -80,6 +83,9 @@ impl KbEngine {
         Self {
             enabled_flag: Arc::new(AtomicBool::new(false)),
             indexing_flag: Arc::new(AtomicBool::new(false)),
+            cached_sources: AtomicUsize::new(0),
+            cached_events: AtomicUsize::new(0),
+            cached_entities: AtomicUsize::new(0),
             runtime: Mutex::new(KbRuntime {
                 conn: None,
                 db_path: None,
@@ -93,6 +99,12 @@ impl KbEngine {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled_flag.load(Ordering::Acquire)
+    }
+
+    fn store_cached_counts(&self, sources: usize, events: usize, entities: usize) {
+        self.cached_sources.store(sources, Ordering::Relaxed);
+        self.cached_events.store(events, Ordering::Relaxed);
+        self.cached_entities.store(entities, Ordering::Relaxed);
     }
 
     fn resolve_kb_db_path(db: &Database) -> PathBuf {
@@ -111,10 +123,15 @@ impl KbEngine {
         let kb_path = Self::resolve_kb_db_path(db);
 
         self.enabled_flag.store(enabled, Ordering::Release);
-        let mut rt = self.runtime.lock().map_err(|_| AppError::LockPoisoned)?;
-        rt.include_folders = include_folders;
-        rt.show_related_panel = show_related;
-        rt.db_path = Some(kb_path.clone());
+        match self.runtime.try_lock() {
+            Ok(mut rt) => {
+                rt.include_folders = include_folders;
+                rt.show_related_panel = show_related;
+                rt.db_path = Some(kb_path.clone());
+            }
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Poisoned(_)) => return Err(AppError::LockPoisoned),
+        }
         Ok((enabled, include_folders, show_related, kb_path))
     }
 
@@ -137,7 +154,10 @@ impl KbEngine {
         let db_path_display = clean_display_path(&kb_path);
 
         if !enabled {
-            let rt = self.runtime.lock().map_err(|_| AppError::LockPoisoned)?;
+            let (last_at, last_err) = match self.runtime.try_lock() {
+                Ok(rt) => (rt.last_indexed_at.clone(), rt.last_error.clone()),
+                Err(_) => (None, None),
+            };
             return Ok(KbStatus {
                 enabled: false,
                 include_folders,
@@ -149,12 +169,34 @@ impl KbEngine {
                 event_count: 0,
                 entity_count: 0,
                 indexing: false,
-                last_indexed_at: rt.last_indexed_at.clone(),
-                last_error: rt.last_error.clone(),
+                last_indexed_at: last_at,
+                last_error: last_err,
             });
         }
 
-        let mut rt = self.runtime.lock().map_err(|_| AppError::LockPoisoned)?;
+        let mut rt = match self.runtime.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => {
+                return Ok(KbStatus {
+                    enabled: true,
+                    include_folders,
+                    show_related_panel,
+                    db_path: db_path_display,
+                    db_exists,
+                    db_size_bytes,
+                    source_count: self.cached_sources.load(Ordering::Relaxed),
+                    event_count: self.cached_events.load(Ordering::Relaxed),
+                    entity_count: self.cached_entities.load(Ordering::Relaxed),
+                    indexing: true,
+                    last_indexed_at: None,
+                    last_error: None,
+                });
+            }
+            Err(TryLockError::Poisoned(_)) => return Err(AppError::LockPoisoned),
+        };
+
+        rt.include_folders = include_folders;
+        rt.show_related_panel = show_related_panel;
         if rt.conn.is_none() && self.is_enabled() {
             if let Ok(conn) = index::open_kb_conn(&kb_path) {
                 rt.conn = Some(conn);
@@ -167,6 +209,7 @@ impl KbEngine {
         } else {
             (0, 0, 0, None)
         };
+        self.store_cached_counts(source_count, event_count, entity_count);
         let (db_exists, db_size_bytes) = kb_index_disk_stats(&kb_path);
 
         Ok(KbStatus {
@@ -205,6 +248,7 @@ impl KbEngine {
             }
             if purge_index {
                 index::delete_kb_index_files(&kb_path);
+                self.store_cached_counts(0, 0, 0);
                 if let Ok(mut rt) = self.runtime.lock() {
                     rt.last_indexed_at = None;
                 }
@@ -253,11 +297,17 @@ impl KbEngine {
         self.indexing_flag.store(true, Ordering::Release);
         let _guard = IndexingGuard(Arc::clone(&self.indexing_flag));
 
-        // 先快照 xynote.db 再释放其锁，绝不同时持有两把数据库锁
+        // 先快照 xynote.db 与扫描磁盘列表再锁 runtime，避免锁竞争堵住前端状态轮询
         let snapshot = index::snapshot_workspace(db)?;
+        let precollected_disk = if include_folders && !snapshot.mounted_folders.is_empty() {
+            Some(index::collect_mounted_files(&snapshot.mounted_folders))
+        } else {
+            None
+        };
 
         {
             let mut rt = self.runtime.lock().map_err(|_| AppError::LockPoisoned)?;
+            rt.include_folders = include_folders;
             if !self.is_enabled() {
                 rt.conn = None;
                 return Ok(KbStatus {
@@ -284,7 +334,13 @@ impl KbEngine {
             }
 
             let sync_res = if let Some(ref mut conn) = rt.conn {
-                index::sync_workspace_into_kb(conn, &snapshot, include_folders, force_full)
+                index::sync_workspace_into_kb(
+                    conn,
+                    &snapshot,
+                    include_folders,
+                    force_full,
+                    precollected_disk.as_deref(),
+                )
             } else {
                 Ok(())
             };
@@ -293,6 +349,11 @@ impl KbEngine {
                 Ok(()) => {
                     rt.last_indexed_at = Some(now_iso());
                     rt.last_error = None;
+                    if let Some(ref conn) = rt.conn {
+                        if let Ok((s, e, ent, _)) = index::read_kb_counts(conn) {
+                            self.store_cached_counts(s, e, ent);
+                        }
+                    }
                 }
                 Err(err) => {
                     rt.last_error = Some(err.to_string());

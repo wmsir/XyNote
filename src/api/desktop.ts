@@ -34,6 +34,33 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
   return invoke<UpdateInfo>("check_for_update");
 }
 
+let cachedUpdateInfo: UpdateInfo | null = null;
+const updateInfoListeners = new Set<(info: UpdateInfo | null) => void>();
+
+export function getCachedUpdateInfo(): UpdateInfo | null {
+  return cachedUpdateInfo;
+}
+
+export function setCachedUpdateInfo(info: UpdateInfo | null): void {
+  cachedUpdateInfo = info;
+  updateInfoListeners.forEach((cb) => {
+    try {
+      cb(info);
+    } catch {
+      /* 忽略订阅方错误 */
+    }
+  });
+}
+
+export function subscribeUpdateInfo(
+  cb: (info: UpdateInfo | null) => void
+): () => void {
+  updateInfoListeners.add(cb);
+  return () => {
+    updateInfoListeners.delete(cb);
+  };
+}
+
 /** 保存前端生成的 PNG（可多张），返回保存路径；取消时为 null */
 export async function saveExportImages(filename: string, parts: string[]): Promise<string | null> {
   if (!isTauriRuntime()) throw new Error("导出图片仅支持桌面客户端");

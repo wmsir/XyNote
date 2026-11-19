@@ -4,8 +4,8 @@
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
 
 /// 不需要通知的目录（与 folders.rs 的隐藏规则一致）
@@ -14,6 +14,7 @@ const NOISY_PARTS: [&str; 6] = ["node_modules", "target", ".git", "dist", "build
 #[derive(Default)]
 pub struct FsWatcher {
     inner: Mutex<Option<RecommendedWatcher>>,
+    generation: AtomicU64,
 }
 
 /// 这条路径是否值得通知前端：跳过版本库、依赖目录和编辑器临时文件
@@ -30,13 +31,18 @@ pub fn is_relevant_path(path: &Path) -> bool {
 
 impl FsWatcher {
     /// 替换监听目标：文件夹递归监听，单个文件只监听自身。emit 收到去重后的变化路径列表。
+    /// 耗时的递归注册全部在锁外完成，并带代际序号防止快速切换时覆盖最新目标。
     pub fn set_targets<F>(&self, dirs: Vec<String>, files: Vec<String>, emit: F) -> Result<(), String>
     where
         F: Fn(Vec<String>) + Send + 'static,
     {
-        let mut guard = self.inner.lock().map_err(|_| "watcher lock poisoned".to_string())?;
-        // 先丢掉旧的监听器：它的发送端随之关闭，旧的合并线程会自然退出
-        *guard = None;
+        let gen = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let old_watcher = {
+            let mut guard = self.inner.lock().map_err(|_| "watcher lock poisoned".to_string())?;
+            guard.take()
+        };
+        drop(old_watcher);
+
         if dirs.is_empty() && files.is_empty() {
             return Ok(());
         }
@@ -57,6 +63,9 @@ impl FsWatcher {
         .map_err(|e| e.to_string())?;
 
         for d in &dirs {
+            if self.generation.load(Ordering::Acquire) != gen {
+                return Ok(());
+            }
             let p = PathBuf::from(crate::win_dialogs::normalize_win32_path_str(d));
             if p.is_dir() {
                 // 单个目录监听失败（权限、已删除）不影响其他目录
@@ -64,10 +73,17 @@ impl FsWatcher {
             }
         }
         for f in &files {
+            if self.generation.load(Ordering::Acquire) != gen {
+                return Ok(());
+            }
             let p = PathBuf::from(crate::win_dialogs::normalize_win32_path_str(f));
             if p.is_file() {
                 let _ = watcher.watch(&p, RecursiveMode::NonRecursive);
             }
+        }
+
+        if self.generation.load(Ordering::Acquire) != gen {
+            return Ok(());
         }
 
         std::thread::spawn(move || {
@@ -84,7 +100,10 @@ impl FsWatcher {
             }
         });
 
-        *guard = Some(watcher);
+        let mut guard = self.inner.lock().map_err(|_| "watcher lock poisoned".to_string())?;
+        if self.generation.load(Ordering::Acquire) == gen {
+            *guard = Some(watcher);
+        }
         Ok(())
     }
 }

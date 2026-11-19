@@ -107,6 +107,41 @@ fn is_hidden_name(name: &str) -> bool {
     name.starts_with('.') || name.starts_with('~') || name.eq_ignore_ascii_case("desktop.ini")
 }
 
+fn to_entry_from_dirent(
+    item: &std::fs::DirEntry,
+    path: &Path,
+    name: String,
+    is_dir: bool,
+    is_symlink: bool,
+) -> FolderEntry {
+    // 非符号链接直接复用 ReadDir 已缓存的元数据，避免 Windows 逐个打开句柄触发额外 I/O
+    let meta = if is_symlink {
+        std::fs::metadata(path).ok()
+    } else {
+        item.metadata().ok()
+    };
+    let modified_ms = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let size = if is_dir {
+        0
+    } else {
+        meta.as_ref().map(|m| m.len()).unwrap_or(0)
+    };
+    FolderEntry {
+        name,
+        path: path.to_string_lossy().into_owned(),
+        is_dir,
+        ext: if is_dir { String::new() } else { ext_of(path) },
+        size,
+        modified_ms,
+        kind: kind_of(path, is_dir).to_string(),
+    }
+}
+
 fn to_entry(path: &Path) -> Option<FolderEntry> {
     let meta = std::fs::metadata(path).ok()?;
     let name = path.file_name()?.to_string_lossy().into_owned();
@@ -190,15 +225,9 @@ pub fn list_folder(raw: &str) -> Result<FolderListing, AppError> {
             truncated = true;
             break;
         }
-        if let Some(entry) = to_entry(&path) {
-            entries.push(entry);
-        }
+        entries.push(to_entry_from_dirent(&item, &path, name, is_dir, file_type.is_symlink()));
     }
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| natural_key(&a.name).cmp(&natural_key(&b.name)))
-    });
+    entries.sort_by_cached_key(|e| (!e.is_dir, natural_key(&e.name)));
     Ok(FolderListing {
         path: dir.to_string_lossy().into_owned(),
         entries,
@@ -544,5 +573,25 @@ mod tests {
     fn missing_folder_reports_not_found() {
         let err = list_folder("/definitely/not/here/xynote").unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    #[test]
+    fn lists_large_folder_sorted_and_capped() {
+        let dir = temp_dir("large-sort");
+        std::fs::create_dir(dir.join("sub-b")).unwrap();
+        std::fs::create_dir(dir.join("sub-a")).unwrap();
+        for i in 1..=160 {
+            std::fs::write(dir.join(format!("note-{}.md", i)), "ok").unwrap();
+        }
+        let listing = list_folder(dir.to_str().unwrap()).unwrap();
+        assert!(!listing.truncated);
+        assert_eq!(listing.entries.len(), 162);
+        assert_eq!(listing.entries[0].name, "sub-a");
+        assert_eq!(listing.entries[1].name, "sub-b");
+        assert_eq!(listing.entries[2].name, "note-1.md");
+        assert_eq!(listing.entries[3].name, "note-2.md");
+        assert_eq!(listing.entries[11].name, "note-10.md");
+        assert_eq!(listing.entries[161].name, "note-160.md");
+        std::fs::remove_dir_all(dir).ok();
     }
 }

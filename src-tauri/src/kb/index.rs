@@ -34,7 +34,9 @@ const SKIPPED_DISK_DIRS: [&str; 8] = [
     "$RECYCLE.BIN",
     "System Volume Information",
 ];
-const MAX_DISK_FILES: usize = 3000;
+const MAX_DISK_FILES: usize = 1500;
+const MAX_SCAN_DEPTH: usize = 8;
+const MAX_DIR_ENTRIES_SCANNED: usize = 20_000;
 const MAX_DISK_FILE_BYTES: u64 = 1024 * 1024; // 1 MB per text file
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -963,9 +965,10 @@ fn is_hidden_or_skipped_name(name: &str) -> bool {
         || SKIPPED_DISK_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s))
 }
 
-fn collect_mounted_files(roots: &[MountedFolderRoot]) -> Vec<(PathBuf, String)> {
+pub fn collect_mounted_files(roots: &[MountedFolderRoot]) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     let mut seen_paths = HashSet::new();
+    let mut entries_scanned = 0usize;
 
     for root in roots {
         let norm_root = normalize_win32_path_str(&root.path);
@@ -973,10 +976,14 @@ fn collect_mounted_files(roots: &[MountedFolderRoot]) -> Vec<(PathBuf, String)> 
         if !root_path.is_dir() {
             continue;
         }
-        let mut stack = vec![root_path];
-        while let Some(dir) = stack.pop() {
+        let mut stack: Vec<(PathBuf, usize)> = vec![(root_path, 0)];
+        while let Some((dir, depth)) = stack.pop() {
             let Ok(rd) = std::fs::read_dir(&dir) else { continue };
             for entry in rd.flatten() {
+                entries_scanned += 1;
+                if entries_scanned > MAX_DIR_ENTRIES_SCANNED {
+                    return files;
+                }
                 let path = entry.path();
                 let name = path
                     .file_name()
@@ -987,7 +994,9 @@ fn collect_mounted_files(roots: &[MountedFolderRoot]) -> Vec<(PathBuf, String)> 
                 }
                 let Ok(meta) = entry.metadata() else { continue };
                 if meta.is_dir() {
-                    stack.push(path);
+                    if depth < MAX_SCAN_DEPTH {
+                        stack.push((path, depth + 1));
+                    }
                 } else if meta.is_file() && meta.len() <= MAX_DISK_FILE_BYTES && is_indexable_disk_file(&path) {
                     let key = normalize_path_key(&path);
                     if seen_paths.insert(key) {
@@ -1111,6 +1120,7 @@ pub fn sync_workspace_into_kb(
     snapshot: &WorkspaceSnapshot,
     include_folders: bool,
     force_full: bool,
+    precollected_disk_files: Option<&[(PathBuf, String)]>,
 ) -> Result<(), AppError> {
     if force_full {
         conn.execute_batch(
@@ -1164,11 +1174,18 @@ pub fn sync_workspace_into_kb(
 
     // 2. 索引侧栏挂载的本地文件夹（仅写轻量索引，不复制原文）
     if include_folders && !snapshot.mounted_folders.is_empty() {
-        let disk_files = collect_mounted_files(&snapshot.mounted_folders);
+        let owned_disk_files;
+        let disk_files: &[(PathBuf, String)] = match precollected_disk_files {
+            Some(list) => list,
+            None => {
+                owned_disk_files = collect_mounted_files(&snapshot.mounted_folders);
+                &owned_disk_files
+            }
+        };
         for (path, root_name) in disk_files {
-            let source_id = format!("file:{}", normalize_path_key(&path));
+            let source_id = format!("file:{}", normalize_path_key(path));
             expected_sources.insert(source_id);
-            if index_disk_file_if_needed(conn, &path, &root_name, force_full)? {
+            if index_disk_file_if_needed(conn, path, root_name, force_full)? {
                 changed = true;
             }
         }

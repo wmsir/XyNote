@@ -4,9 +4,10 @@
 
 use crate::models::AppError;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_URL: &str = "https://fwpt.cn/downloads/xynote/latest.json";
+const FALLBACK_URL: &str = "https://api.github.com/repos/wmsir/XyNote/releases/latest";
 pub const RELEASES_PAGE: &str = "https://fwpt.cn/xynote/#download";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,13 +62,27 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     parse_version(latest) > parse_version(current)
 }
 
-/// 按系统挑安装包：Windows 安装版 → MSI → 便携版；macOS 按芯片选 dmg；Linux 优先 AppImage
-pub fn pick_asset<'a>(names: &'a [String], os: &str, arch: &str) -> Option<&'a String> {
+/// 按系统挑安装包：Windows 安装版 → MSI → 便携版；便携模式运行且存在 portable 包时优先挑便携版
+pub fn pick_asset_for_mode<'a>(
+    names: &'a [String],
+    os: &str,
+    arch: &str,
+    prefer_portable: bool,
+) -> Option<&'a String> {
     let find = |pred: &dyn Fn(&str) -> bool| names.iter().find(|n| pred(&n.to_lowercase()));
     match os {
-        "windows" => find(&|n| n.ends_with("-setup.exe"))
-            .or_else(|| find(&|n| n.ends_with(".msi")))
-            .or_else(|| find(&|n| n.ends_with(".exe"))),
+        "windows" => {
+            if prefer_portable {
+                find(&|n| n.ends_with("-portable.exe"))
+                    .or_else(|| find(&|n| n.ends_with("-setup.exe")))
+                    .or_else(|| find(&|n| n.ends_with(".msi")))
+                    .or_else(|| find(&|n| n.ends_with(".exe")))
+            } else {
+                find(&|n| n.ends_with("-setup.exe"))
+                    .or_else(|| find(&|n| n.ends_with(".msi")))
+                    .or_else(|| find(&|n| n.ends_with(".exe")))
+            }
+        }
         "macos" => {
             let want = if arch == "aarch64" { "aarch64" } else { "x64" };
             find(&|n| n.ends_with(".dmg") && n.contains(want)).or_else(|| find(&|n| n.ends_with(".dmg")))
@@ -78,9 +93,26 @@ pub fn pick_asset<'a>(names: &'a [String], os: &str, arch: &str) -> Option<&'a S
     }
 }
 
+pub fn pick_asset<'a>(names: &'a [String], os: &str, arch: &str) -> Option<&'a String> {
+    pick_asset_for_mode(names, os, arch, false)
+}
+
+fn is_running_portable() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()))
+        .is_some_and(|name| name.contains("portable"))
+}
+
+pub fn cache_busted_url(base: &str, ts_secs: u64) -> String {
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{}{}t={}", base, sep, ts_secs)
+}
+
 fn build_info(rel: GhRelease, current: &str) -> UpdateInfo {
     let names: Vec<String> = rel.assets.iter().map(|a| a.name.clone()).collect();
-    let picked = pick_asset(&names, std::env::consts::OS, std::env::consts::ARCH)
+    let prefer_portable = is_running_portable();
+    let picked = pick_asset_for_mode(&names, std::env::consts::OS, std::env::consts::ARCH, prefer_portable)
         .and_then(|n| rel.assets.iter().find(|a| &a.name == n));
     let latest = rel.tag_name.trim().trim_start_matches(['v', 'V']).to_string();
     UpdateInfo {
@@ -96,27 +128,62 @@ fn build_info(rel: GhRelease, current: &str) -> UpdateInfo {
     }
 }
 
+fn fetch_release(agent: &ureq::Agent, url: &str, current: &str) -> Result<GhRelease, AppError> {
+    let resp = agent
+        .get(url)
+        .set("User-Agent", &format!("XyNote/{}", current))
+        .set("Accept", "application/json, application/vnd.github+json")
+        .set("Cache-Control", "no-cache")
+        .set("Pragma", "no-cache")
+        .call();
+    let text = match resp {
+        Ok(r) => r
+            .into_string()
+            .map_err(|e| AppError::Validation(format!("读取更新信息失败：{}", e)))?,
+        Err(ureq::Error::Status(403, _)) | Err(ureq::Error::Status(429, _)) => {
+            return Err(AppError::Validation("检查太频繁，请稍后再试".into()));
+        }
+        Err(ureq::Error::Status(code, _)) => {
+            return Err(AppError::Validation(format!("更新服务器返回错误（{}）", code)));
+        }
+        Err(_) => {
+            return Err(AppError::Validation("连不上更新服务器，请检查网络后再试".into()));
+        }
+    };
+    serde_json::from_str(&text).map_err(|_| AppError::Validation("更新信息格式不对".into()))
+}
+
 pub fn check() -> Result<UpdateInfo, AppError> {
     let current = env!("CARGO_PKG_VERSION");
-    let url = std::env::var("XYNOTE_UPDATE_URL").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| DEFAULT_URL.to_string());
+    let custom_url = std::env::var("XYNOTE_UPDATE_URL")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let primary_url = match &custom_url {
+        Some(u) => u.clone(),
+        None => cache_busted_url(DEFAULT_URL, now_secs),
+    };
+
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(8))
         .timeout(Duration::from_secs(15))
         .build();
-    let resp = agent
-        .get(&url)
-        .set("User-Agent", &format!("XyNote/{}", current))
-        .set("Accept", "application/vnd.github+json")
-        .call();
-    let text = match resp {
-        Ok(r) => r.into_string().map_err(|e| AppError::Validation(format!("读取更新信息失败：{}", e)))?,
-        Err(ureq::Error::Status(403, _)) | Err(ureq::Error::Status(429, _)) => {
-            return Err(AppError::Validation("检查太频繁，请稍后再试".into()));
+
+    let rel = match fetch_release(&agent, &primary_url, current) {
+        Ok(r) => r,
+        Err(primary_err) => {
+            if custom_url.is_some() {
+                return Err(primary_err);
+            }
+            fetch_release(&agent, FALLBACK_URL, current).map_err(|_| primary_err)?
         }
-        Err(ureq::Error::Status(code, _)) => return Err(AppError::Validation(format!("更新服务器返回错误（{}）", code))),
-        Err(_) => return Err(AppError::Validation("连不上更新服务器，请检查网络后再试".into())),
     };
-    let rel: GhRelease = serde_json::from_str(&text).map_err(|_| AppError::Validation("更新信息格式不对".into()))?;
+
     if rel.draft || rel.prerelease {
         return Ok(UpdateInfo {
             current_version: current.into(),
@@ -176,5 +243,37 @@ mod tests {
         assert_eq!(info.latest_version, "9.0.0");
         assert_eq!(info.notes, "新功能");
         assert!(!info.asset_url.is_empty(), "每个平台都应选到安装包");
+    }
+
+    #[test]
+    fn picks_portable_asset_when_running_portable() {
+        let names: Vec<String> = [
+            "XyNote_0.8.5_x64-setup.exe",
+            "XyNote-0.8.5-windows-x64-portable.exe",
+            "XyNote_0.8.5_x64_en-US.msi",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            pick_asset_for_mode(&names, "windows", "x86_64", true).unwrap(),
+            "XyNote-0.8.5-windows-x64-portable.exe"
+        );
+        assert_eq!(
+            pick_asset_for_mode(&names, "windows", "x86_64", false).unwrap(),
+            "XyNote_0.8.5_x64-setup.exe"
+        );
+    }
+
+    #[test]
+    fn cache_busted_url_appends_timestamp() {
+        assert_eq!(
+            cache_busted_url("https://fwpt.cn/downloads/xynote/latest.json", 123456),
+            "https://fwpt.cn/downloads/xynote/latest.json?t=123456"
+        );
+        assert_eq!(
+            cache_busted_url("https://fwpt.cn/latest.json?channel=stable", 789),
+            "https://fwpt.cn/latest.json?channel=stable&t=789"
+        );
     }
 }

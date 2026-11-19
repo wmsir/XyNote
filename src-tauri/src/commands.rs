@@ -342,41 +342,59 @@ pub fn import_markdown_page(
 }
 
 #[tauri::command]
-pub fn import_local_paths(
+pub async fn import_local_paths(
     app: AppHandle,
-    db: State<'_, Database>,
     paths: Vec<String>,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    let res = db.import_local_paths(paths, parent_id).map_err(String::from)?;
-    spawn_kb_sync_all(&app);
-    Ok(res)
+    use tauri::Manager;
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let out = db.import_local_paths(paths, parent_id).map_err(String::from)?;
+        Ok::<_, String>((out, app))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    spawn_kb_sync_all(&res.1);
+    Ok(res.0)
 }
 
 #[tauri::command]
-pub fn import_markdown_tree(
+pub async fn import_markdown_tree(
     app: AppHandle,
-    db: State<'_, Database>,
     entries: Vec<MarkdownTreeEntry>,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    let res = db.import_markdown_tree(entries, parent_id).map_err(String::from)?;
-    spawn_kb_sync_all(&app);
-    Ok(res)
+    use tauri::Manager;
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let out = db.import_markdown_tree(entries, parent_id).map_err(String::from)?;
+        Ok::<_, String>((out, app))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    spawn_kb_sync_all(&res.1);
+    Ok(res.0)
 }
 
 #[tauri::command]
-pub fn import_notion_zip_bytes(
+pub async fn import_notion_zip_bytes(
     app: AppHandle,
-    db: State<'_, Database>,
     zip_base64: String,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    let res = db
-        .import_notion_zip_bytes(&zip_base64, parent_id)
-        .map_err(String::from)?;
-    spawn_kb_sync_all(&app);
-    Ok(res)
+    use tauri::Manager;
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let out = db
+            .import_notion_zip_bytes(&zip_base64, parent_id)
+            .map_err(String::from)?;
+        Ok::<_, String>((out, app))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    spawn_kb_sync_all(&res.1);
+    Ok(res.0)
 }
 
 #[tauri::command]
@@ -524,8 +542,12 @@ pub fn import_font_to_data_dir(
 }
 
 #[tauri::command]
-pub fn open_local_markdown_file(file_path: String) -> Result<LocalMarkdownDocument, String> {
-    crate::storage::open_local_markdown_file_disk(&file_path).map_err(Into::into)
+pub async fn open_local_markdown_file(file_path: String) -> Result<LocalMarkdownDocument, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::storage::open_local_markdown_file_disk(&file_path).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -586,8 +608,16 @@ pub fn open_path_in_explorer(path: String) -> Result<(), String> {
 
 /// 用文本编辑器打开文件；encoding 为空时自动识别
 #[tauri::command]
-pub fn open_text_file(path: String, encoding: Option<String>) -> Result<crate::textfile::TextFileDocument, String> {
-    crate::textfile::open_text_file(&path, encoding.as_deref().filter(|e| !e.is_empty())).map_err(Into::into)
+pub async fn open_text_file(
+    path: String,
+    encoding: Option<String>,
+) -> Result<crate::textfile::TextFileDocument, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::textfile::open_text_file(&path, encoding.as_deref().filter(|e| !e.is_empty()))
+            .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 保存文本文件，保留编码与换行符；expected_modified_ms 用于检测外部修改
@@ -623,10 +653,12 @@ pub fn open_with_system_app(path: String) -> Result<(), String> {
     res.map(|_| ()).map_err(|e| format!("无法打开：{}", e))
 }
 
-/// 侧栏「文件夹」：列出一层子文件夹与笔记文件
+/// 侧栏「文件夹」：列出一层子文件夹与笔记文件（在后台线程池读取，绝不阻塞 GUI 主线程）
 #[tauri::command]
-pub fn list_folder_entries(path: String) -> Result<crate::folders::FolderListing, String> {
-    crate::folders::list_folder(&path).map_err(Into::into)
+pub async fn list_folder_entries(path: String) -> Result<crate::folders::FolderListing, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::folders::list_folder(&path).map_err(String::from))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 在文件夹里新建笔记（is_dir = false）或子文件夹
@@ -665,9 +697,12 @@ pub fn move_folder_entry(
 
 /// 移到系统回收站
 #[tauri::command]
-pub fn trash_folder_entry(app: AppHandle, path: String) -> Result<(), String> {
-    crate::folders::trash_entry(&path).map_err(String::from)?;
-    spawn_kb_sync_paths(&app, vec![path]);
+pub async fn trash_folder_entry(app: AppHandle, path: String) -> Result<(), String> {
+    let kb_path = path.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::folders::trash_entry(&path).map_err(String::from))
+        .await
+        .map_err(|e| e.to_string())??;
+    spawn_kb_sync_paths(&app, vec![kb_path]);
     Ok(())
 }
 
@@ -684,18 +719,24 @@ pub async fn search_folder_notes(
 
 /// 设置要监听的文件夹（递归）与文件；有变化时发出 "xynote://fs-changed" 事件，携带变化的路径
 #[tauri::command]
-pub fn set_watched_paths(
+pub async fn set_watched_paths(
     app: AppHandle,
-    watcher: State<'_, crate::watch::FsWatcher>,
     dirs: Vec<String>,
     files: Vec<String>,
 ) -> Result<(), String> {
     use tauri::Emitter;
-    watcher.set_targets(dirs, files, move |paths| {
-        let kb_paths = paths.clone();
-        let _ = app.emit("xynote://fs-changed", paths);
-        spawn_kb_sync_paths(&app, kb_paths);
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let watcher = app.state::<crate::watch::FsWatcher>();
+        let app_emit = app.clone();
+        watcher.set_targets(dirs, files, move |paths| {
+            let kb_paths = paths.clone();
+            let _ = app_emit.emit("xynote://fs-changed", paths);
+            spawn_kb_sync_paths(&app_emit, kb_paths);
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 用系统默认浏览器打开网址（只允许 http / https / mailto）
@@ -1219,11 +1260,15 @@ pub async fn prompt_default_md_association(
  * ========================================================================== */
 
 #[tauri::command]
-pub fn kb_get_status(
-    db: State<'_, Database>,
-    kb: State<'_, KbEngine>,
-) -> Result<crate::kb::KbStatus, String> {
-    kb.get_status(&db).map_err(Into::into)
+pub async fn kb_get_status(app: AppHandle) -> Result<crate::kb::KbStatus, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let kb = app.state::<KbEngine>();
+        kb.get_status(&db).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
