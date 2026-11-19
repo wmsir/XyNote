@@ -8,7 +8,7 @@ import {
   FileCode2,
   FilePlus2,
   FileText,
-  FolderPlus,
+  FolderOpen,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
@@ -563,7 +563,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   aria-label="打开文件夹"
                   onClick={onAddWorkspaceFolder}
                 >
-                  <FolderPlus size={18} strokeWidth={1.7} />
+                  <FolderOpen size={18} strokeWidth={1.7} />
                 </button>
               )}
             </div>

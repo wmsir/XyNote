@@ -61,7 +61,13 @@ export function WindowControls() {
           </svg>
         )}
       </button>
-      <button type="button" className="nb-winctl-btn is-close" aria-label="关闭" title="关闭" onClick={() => void win().close()}>
+      <button
+        type="button"
+        className="nb-winctl-btn is-close"
+        aria-label="关闭"
+        title="关闭"
+        onClick={() => void win().close().catch(() => win().destroy().catch(() => {}))}
+      >
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
           <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" strokeWidth="1" />
         </svg>

@@ -476,20 +476,18 @@ export const App: React.FC = () => {
     let unlisten: (() => void) | null = null;
     const win = getCurrentWindow();
     win
-      .onCloseRequested(async (event) => {
+      .onCloseRequested(async () => {
         if (closingConfirmedRef.current) return;
-        if (!pendingSaveRef.current && !pendingLocalMdSaveRef.current) return;
-        event.preventDefault();
-        try {
-          await flushPendingBlockSaveRef.current();
-        } catch {
-          // 错误已通过提示告知用户
-        }
-        if (!disposed) {
-          closingConfirmedRef.current = true;
-          win.close().catch(() => {
-            closingConfirmedRef.current = false;
-          });
+        closingConfirmedRef.current = true;
+        if (pendingSaveRef.current || pendingLocalMdSaveRef.current) {
+          try {
+            await Promise.race([
+              flushPendingBlockSaveRef.current(),
+              new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
+            ]);
+          } catch {
+            // 忽略保存异常，确保窗口必定能关闭
+          }
         }
       })
       .then((fn) => {

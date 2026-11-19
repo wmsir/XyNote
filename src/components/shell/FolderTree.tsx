@@ -742,7 +742,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     <div className="nb-folder-tree" role="tree" aria-label="文件夹">
       {folders.length === 0 && (
         <button type="button" className="nb-folder-add-ghost" onClick={onAddFolder}>
-          <FolderPlus size={15} strokeWidth={1.6} />
+          <FolderOpen size={15} strokeWidth={1.6} />
           <span>打开文件夹</span>
         </button>
       )}
