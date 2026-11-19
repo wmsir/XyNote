@@ -13,6 +13,7 @@ import {
   Maximize2,
   Minimize2,
   MoreHorizontal,
+  Network,
   PanelLeftOpen,
   Save,
   Search,
@@ -87,6 +88,9 @@ export interface TopbarProps {
   onOpenSearch: () => void;
   /** 顶栏「外观」按钮：主题快速切换 */
   themeControl?: ThemeQuickPickerProps;
+  kbEnabled?: boolean;
+  showKbPanel?: boolean;
+  onToggleKbPanel?: () => void;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -127,6 +131,9 @@ export const Topbar: React.FC<TopbarProps> = ({
   onTrashPage,
   onOpenSearch,
   themeControl,
+  kbEnabled = false,
+  showKbPanel = false,
+  onToggleKbPanel,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -258,6 +265,17 @@ export const Topbar: React.FC<TopbarProps> = ({
 
             <span className="nb-topbar-divider" />
           </>
+        )}
+
+        {kbEnabled && onToggleKbPanel && (
+          <button
+            type="button"
+            className={`nb-icon-btn${showKbPanel ? " is-mode-on" : ""}`}
+            onClick={onToggleKbPanel}
+            title="关联知识面板 (SAG2)"
+          >
+            <Network size={15} />
+          </button>
         )}
 
         {!textFile && (page || activeLocalMd) && (

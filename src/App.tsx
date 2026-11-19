@@ -15,6 +15,7 @@ import {
   type TextFileDocument,
 } from "./api/textfile";
 import { createFolderEntry } from "./api/folders";
+import { kbGetStatus, kbSetConfig } from "./api/kb";
 import {
   initialPageFromUrl,
   isFreshWindow,
@@ -69,6 +70,7 @@ import type {
   DocumentStats,
   EditorPreferences,
   EditorViewMode,
+  KbStatus,
   KeybindingMap,
   LocalMarkdownDocument,
   WorkspaceFolder,
@@ -82,6 +84,12 @@ import type {
   UpdatePagePatch,
 } from "./types/notion";
 import { BlockEditor } from "./components/editor/BlockEditor";
+
+const KbRelatedPanel = React.lazy(() =>
+  import("./components/kb/KbRelatedPanel").then((m) => ({
+    default: m.KbRelatedPanel,
+  }))
+);
 import { DatabaseView } from "./components/database/DatabaseView";
 import { RecentLocalMdItem, Sidebar } from "./components/shell/Sidebar";
 import {
@@ -236,6 +244,7 @@ export const App: React.FC = () => {
     extraCss?: string;
   } | null>(null);
   const [storageInfo, setStorageInfo] = useState<StorageConfigInfo | null>(null);
+  const [kbStatus, setKbStatus] = useState<KbStatus | null>(null);
   const [docStats, setDocStats] = useState<DocumentStats>({
     words: 0,
     chars: 0,
@@ -1100,6 +1109,9 @@ export const App: React.FC = () => {
         if (initialStorage) {
           setStorageInfo(initialStorage);
         }
+        kbGetStatus().then((st) => {
+          if (mounted) setKbStatus(st);
+        }).catch(() => {});
 
         if (initialPlugins) {
           setStylePluginState(initialPlugins);
@@ -1692,6 +1704,9 @@ export const App: React.FC = () => {
       listStylePlugins()
         .then(setStylePluginState)
         .catch(() => {});
+      kbGetStatus()
+        .then(setKbStatus)
+        .catch(() => {});
       if (shouldReloadWorkspace) {
         // Cancel any stale pre-restore pending block timer so it cannot overwrite restored DB
         if (pendingSaveRef.current) {
@@ -2131,6 +2146,72 @@ export const App: React.FC = () => {
     handleUpdateEditorPrefs({ viewMode: next });
   }, [handleUpdateEditorPrefs]);
 
+  const showKbPanel = Boolean(kbStatus?.enabled && kbStatus.showRelatedPanel && !zenMode);
+
+  const handleToggleKbPanel = useCallback(() => {
+    const nextVal = !(kbStatus?.showRelatedPanel ?? true);
+    kbSetConfig({ showRelatedPanel: nextVal })
+      .then(setKbStatus)
+      .catch((err) =>
+        showToast(
+          `切换关联知识面板失败：${err instanceof Error ? err.message : String(err)}`
+        )
+      );
+  }, [kbStatus?.showRelatedPanel, showToast]);
+
+  const handleCopyKbWikiLink = useCallback(
+    (title: string) => {
+      const text = `[[${title}]]`;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard
+          .writeText(text)
+          .then(() => showToast(`已复制双链 ${text}`))
+          .catch(() => showToast(`请手动复制：${text}`));
+      } else {
+        showToast(`双链语法：${text}`);
+      }
+    },
+    [showToast]
+  );
+
+  const activeKbContext = useMemo<{
+    sourceKind: "workspace_page" | "mounted_file";
+    refId: string;
+    title: string;
+    contentText: string;
+  } | null>(() => {
+    if (!showKbPanel) return null;
+    if (activeTextFile) {
+      return {
+        sourceKind: "mounted_file",
+        refId: activeTextFile.filePath,
+        title: activeTextFile.fileName,
+        contentText: activeTextFile.content.slice(0, 6000),
+      };
+    }
+    if (activeLocalMd) {
+      return {
+        sourceKind: "mounted_file",
+        refId: activeLocalMd.filePath,
+        title: activeLocalMd.title,
+        contentText: activeLocalMd.markdown.slice(0, 6000),
+      };
+    }
+    if (detail) {
+      return {
+        sourceKind: "workspace_page",
+        refId: detail.page.id,
+        title: detail.page.title,
+        contentText: detail.blocks
+          .map((b) => b.plainText)
+          .filter(Boolean)
+          .join("\n")
+          .slice(0, 6000),
+      };
+    }
+    return null;
+  }, [activeLocalMd, activeTextFile, detail, showKbPanel]);
+
   const activeCustomFont =
     customFontConfig.fonts.find((f) => f.id === customFontConfig.activeId) ??
     customFontConfig.fonts[0] ??
@@ -2357,9 +2438,13 @@ export const App: React.FC = () => {
             }
           }}
           onOpenSearch={() => setSearchOpen(true)}
+          kbEnabled={Boolean(kbStatus?.enabled)}
+          showKbPanel={Boolean(kbStatus?.enabled && kbStatus.showRelatedPanel)}
+          onToggleKbPanel={handleToggleKbPanel}
         />
 
-        <div className="nb-page-scroll">
+        <div className="nb-main-body">
+          <div className="nb-page-scroll">
           {isLoading ? (
             <div
               style={{
@@ -2611,6 +2696,29 @@ export const App: React.FC = () => {
               </div>
             </div>
           )}
+          </div>
+
+          {showKbPanel && (
+            <React.Suspense fallback={null}>
+              <KbRelatedPanel
+                sourceKind={activeKbContext?.sourceKind ?? null}
+                refId={activeKbContext?.refId ?? null}
+                title={activeKbContext?.title ?? ""}
+                contentText={activeKbContext?.contentText ?? ""}
+                sourceCount={kbStatus?.sourceCount ?? 0}
+                entityCount={kbStatus?.entityCount ?? 0}
+                onOpenPage={(pageId, blockId) => {
+                  loadPageDetailById(pageId, blockId).catch(() => {});
+                }}
+                onOpenFile={(filePath) => {
+                  openFileByPath(filePath).catch(() => {});
+                }}
+                onCopyWikiLink={handleCopyKbWikiLink}
+                onOpenSettings={() => handleOpenSettingsAtTab("kb")}
+                onClose={handleToggleKbPanel}
+              />
+            </React.Suspense>
+          )}
         </div>
 
         {showStatusBar && !activeTextFile && !(freshWindowRef.current && !detail && !activeLocalMd) && (
@@ -2722,6 +2830,8 @@ export const App: React.FC = () => {
           });
         }}
         onChangeTheme={handleChangeThemeFromTopbar}
+        kbEnabled={Boolean(kbStatus?.enabled)}
+        onOpenKbSettings={() => handleOpenSettingsAtTab("kb")}
       />
 
       <SettingsModal
@@ -2757,6 +2867,8 @@ export const App: React.FC = () => {
         syncing={syncing}
         onRunSync={syncNow}
         onSyncConfigChanged={setSyncConfig}
+        kbStatus={kbStatus}
+        onKbStatusChange={setKbStatus}
       />
 
       <PageHistoryModal

@@ -1,4 +1,5 @@
 use crate::db::Database;
+use crate::kb::KbEngine;
 use crate::models::{
     AppError, BackupEntry, BatchImportResult, Block, CreatePageInput, DatabaseFull, DbColumn,
     DbRow, ImportedCustomFont, LocalMarkdownDocument, MarkdownExport, MarkdownTreeEntry, Page,
@@ -44,6 +45,72 @@ where
     .map_err(Into::into)
 }
 
+fn spawn_kb_reindex_page(app: &AppHandle, page_id: String) {
+    use tauri::Manager;
+    if !app.state::<KbEngine>().is_enabled() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let db = handle.state::<Database>();
+        let kb = handle.state::<KbEngine>();
+        kb.sync_single_page(&db, &page_id);
+    });
+}
+
+fn spawn_kb_remove_page(app: &AppHandle, page_id: String) {
+    use tauri::Manager;
+    if !app.state::<KbEngine>().is_enabled() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let db = handle.state::<Database>();
+        let kb = handle.state::<KbEngine>();
+        kb.remove_page(&db, &page_id);
+    });
+}
+
+fn spawn_kb_sync_all(app: &AppHandle) {
+    use tauri::Manager;
+    if !app.state::<KbEngine>().is_enabled() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let db = handle.state::<Database>();
+        let kb = handle.state::<KbEngine>();
+        kb.sync_all(&db);
+    });
+}
+
+fn spawn_kb_sync_paths(app: &AppHandle, paths: Vec<String>) {
+    use tauri::Manager;
+    if paths.is_empty() || !app.state::<KbEngine>().is_enabled() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let db = handle.state::<Database>();
+        let kb = handle.state::<KbEngine>();
+        kb.sync_disk_paths(&db, &paths);
+    });
+}
+
+fn trigger_kb_rebind(app: &AppHandle, _db: &Database, kb: &KbEngine) {
+    use tauri::Manager;
+    kb.close_connection();
+    if !kb.is_enabled() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let db = handle.state::<Database>();
+        let kb = handle.state::<KbEngine>();
+        kb.rebind_storage(&db);
+    });
+}
+
 #[tauri::command]
 pub fn list_pages(db: State<'_, Database>) -> Result<Vec<Page>, String> {
     db.list_pages().map_err(Into::into)
@@ -60,37 +127,58 @@ pub fn get_page_detail(db: State<'_, Database>, id: String) -> Result<PageDetail
 }
 
 #[tauri::command]
-pub fn create_page(db: State<'_, Database>, input: CreatePageInput) -> Result<Page, String> {
-    db.create_page(input).map_err(Into::into)
+pub fn create_page(
+    app: AppHandle,
+    db: State<'_, Database>,
+    input: CreatePageInput,
+) -> Result<Page, String> {
+    let page = db.create_page(input).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, page.id.clone());
+    Ok(page)
 }
 
 #[tauri::command]
 pub fn update_page(
+    app: AppHandle,
     db: State<'_, Database>,
     id: String,
     patch: UpdatePagePatch,
 ) -> Result<Page, String> {
-    db.update_page(&id, patch).map_err(Into::into)
+    let page = db.update_page(&id, patch).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, page.id.clone());
+    Ok(page)
 }
 
 #[tauri::command]
-pub fn trash_page(db: State<'_, Database>, id: String) -> Result<(), String> {
-    db.trash_page(&id).map_err(Into::into)
+pub fn trash_page(app: AppHandle, db: State<'_, Database>, id: String) -> Result<(), String> {
+    db.trash_page(&id).map_err(String::from)?;
+    spawn_kb_remove_page(&app, id);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn restore_page(db: State<'_, Database>, id: String) -> Result<Page, String> {
-    db.restore_page(&id).map_err(Into::into)
+pub fn restore_page(app: AppHandle, db: State<'_, Database>, id: String) -> Result<Page, String> {
+    let page = db.restore_page(&id).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, page.id.clone());
+    Ok(page)
 }
 
 #[tauri::command]
-pub fn delete_page_permanently(db: State<'_, Database>, id: String) -> Result<(), String> {
-    db.delete_page_permanently(&id).map_err(Into::into)
+pub fn delete_page_permanently(
+    app: AppHandle,
+    db: State<'_, Database>,
+    id: String,
+) -> Result<(), String> {
+    db.delete_page_permanently(&id).map_err(String::from)?;
+    spawn_kb_remove_page(&app, id);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn empty_trash(db: State<'_, Database>) -> Result<(), String> {
-    db.empty_trash().map_err(Into::into)
+pub fn empty_trash(app: AppHandle, db: State<'_, Database>) -> Result<(), String> {
+    db.empty_trash().map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(())
 }
 
 /* 我的模板 */
@@ -129,23 +217,35 @@ pub fn import_custom_templates(db: State<'_, Database>, items: Vec<crate::db::Cu
 }
 
 #[tauri::command]
-pub fn duplicate_page(db: State<'_, Database>, id: String) -> Result<Page, String> {
-    db.duplicate_page(&id).map_err(Into::into)
+pub fn duplicate_page(app: AppHandle, db: State<'_, Database>, id: String) -> Result<Page, String> {
+    let page = db.duplicate_page(&id).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, page.id.clone());
+    Ok(page)
 }
 
 #[tauri::command]
-pub fn upsert_block(db: State<'_, Database>, block: UpsertBlockInput) -> Result<Block, String> {
-    db.upsert_block(block).map_err(Into::into)
+pub fn upsert_block(
+    app: AppHandle,
+    db: State<'_, Database>,
+    block: UpsertBlockInput,
+) -> Result<Block, String> {
+    let out = db.upsert_block(block).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, out.page_id.clone());
+    Ok(out)
 }
 
 #[tauri::command]
 pub fn save_page_blocks(
+    app: AppHandle,
     db: State<'_, Database>,
     page_id: String,
     blocks: Vec<SaveBlockItem>,
 ) -> Result<Vec<Block>, String> {
     checkpoint_before_edit(&db, &page_id);
-    db.save_page_blocks(&page_id, blocks).map_err(Into::into)
+    let pid = page_id.clone();
+    let out = db.save_page_blocks(&page_id, blocks).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, pid);
+    Ok(out)
 }
 
 /// 编辑前按间隔自动保存一份历史版本（失败不影响保存）
@@ -156,8 +256,10 @@ fn checkpoint_before_edit(db: &Database, page_id: &str) {
 }
 
 #[tauri::command]
-pub fn delete_block(db: State<'_, Database>, id: String) -> Result<(), String> {
-    db.delete_block(&id).map_err(Into::into)
+pub fn delete_block(app: AppHandle, db: State<'_, Database>, id: String) -> Result<(), String> {
+    db.delete_block(&id).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -190,14 +292,22 @@ pub fn delete_db_column(db: State<'_, Database>, id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn upsert_db_row(db: State<'_, Database>, row: UpsertDbRowInput) -> Result<DbRow, String> {
+pub fn upsert_db_row(
+    app: AppHandle,
+    db: State<'_, Database>,
+    row: UpsertDbRowInput,
+) -> Result<DbRow, String> {
     checkpoint_before_edit(&db, &row.page_id);
-    db.upsert_db_row(row).map_err(Into::into)
+    let out = db.upsert_db_row(row).map_err(String::from)?;
+    spawn_kb_reindex_page(&app, out.page_id.clone());
+    Ok(out)
 }
 
 #[tauri::command]
-pub fn delete_db_row(db: State<'_, Database>, id: String) -> Result<(), String> {
-    db.delete_db_row(&id).map_err(Into::into)
+pub fn delete_db_row(app: AppHandle, db: State<'_, Database>, id: String) -> Result<(), String> {
+    db.delete_db_row(&id).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -218,42 +328,55 @@ pub fn export_page_markdown(
 
 #[tauri::command]
 pub fn import_markdown_page(
+    app: AppHandle,
     db: State<'_, Database>,
     title: String,
     markdown: String,
     parent_id: Option<String>,
 ) -> Result<Page, String> {
-    db.import_markdown_page(&title, &markdown, parent_id)
-        .map_err(Into::into)
+    let page = db
+        .import_markdown_page(&title, &markdown, parent_id)
+        .map_err(String::from)?;
+    spawn_kb_reindex_page(&app, page.id.clone());
+    Ok(page)
 }
 
 #[tauri::command]
 pub fn import_local_paths(
+    app: AppHandle,
     db: State<'_, Database>,
     paths: Vec<String>,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    db.import_local_paths(paths, parent_id).map_err(Into::into)
+    let res = db.import_local_paths(paths, parent_id).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(res)
 }
 
 #[tauri::command]
 pub fn import_markdown_tree(
+    app: AppHandle,
     db: State<'_, Database>,
     entries: Vec<MarkdownTreeEntry>,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    db.import_markdown_tree(entries, parent_id)
-        .map_err(Into::into)
+    let res = db.import_markdown_tree(entries, parent_id).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(res)
 }
 
 #[tauri::command]
 pub fn import_notion_zip_bytes(
+    app: AppHandle,
     db: State<'_, Database>,
     zip_base64: String,
     parent_id: Option<String>,
 ) -> Result<BatchImportResult, String> {
-    db.import_notion_zip_bytes(&zip_base64, parent_id)
-        .map_err(Into::into)
+    let res = db
+        .import_notion_zip_bytes(&zip_base64, parent_id)
+        .map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(res)
 }
 
 #[tauri::command]
@@ -270,8 +393,17 @@ pub fn get_settings(db: State<'_, Database>) -> Result<HashMap<String, String>, 
 }
 
 #[tauri::command]
-pub fn set_setting(db: State<'_, Database>, key: String, value: String) -> Result<(), String> {
-    db.set_setting(&key, &value).map_err(Into::into)
+pub fn set_setting(
+    app: AppHandle,
+    db: State<'_, Database>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    db.set_setting(&key, &value).map_err(String::from)?;
+    if key == "workspaceFolders" {
+        spawn_kb_sync_all(&app);
+    }
+    Ok(())
 }
 
 /* ============================================================================
@@ -285,19 +417,30 @@ pub fn get_storage_info(db: State<'_, Database>) -> Result<StorageConfigInfo, St
 
 #[tauri::command]
 pub fn update_storage_config(
+    app: AppHandle,
     db: State<'_, Database>,
+    kb: State<'_, KbEngine>,
     input: UpdateStorageConfigInput,
 ) -> Result<StorageConfigInfo, String> {
-    db.update_storage_config(input).map_err(Into::into)
+    kb.close_connection();
+    let info = db.update_storage_config(input).map_err(String::from)?;
+    trigger_kb_rebind(&app, &db, &kb);
+    Ok(info)
 }
 
 #[tauri::command]
 pub fn reset_storage_to_default(
+    app: AppHandle,
     db: State<'_, Database>,
+    kb: State<'_, KbEngine>,
     migrate_existing_data: Option<bool>,
 ) -> Result<StorageConfigInfo, String> {
-    db.reset_storage_to_default(migrate_existing_data.unwrap_or(true))
-        .map_err(Into::into)
+    kb.close_connection();
+    let info = db
+        .reset_storage_to_default(migrate_existing_data.unwrap_or(true))
+        .map_err(String::from)?;
+    trigger_kb_rebind(&app, &db, &kb);
+    Ok(info)
 }
 
 #[tauri::command]
@@ -387,18 +530,21 @@ pub fn open_local_markdown_file(file_path: String) -> Result<LocalMarkdownDocume
 
 #[tauri::command]
 pub fn save_local_markdown_file(
+    app: AppHandle,
     file_path: String,
     blocks: Option<Vec<SaveBlockItem>>,
     raw_markdown: Option<String>,
     expected_updated_at: Option<String>,
 ) -> Result<LocalMarkdownDocument, String> {
-    crate::storage::save_local_markdown_file_checked(
+    let doc = crate::storage::save_local_markdown_file_checked(
         &file_path,
         blocks,
         raw_markdown,
         expected_updated_at.as_deref(),
     )
-    .map_err(Into::into)
+    .map_err(String::from)?;
+    spawn_kb_sync_paths(&app, vec![doc.file_path.clone()]);
+    Ok(doc)
 }
 
 #[tauri::command]
@@ -447,13 +593,17 @@ pub fn open_text_file(path: String, encoding: Option<String>) -> Result<crate::t
 /// 保存文本文件，保留编码与换行符；expected_modified_ms 用于检测外部修改
 #[tauri::command]
 pub fn save_text_file(
+    app: AppHandle,
     path: String,
     content: String,
     encoding: String,
     line_ending: String,
     expected_modified_ms: Option<u64>,
 ) -> Result<crate::textfile::TextSaveResult, String> {
-    crate::textfile::save_text_file(&path, &content, &encoding, &line_ending, expected_modified_ms).map_err(Into::into)
+    let res = crate::textfile::save_text_file(&path, &content, &encoding, &line_ending, expected_modified_ms)
+        .map_err(String::from)?;
+    spawn_kb_sync_paths(&app, vec![path]);
+    Ok(res)
 }
 
 /// 用系统默认程序打开文件（图片、PDF、Office 文档等）
@@ -492,25 +642,33 @@ pub fn create_folder_entry(
 /// 在原目录内重命名文件或文件夹
 #[tauri::command]
 pub fn rename_folder_entry(
+    app: AppHandle,
     path: String,
     new_name: String,
 ) -> Result<crate::folders::FolderEntry, String> {
-    crate::folders::rename_entry(&path, &new_name).map_err(Into::into)
+    let entry = crate::folders::rename_entry(&path, &new_name).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(entry)
 }
 
 /// 拖拽：把文件或文件夹移动到另一个文件夹
 #[tauri::command]
 pub fn move_folder_entry(
+    app: AppHandle,
     path: String,
     target_dir: String,
 ) -> Result<crate::folders::FolderEntry, String> {
-    crate::folders::move_entry(&path, &target_dir).map_err(Into::into)
+    let entry = crate::folders::move_entry(&path, &target_dir).map_err(String::from)?;
+    spawn_kb_sync_all(&app);
+    Ok(entry)
 }
 
 /// 移到系统回收站
 #[tauri::command]
-pub fn trash_folder_entry(path: String) -> Result<(), String> {
-    crate::folders::trash_entry(&path).map_err(Into::into)
+pub fn trash_folder_entry(app: AppHandle, path: String) -> Result<(), String> {
+    crate::folders::trash_entry(&path).map_err(String::from)?;
+    spawn_kb_sync_paths(&app, vec![path]);
+    Ok(())
 }
 
 /// 在挂载的文件夹里全文搜索笔记；roots 为 [路径, 显示名]
@@ -534,7 +692,9 @@ pub fn set_watched_paths(
 ) -> Result<(), String> {
     use tauri::Emitter;
     watcher.set_targets(dirs, files, move |paths| {
+        let kb_paths = paths.clone();
         let _ = app.emit("xynote://fs-changed", paths);
+        spawn_kb_sync_paths(&app, kb_paths);
     })
 }
 
@@ -578,7 +738,12 @@ pub async fn x_c2(app: AppHandle) -> Result<Option<crate::sync::SyncReport>, Str
     use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<Database>();
-        crate::sync_config::sync_now(&db).map_err(|e| e.to_string())
+        let report = crate::sync_config::sync_now(&db).map_err(|e| e.to_string())?;
+        if report.is_some() {
+            let kb = app.state::<KbEngine>();
+            kb.sync_all(&db);
+        }
+        Ok(report)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -641,10 +806,15 @@ pub fn create_backup_now(db: State<'_, Database>) -> Result<BackupEntry, String>
 
 #[tauri::command]
 pub fn restore_backup(
+    app: AppHandle,
     db: State<'_, Database>,
+    kb: State<'_, KbEngine>,
     backup_path: String,
 ) -> Result<StorageConfigInfo, String> {
-    db.restore_backup(&backup_path).map_err(Into::into)
+    kb.close_connection();
+    let info = db.restore_backup(&backup_path).map_err(String::from)?;
+    trigger_kb_rebind(&app, &db, &kb);
+    Ok(info)
 }
 
 #[tauri::command]
@@ -976,7 +1146,11 @@ pub fn page_version_get(db: State<'_, Database>, version_id: String) -> Result<c
 }
 
 #[tauri::command]
-pub fn page_version_restore(db: State<'_, Database>, version_id: String) -> Result<String, String> {
+pub fn page_version_restore(
+    app: AppHandle,
+    db: State<'_, Database>,
+    version_id: String,
+) -> Result<String, String> {
     let page_id = {
         let mut conn = db.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -985,6 +1159,7 @@ pub fn page_version_restore(db: State<'_, Database>, version_id: String) -> Resu
         crate::storage::after_tree_mutated(&conn);
         page_id
     };
+    spawn_kb_reindex_page(&app, page_id.clone());
     Ok(page_id)
 }
 
@@ -1037,4 +1212,132 @@ pub async fn prompt_default_md_association(
         .map_err(String::from)?;
     let _ = app.state::<Database>().set_setting("winShellIntegration", "enabled");
     Ok(status)
+}
+
+/* ============================================================================
+ * Hot-Pluggable SAG2 Local Knowledge Base Engine (kb_index.db, Default OFF)
+ * ========================================================================== */
+
+#[tauri::command]
+pub fn kb_get_status(
+    db: State<'_, Database>,
+    kb: State<'_, KbEngine>,
+) -> Result<crate::kb::KbStatus, String> {
+    kb.get_status(&db).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_set_enabled(
+    app: AppHandle,
+    enabled: bool,
+    purge_index: Option<bool>,
+) -> Result<crate::kb::KbStatus, String> {
+    use tauri::Manager;
+    let purge = purge_index.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let kb = app.state::<KbEngine>();
+        kb.set_enabled(&db, enabled, purge).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_set_config(
+    app: AppHandle,
+    include_folders: Option<bool>,
+    show_related_panel: Option<bool>,
+) -> Result<crate::kb::KbStatus, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let kb = app.state::<KbEngine>();
+        kb.set_config(&db, include_folders, show_related_panel)
+            .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_rebuild_index(
+    app: AppHandle,
+    force_full: Option<bool>,
+) -> Result<crate::kb::KbStatus, String> {
+    use tauri::Manager;
+    let full = force_full.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let kb = app.state::<KbEngine>();
+        kb.rebuild_index(&db, full).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_purge_index(app: AppHandle) -> Result<crate::kb::KbStatus, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let kb = app.state::<KbEngine>();
+        kb.purge_index(&db).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_search(
+    app: AppHandle,
+    query: String,
+    limit: Option<usize>,
+    hops: Option<u8>,
+) -> Result<crate::kb::KbSearchResponse, String> {
+    use tauri::Manager;
+    let lim = limit.unwrap_or(24);
+    let hp = hops.unwrap_or(1);
+    tauri::async_runtime::spawn_blocking(move || {
+        let kb = app.state::<KbEngine>();
+        kb.search(&query, lim, hp).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_related_for_context(
+    app: AppHandle,
+    source_kind: String,
+    ref_id: String,
+    title: String,
+    content_text: String,
+    limit: Option<usize>,
+) -> Result<crate::kb::KbRelatedResponse, String> {
+    use tauri::Manager;
+    let lim = limit.unwrap_or(8);
+    tauri::async_runtime::spawn_blocking(move || {
+        let kb = app.state::<KbEngine>();
+        kb.related_for_context(&source_kind, &ref_id, &title, &content_text, lim)
+            .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn kb_entity_events(
+    app: AppHandle,
+    entity_name: String,
+    limit: Option<usize>,
+) -> Result<Vec<crate::kb::KbSearchHit>, String> {
+    use tauri::Manager;
+    let lim = limit.unwrap_or(30);
+    tauri::async_runtime::spawn_blocking(move || {
+        let kb = app.state::<KbEngine>();
+        kb.entity_events(&entity_name, lim).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

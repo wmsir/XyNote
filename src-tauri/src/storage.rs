@@ -129,7 +129,7 @@ pub fn normalize_path_key(p: &Path) -> String {
     normalize_win32_path_str(&p.to_string_lossy()).to_lowercase()
 }
 
-fn clean_display_path(p: &Path) -> String {
+pub(crate) fn clean_display_path(p: &Path) -> String {
     normalize_win32_path_str(&p.to_string_lossy())
 }
 
@@ -1088,6 +1088,14 @@ impl Database {
             .storage
             .as_ref()
             .map(|st| clean_display_path(&st.active_data_path().join("plugins")))
+    }
+
+    pub fn active_data_dir_path(&self) -> Option<PathBuf> {
+        let inner = self.lock().ok()?;
+        inner
+            .storage
+            .as_ref()
+            .map(|st| st.active_data_path())
     }
 
     fn compute_storage_info_inner(inner: &DbInner) -> Result<StorageConfigInfo, AppError> {

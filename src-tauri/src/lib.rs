@@ -1,6 +1,7 @@
 #[macro_use]
 pub mod security;
 pub mod telemetry;
+pub mod kb;
 pub mod folders;
 pub mod textfile;
 pub mod export_more;
@@ -76,11 +77,27 @@ pub fn run() {
 
             let initial_files = cli_files_opt.take().unwrap_or_default();
             app.manage(file_assoc::LaunchFilesState::new(initial_files));
+            let kb_on = database
+                .get_settings()
+                .ok()
+                .and_then(|s| s.get(kb::SETTING_KB_ENABLED).cloned())
+                .as_deref()
+                == Some("true");
             app.manage(database);
+            app.manage(kb::KbEngine::new());
             app.manage(watch::FsWatcher::default());
 
             if let Some(srv) = ipc_server_opt.take().flatten() {
                 file_assoc::spawn_ipc_listener(Some(srv), app.handle().clone());
+            }
+
+            if kb_on {
+                let kb_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let db = kb_handle.state::<Database>();
+                    let kb_engine = kb_handle.state::<kb::KbEngine>();
+                    kb_engine.init_from_settings(&db);
+                });
             }
 
             telemetry::spawn_background_ping(app.handle().clone());
@@ -188,6 +205,14 @@ pub fn run() {
             commands::import_style_plugin_dialog,
             commands::import_style_plugin_content,
             commands::export_style_plugin_dialog,
+            commands::kb_get_status,
+            commands::kb_set_enabled,
+            commands::kb_set_config,
+            commands::kb_rebuild_index,
+            commands::kb_purge_index,
+            commands::kb_search,
+            commands::kb_related_for_context,
+            commands::kb_entity_events,
         ])
         .build(tauri::generate_context!())
         .expect("error while building XyNote Tauri application");

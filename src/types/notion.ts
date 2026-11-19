@@ -412,3 +412,61 @@ export interface FolderSearchHit {
   line: number;
   snippet: string;
 }
+
+/* ============================================================================
+ * 可插拔 SAG2 本地知识库引擎（独立 kb_index.db，默认关闭）
+ * ========================================================================== */
+
+export interface KbStatus {
+  enabled: boolean;
+  includeFolders: boolean;
+  showRelatedPanel: boolean;
+  dbPath: string;
+  dbExists: boolean;
+  dbSizeBytes: number;
+  sourceCount: number;
+  eventCount: number;
+  entityCount: number;
+  indexing: boolean;
+  lastIndexedAt: string | null;
+  lastError: string | null;
+}
+
+export interface KbSearchHit {
+  eventId: string;
+  sourceId: string;
+  sourceKind: "workspace_page" | "mounted_file" | string;
+  refId: string;
+  title: string;
+  icon: string;
+  rootName: string;
+  blockId: string | null;
+  lineStart: number | null;
+  headingPath: string;
+  snippet: string;
+  matchKind: "direct" | "hyperedge" | string;
+  sharedEntities: string[];
+  score: number;
+  eventTime: string;
+}
+
+export interface KbEntitySummary {
+  name: string;
+  entityType: string;
+  docFreq: number;
+}
+
+export interface KbSearchResponse {
+  query: string;
+  totalSources: number;
+  totalEvents: number;
+  elapsedMs: number;
+  hits: KbSearchHit[];
+  topEntities: KbEntitySummary[];
+}
+
+export interface KbRelatedResponse {
+  contextEntities: KbEntitySummary[];
+  hits: KbSearchHit[];
+  elapsedMs: number;
+}

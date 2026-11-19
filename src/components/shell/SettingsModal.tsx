@@ -20,6 +20,7 @@ import {
   Maximize2,
   Monitor,
   Moon,
+  Network,
   Palette,
   RefreshCw,
   RotateCcw,
@@ -54,6 +55,7 @@ import type {
   BackupEntry,
   EditorPreferences,
   EditorViewMode,
+  KbStatus,
   KeybindingMap,
   StorageConfigInfo,
   StylePluginState,
@@ -84,9 +86,14 @@ import {
   type CustomFontEntry,
 } from "../../utils/customFont";
 
+const KbSettingsPanel = React.lazy(() =>
+  import("../kb/KbSettingsPanel").then((m) => ({ default: m.KbSettingsPanel }))
+);
+
 export type SettingsTabId =
   | "storage"
   | "sync"
+  | "kb"
   | "donate"
   | "feedback"
   | "themes"
@@ -140,6 +147,8 @@ export interface SettingsModalProps {
   syncing: boolean;
   onRunSync: () => Promise<void>;
   onSyncConfigChanged: (cfg: SyncConfig) => void;
+  kbStatus?: KbStatus | null;
+  onKbStatusChange?: (next: KbStatus) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -199,6 +208,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   syncing,
   onRunSync,
   onSyncConfigChanged,
+  kbStatus = null,
+  onKbStatusChange,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
   const [localInfo, setLocalInfo] = useState<StorageConfigInfo | null>(storageInfo);
@@ -776,6 +787,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }> = [
     { id: "storage", label: "存储与路径", icon: <HardDrive size={15} /> },
     { id: "sync", label: "同步", icon: <Cloud size={15} /> },
+    { id: "kb", label: "知识库引擎 (SAG2)", icon: <Network size={15} /> },
     { id: "themes", label: "主题与样式插件", icon: <Sparkles size={15} /> },
     { id: "shortcuts", label: "快捷键配置", icon: <Keyboard size={15} /> },
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
@@ -2054,6 +2066,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onConfigChanged={onSyncConfigChanged}
                 onNotify={onNotify}
               />
+            )}
+
+            {activeTab === "kb" && (
+              <React.Suspense
+                fallback={
+                  <div className="nb-settings-desc">正在加载 SAG2 本地知识库设置面板…</div>
+                }
+              >
+                <KbSettingsPanel
+                  status={kbStatus}
+                  onStatusChange={(next) => onKbStatusChange?.(next)}
+                  onNotify={onNotify}
+                  onOpenIndexFolder={(dbPath) => handleOpenExplorer(dbPath)}
+                />
+              </React.Suspense>
             )}
 
             {activeTab === "donate" && <DonatePanel />}
