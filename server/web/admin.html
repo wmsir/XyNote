@@ -76,6 +76,7 @@
     <div class="brand"><span class="mark" aria-hidden="true">Y</span>小悦笔记 · 管理后台</div>
     <nav id="nav" hidden aria-label="管理分区">
       <button type="button" data-view="overview">概览</button>
+      <button type="button" data-view="installs">装机统计</button>
       <button type="button" data-view="orders">订单<span class="count" id="cPending" hidden></span></button>
       <button type="button" data-view="codes">激活码</button>
       <button type="button" data-view="users">用户</button>
@@ -175,7 +176,7 @@
   function setView(v) {
     view = v; location.hash = v;
     document.querySelectorAll('#nav [data-view]').forEach(function (b) { if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-    ({ overview: overview, orders: loadOrders, codes: loadCodes, users: loadUsers, feedback: loadFeedback, marketplace: loadMarketplace }[v] || overview)();
+    ({ overview: overview, installs: loadInstalls, orders: loadOrders, codes: loadCodes, users: loadUsers, feedback: loadFeedback, marketplace: loadMarketplace }[v] || overview)();
   }
   document.querySelectorAll('#nav [data-view]').forEach(function (b) { b.addEventListener('click', function () { setView(b.dataset.view); }); });
 
@@ -187,11 +188,67 @@
   function overview() {
     api('/api/v1/admin/stats').then(function (s) {
       refreshCounts(s);
-      var items = [['待确认订单', s.pendingOrders, 'orders'], ['待处理反馈', s.newFeedback, 'feedback'], ['插件市场作品', s.marketplaceTotal || 0, 'marketplace'], ['软件登录账号', s.appUsers, 'users'], ['免费期内账号', s.trialActive, 'users'],
-        ['已发激活码', s.codesTotal, 'codes'], ['已绑定激活码', s.codesBound, 'codes'], ['永久版激活的电脑', s.activations, 'codes'], ['30 天活跃电脑', s.devicesActive30d, 'users'], ['记录过的电脑', s.devices, 'users']];
+      var items = [
+        ['累计装机（唯一设备）', s.installTotal || 0, 'installs'],
+        ['24h 新增装机', s.installNew24h || 0, 'installs'],
+        ['日活设备 (DAU)', s.installDau || 0, 'installs'],
+        ['7 日活跃 (WAU)', s.installWau || 0, 'installs'],
+        ['30 日活跃 (MAU)', s.installMau || 0, 'installs'],
+        ['待确认订单', s.pendingOrders, 'orders'],
+        ['待处理反馈', s.newFeedback, 'feedback'],
+        ['插件市场作品', s.marketplaceTotal || 0, 'marketplace'],
+        ['软件登录账号', s.appUsers, 'users'],
+        ['免费期内账号', s.trialActive, 'users'],
+        ['已发激活码', s.codesTotal, 'codes'],
+        ['已绑定激活码', s.codesBound, 'codes'],
+        ['永久版激活电脑', s.activations, 'codes'],
+        ['30 天登录活跃电脑', s.devicesActive30d, 'users']
+      ];
       $('main').innerHTML = '<div class="stats">' + items.map(function (i) {
         return '<button type="button" class="stat" data-go="' + i[2] + '" style="text-align:left;cursor:pointer;font:inherit;color:inherit"><b>' + esc(i[1] == null ? '-' : i[1]) + '</b><span>' + esc(i[0]) + '</span></button>';
       }).join('') + '</div><p class="muted" style="margin-top:16px">用户中心：<a href="' + esc(SITE) + '">' + esc(SITE) + '</a></p>';
+    }).catch(fail);
+  }
+
+  function bucketTable(title, list) {
+    var total = (list || []).reduce(function (acc, x) { return acc + (x.count || 0); }, 0) || 1;
+    var rows = (list || []).map(function (b) {
+      var pct = Math.round((b.count * 1000) / total) / 10;
+      return '<tr><td class="mono">' + esc(b.key || '未知') + '</td><td><b>' + esc(b.count) + '</b> <span class="muted">(' + pct + '%)</span></td></tr>';
+    }).join('');
+    return '<div><h3 style="font-size:14px;margin:0 0 8px">' + esc(title) + '</h3>' +
+      (rows ? '<table><thead><tr><th>维度</th><th>设备数</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="empty">暂无数据</div>') +
+      '</div>';
+  }
+
+  function loadInstalls() {
+    api('/api/v1/admin/installations').then(function (d) {
+      var s = d.summary || {};
+      var cards = [
+        ['累计装机量（唯一设备）', s.total || 0],
+        ['近 24 小时新增', s.new24h || 0],
+        ['近 7 天新增', s.new7d || 0],
+        ['日活设备 (DAU)', s.active1d || 0],
+        ['7 日活跃 (WAU)', s.active7d || 0],
+        ['30 日活跃 (MAU)', s.active30d || 0]
+      ];
+      var statsHtml = '<div class="stats" style="margin-bottom:18px">' + cards.map(function (c) {
+        return '<div class="stat"><b>' + esc(c[1]) + '</b><span>' + esc(c[0]) + '</span></div>';
+      }).join('') + '</div>';
+      var distHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:20px">' +
+        bucketTable('系统与架构分布', s.byOs) +
+        bucketTable('版本分布', s.byVersion) +
+        bucketTable('安装形态 / 渠道', s.byChannel) +
+        '</div>';
+      var rows = (d.recent || []).map(function (r) {
+        return '<tr><td class="mono">' + esc(r.installIdMasked) + '</td><td>' + esc(r.os + (r.arch ? ' (' + r.arch + ')' : '')) + '</td>' +
+          '<td class="mono">v' + esc(r.appVersion || '-') + '</td><td>' + esc(r.channel || '-') + '</td>' +
+          '<td>' + esc(r.pingDays) + '</td><td class="muted">' + esc(time(r.firstSeenAt)) + '</td><td class="muted">' + esc(time(r.lastSeenAt)) + '</td></tr>';
+      }).join('');
+      $('main').innerHTML = statsHtml + distHtml +
+        '<h3 style="font-size:14px;margin:0 0 8px">最近活跃设备（最近 100 台，一台一记录 · 匿名硬件哈希去重）</h3>' +
+        (rows ? '<table><thead><tr><th>匿名设备 ID</th><th>系统 / 架构</th><th>版本</th><th>渠道</th><th>活跃天数</th><th>首次装机</th><th>最近活跃</th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<div class="empty">暂无装机上报记录</div>');
     }).catch(fail);
   }
 

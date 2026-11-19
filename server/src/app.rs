@@ -157,6 +157,7 @@ impl OpenState for AppState {
         conn.execute_batch(crate::licensing::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::feedback::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::marketplace::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        conn.execute_batch(crate::telemetry::SCHEMA_SQL).map_err(|e| e.to_string())?;
         crate::marketplace::seed_if_empty(&conn)?;
         let signing_key = match &config.license_key_file {
             Some(path) => {
@@ -193,6 +194,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/marketplace/:id/like", post(marketplace_like))
         .route("/api/v1/admin/feedback", get(admin_feedback_list))
         .route("/api/v1/admin/feedback/:id", post(admin_feedback_update))
+        .route("/api/v1/telemetry/ping", post(telemetry_ping))
+        .route("/api/v1/admin/installations", get(admin_installations))
         .route("/api/v1/admin/marketplace", get(admin_marketplace_list))
         .route("/api/v1/admin/marketplace/:id/featured", post(admin_marketplace_featured))
         .route("/api/v1/admin/marketplace/:id", axum::routing::delete(admin_marketplace_delete))
@@ -398,7 +401,8 @@ async fn verify_client_sig_middleware(
     let h_sig = header_trimmed(req.headers(), "x-xy-sig");
     let any_present = h_ts.is_some() || h_nonce.is_some() || h_sig.is_some();
 
-    if !any_present && !state.config.require_client_sig {
+    let require_sig = state.config.require_client_sig || path == "/api/v1/telemetry/ping";
+    if !any_present && !require_sig {
         return attach_server_ts_header(next.run(req).await, now_ts);
     }
 
@@ -1239,6 +1243,43 @@ async fn license_deactivate(State(state): State<AppState>, headers: HeaderMap, J
     }
 }
 
+async fn telemetry_ping(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<crate::telemetry::PingInput>,
+) -> Response {
+    let ip = client_ip(&headers);
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::telemetry::record_ping(&conn, &ip, &input) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(crate::telemetry::PingError::BadRequest(m)) => err(StatusCode::BAD_REQUEST, &m),
+        Err(crate::telemetry::PingError::RateLimited(m)) => err(StatusCode::TOO_MANY_REQUESTS, &m),
+        Err(crate::telemetry::PingError::Internal(e)) => internal(e),
+    }
+}
+
+async fn admin_installations(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(r) = admin_ok(&state, &headers).await {
+        return r;
+    }
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    let summary = match crate::telemetry::summary(&conn) {
+        Ok(s) => s,
+        Err(e) => return internal(e),
+    };
+    let recent = match crate::telemetry::list_recent(&conn, 100) {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    Json(json!({ "summary": summary, "recent": recent })).into_response()
+}
+
 async fn admin_stats(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(r) = admin_ok(&state, &headers).await {
         return r;
@@ -1248,11 +1289,20 @@ async fn admin_stats(State(state): State<AppState>, headers: HeaderMap) -> Respo
         Err(e) => return internal(e),
     };
     let pending: i64 = conn.query_row("SELECT COUNT(*) FROM orders WHERE status = 'pending'", [], |r| r.get(0)).unwrap_or(0);
+    let inst = crate::telemetry::summary(&conn).ok();
     match crate::licensing::stats(&conn) {
         Ok(mut v) => {
             v["pendingOrders"] = json!(pending);
             v["newFeedback"] = json!(crate::feedback::count_new(&conn));
             v["marketplaceTotal"] = json!(crate::marketplace::count_total(&conn));
+            if let Some(s) = inst {
+                v["installTotal"] = json!(s.total);
+                v["installNew24h"] = json!(s.new_24h);
+                v["installNew7d"] = json!(s.new_7d);
+                v["installDau"] = json!(s.active_1d);
+                v["installWau"] = json!(s.active_7d);
+                v["installMau"] = json!(s.active_30d);
+            }
             Json(v).into_response()
         }
         Err(e) => internal(e),
@@ -2542,5 +2592,87 @@ mod tests {
         assert_eq!(r_skew.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(r_skew.headers().get("x-xy-clock-skew").and_then(|v| v.to_str().ok()), Some("1"));
         assert!(r_skew.headers().get("x-xy-server-ts").is_some());
+    }
+
+    #[tokio::test]
+    async fn telemetry_ping_requires_hmac_deduplicates_and_reports_admin_stats() {
+        let cfg = test_config(false);
+        let sign_key = cfg.api_sign_key.clone();
+        let app = router(AppState::open(cfg).unwrap());
+
+        let body = json!({
+            "installId": "abcdef0123456789abcdef0123456789",
+            "os": "windows",
+            "arch": "x86_64",
+            "appVersion": "0.8.3",
+            "channel": "portable"
+        })
+        .to_string()
+        .into_bytes();
+
+        // 1. 未签名的 telemetry/ping 必须被拒绝
+        let r_unsigned = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/telemetry/ping")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r_unsigned.status(), StatusCode::UNAUTHORIZED);
+
+        // 2. 合法签名上报并升级版本号重复上报，管理接口统计仅计 1 台
+        let sign_post = |ts: i64, nonce: &str, bytes: Vec<u8>| {
+            let payload = format!(
+                "POST\n{}\n{}\n{}\n{}",
+                canonical_api_target("/api/v1/telemetry/ping"),
+                ts,
+                nonce,
+                sha256_bytes_hex(&bytes)
+            );
+            let sig = format!("v1={}", hmac_sha256_hex(sign_key.as_bytes(), payload.as_bytes()));
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/telemetry/ping")
+                .header("content-type", "application/json")
+                .header("x-xy-ts", ts.to_string())
+                .header("x-xy-nonce", nonce)
+                .header("x-xy-sig", sig)
+                .body(Body::from(bytes))
+                .unwrap()
+        };
+
+        let now_ts = chrono::Utc::now().timestamp();
+        let r_ok1 = app.clone().oneshot(sign_post(now_ts, "tele_nonce_000001", body)).await.unwrap();
+        assert_eq!(r_ok1.status(), StatusCode::NO_CONTENT);
+
+        let body_upg = json!({
+            "installId": "abcdef0123456789abcdef0123456789",
+            "os": "windows",
+            "arch": "x86_64",
+            "appVersion": "0.8.4",
+            "channel": "installed"
+        })
+        .to_string()
+        .into_bytes();
+        let r_ok2 = app.clone().oneshot(sign_post(now_ts, "tele_nonce_000002", body_upg)).await.unwrap();
+        assert_eq!(r_ok2.status(), StatusCode::NO_CONTENT);
+
+        let (s, stats_bytes) = call(&app, "GET", "/api/v1/admin/stats", Some(ADMIN), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let st = val(&stats_bytes);
+        assert_eq!(st["installTotal"], 1);
+        assert_eq!(st["installDau"], 1);
+
+        let (s, inst_bytes) = call(&app, "GET", "/api/v1/admin/installations", Some(ADMIN), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let inst = val(&inst_bytes);
+        assert_eq!(inst["summary"]["total"], 1);
+        assert_eq!(inst["summary"]["byVersion"][0]["key"], "0.8.4");
+        assert_eq!(inst["recent"].as_array().unwrap().len(), 1);
     }
 }

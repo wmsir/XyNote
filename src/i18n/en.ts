@@ -1745,7 +1745,14 @@ const EN: Record<string, string> = {
   "这是一个新窗口。写下标题按回车就开始，或者从下面选一种方式。": "This is a new window. Type a title and press Enter, or pick a way to start below.",
   "通用纯文本，可在任何笔记软件里打开": "Plain text that opens in any notes app",
   "通过打印另存为 PDF，适合分享和打印": "Save as PDF from the print dialog, for sharing and printing",
-  "长页面自动分成多张，方便发群聊": "Long pages are split into several images for easy sharing"
+  "长页面自动分成多张，方便发群聊": "Long pages are split into several images for easy sharing",
+  "匿名装机与活跃统计": "Anonymous install & active count",
+  "仅在每日首次启动或升级后后台上报匿名设备哈希、系统架构与版本号（不含任何笔记内容与个人信息），随时可关闭": "Sends only an anonymized device hash, OS/arch and app version once per day or upgrade (never notes or personal data); can be turned off anytime",
+  "已开启匿名装机与活跃统计": "Anonymous install statistics enabled",
+  "已关闭匿名装机与活跃统计": "Anonymous install statistics disabled",
+  "保存统计偏好失败": "Failed to save telemetry preference",
+  "隐私优先架构": "Privacy-first architecture",
+  "：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。": ": notes and images stay 100% offline with no forced login; optional anonymized device count never uploads note content and can be disabled above."
 };
 
 export default EN;

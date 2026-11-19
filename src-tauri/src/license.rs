@@ -48,7 +48,7 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// 操作系统提供的机器标识（重装软件不变）
-fn os_machine_id() -> Option<String> {
+pub(crate) fn os_machine_id() -> Option<String> {
     static ID: OnceLock<Option<String>> = OnceLock::new();
     ID.get_or_init(|| {
         #[cfg(target_os = "windows")]

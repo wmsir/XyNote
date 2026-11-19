@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod security;
+pub mod telemetry;
 pub mod folders;
 pub mod textfile;
 pub mod export_more;
@@ -81,6 +82,8 @@ pub fn run() {
             if let Some(srv) = ipc_server_opt.take().flatten() {
                 file_assoc::spawn_ipc_listener(Some(srv), app.handle().clone());
             }
+
+            telemetry::spawn_background_ping(app.handle().clone());
 
             Ok(())
         })

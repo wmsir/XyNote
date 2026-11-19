@@ -36,6 +36,7 @@ import {
 import {
   createBackupNow,
   exportWorkspaceZip,
+  getSettings,
   getStorageInfo,
   importFontToDataDir,
   isTauriRuntime,
@@ -45,6 +46,7 @@ import {
   pickFontFileDialog,
   resetStorageToDefault,
   restoreBackup,
+  setSetting,
   syncAllPagesToMarkdown,
   updateStorageConfig,
 } from "../../api/client";
@@ -215,6 +217,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [shellStatus, setShellStatus] = useState<ShellIntegrationStatus | null>(
     null
   );
+  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
+  const [telemetryBusy, setTelemetryBusy] = useState(false);
   const browserFontInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeCustomFont =
@@ -231,16 +235,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const refreshDiagnostics = useCallback(async () => {
     try {
-      const [info, snapshotList, shellInfo] = await Promise.all([
+      const [info, snapshotList, shellInfo, appSettings] = await Promise.all([
         getStorageInfo(),
         listBackups(),
         getShellIntegrationStatus().catch(() => null),
+        getSettings().catch(() => null),
       ]);
       setLocalInfo(info);
       setCustomDataDir(info.activeDataDir);
       setCustomMdSyncDir(info.markdownSyncDir);
       setBackups(snapshotList);
       setShellStatus(shellInfo);
+      if (appSettings) {
+        const raw = appSettings.telemetryEnabled;
+        setTelemetryEnabled(raw !== "false" && raw !== "disabled" && raw !== "0");
+      }
     } catch {
       // Keep existing state if transient error
     }
@@ -2093,6 +2102,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <UpdateCard />
 
                 <div className="nb-settings-card-box">
+                  <div className="nb-settings-toggle-row">
+                    <div>
+                      <div className="nb-settings-label">匿名装机与活跃统计</div>
+                      <div className="nb-settings-sub">
+                        仅在每日首次启动或升级后后台上报匿名设备哈希、系统架构与版本号（不含任何笔记内容与个人信息），随时可关闭
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={telemetryBusy}
+                      className={`nb-toggle-switch${
+                        telemetryEnabled ? " is-on" : ""
+                      }`}
+                      onClick={async () => {
+                        const next = !telemetryEnabled;
+                        setTelemetryEnabled(next);
+                        setTelemetryBusy(true);
+                        try {
+                          await setSetting(
+                            "telemetryEnabled",
+                            next ? "true" : "false"
+                          );
+                          onNotify(
+                            next
+                              ? "已开启匿名装机与活跃统计"
+                              : "已关闭匿名装机与活跃统计"
+                          );
+                        } catch {
+                          setTelemetryEnabled(!next);
+                          onNotify("保存统计偏好失败");
+                        } finally {
+                          setTelemetryBusy(false);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="nb-settings-card-box">
                   <div className="nb-settings-label">品牌故事与命名理念</div>
                   <ul className="nb-about-list">
                     <li>
@@ -2179,7 +2227,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <b>块级编辑 + Markdown 双剑合璧</b>：同时具备 18 种块级组件（含原生 Mermaid 图表与 KaTeX 公式）、三视图数据库以及所见即所得 / 源码 / 分屏三态切换。
                     </li>
                     <li>
-                      <b>100% 离线隐私主权</b>：零遥测、零云端强制登录、支持 Windows 与 macOS 原生桌面体验。
+                      <b>隐私优先架构</b>：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。
                     </li>
                   </ul>
                 </div>

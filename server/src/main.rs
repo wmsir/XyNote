@@ -18,6 +18,7 @@ mod store;
 mod licensing;
 mod feedback;
 mod marketplace;
+mod telemetry;
 #[path = "../../src-tauri/src/license_format.rs"]
 #[allow(dead_code)]
 mod license_format;
