@@ -444,6 +444,58 @@ export const App: React.FC = () => {
     }
   }, [saveLocalChecked]);
 
+  const flushPendingBlockSaveRef = useRef(flushPendingBlockSave);
+  flushPendingBlockSaveRef.current = flushPendingBlockSave;
+  const closingConfirmedRef = useRef(false);
+
+  // 关闭窗口前自动刷盘未落地的 300ms 防抖编辑内容，避免最后一笔输入丢失
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (pendingSaveRef.current || pendingLocalMdSaveRef.current) {
+        void flushPendingBlockSaveRef.current();
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    if (!isTauriRuntime()) {
+      return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const win = getCurrentWindow();
+    win
+      .onCloseRequested(async (event) => {
+        if (closingConfirmedRef.current) return;
+        if (!pendingSaveRef.current && !pendingLocalMdSaveRef.current) return;
+        event.preventDefault();
+        try {
+          await flushPendingBlockSaveRef.current();
+        } catch {
+          // 错误已通过提示告知用户
+        }
+        if (!disposed) {
+          closingConfirmedRef.current = true;
+          win.close().catch(() => {
+            closingConfirmedRef.current = false;
+          });
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      unlisten?.();
+    };
+  }, []);
+
   const refreshSidebarLists = useCallback(async () => {
     const [activeList, trashList] = await Promise.all([
       listPages(),
@@ -1725,8 +1777,15 @@ export const App: React.FC = () => {
         sortOrder: idx,
       }));
 
-      if (pendingSaveRef.current && pendingSaveRef.current.pageId === pageId) {
-        window.clearTimeout(pendingSaveRef.current.timer);
+      if (pendingSaveRef.current) {
+        const prev = pendingSaveRef.current;
+        window.clearTimeout(prev.timer);
+        if (prev.pageId !== pageId) {
+          pendingSaveRef.current = null;
+          savePageBlocks(prev.pageId, prev.items).catch(() => {
+            showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
+          });
+        }
       }
 
       setIsSaving(true);
@@ -1734,6 +1793,8 @@ export const App: React.FC = () => {
         pendingSaveRef.current = null;
         try {
           await savePageBlocks(pageId, saveItems);
+        } catch {
+          showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
         } finally {
           setIsSaving(false);
         }
@@ -1745,63 +1806,72 @@ export const App: React.FC = () => {
         items: saveItems,
       };
     },
-    [detail]
+    [detail, showToast]
   );
 
-  const handleLocalMdBlocksChange = useCallback((nextBlocks: Block[]) => {
-    const cur = activeLocalMdRef.current;
-    if (!cur) return;
-    const filePath = cur.filePath;
+  const handleLocalMdBlocksChange = useCallback(
+    (nextBlocks: Block[]) => {
+      const cur = activeLocalMdRef.current;
+      if (!cur) return;
+      const filePath = cur.filePath;
 
-    setActiveLocalMd((prev) =>
-      prev && prev.filePath === filePath
-        ? { ...prev, blocks: nextBlocks }
-        : prev
-    );
+      setActiveLocalMd((prev) =>
+        prev && prev.filePath === filePath
+          ? { ...prev, blocks: nextBlocks }
+          : prev
+      );
 
-    const saveItems: SaveBlockItem[] = nextBlocks.map((b, idx) => ({
-      id: b.id,
-      blockType: b.blockType,
-      content: b.content,
-      plainText: b.plainText,
-      props: b.props,
-      sortOrder: idx,
-    }));
+      const saveItems: SaveBlockItem[] = nextBlocks.map((b, idx) => ({
+        id: b.id,
+        blockType: b.blockType,
+        content: b.content,
+        plainText: b.plainText,
+        props: b.props,
+        sortOrder: idx,
+      }));
 
-    if (
-      pendingLocalMdSaveRef.current &&
-      pendingLocalMdSaveRef.current.filePath === filePath
-    ) {
-      window.clearTimeout(pendingLocalMdSaveRef.current.timer);
-    }
-
-    setIsSaving(true);
-    const timer = window.setTimeout(async () => {
-      pendingLocalMdSaveRef.current = null;
-      try {
-        const saved = await saveLocalChecked(filePath, saveItems, null);
-        if (saved) setActiveLocalMd((prev) =>
-          prev && prev.filePath === filePath
-            ? {
-                ...prev,
-                title: saved.title,
-                markdown: saved.markdown,
-                updatedAt: saved.updatedAt,
-              }
-            : prev
-        );
-      } finally {
-        setIsSaving(false);
+      if (pendingLocalMdSaveRef.current) {
+        const prev = pendingLocalMdSaveRef.current;
+        window.clearTimeout(prev.timer);
+        if (prev.filePath !== filePath) {
+          pendingLocalMdSaveRef.current = null;
+          saveLocalChecked(prev.filePath, prev.items, prev.rawMarkdown).catch(() => {
+            showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
+          });
+        }
       }
-    }, 300);
 
-    pendingLocalMdSaveRef.current = {
-      timer,
-      filePath,
-      items: saveItems,
-      rawMarkdown: null,
-    };
-  }, []);
+      setIsSaving(true);
+      const timer = window.setTimeout(async () => {
+        pendingLocalMdSaveRef.current = null;
+        try {
+          const saved = await saveLocalChecked(filePath, saveItems, null);
+          if (saved) setActiveLocalMd((prev) =>
+            prev && prev.filePath === filePath
+              ? {
+                  ...prev,
+                  title: saved.title,
+                  markdown: saved.markdown,
+                  updatedAt: saved.updatedAt,
+                }
+              : prev
+          );
+        } catch {
+          showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
+        } finally {
+          setIsSaving(false);
+        }
+      }, 300);
+
+      pendingLocalMdSaveRef.current = {
+        timer,
+        filePath,
+        items: saveItems,
+        rawMarkdown: null,
+      };
+    },
+    [saveLocalChecked, showToast]
+  );
 
   const handleLocalMdRawChange = useCallback(
     (rawMarkdown: string, parsedBlocks: Block[]) => {
@@ -1815,11 +1885,15 @@ export const App: React.FC = () => {
           : prev
       );
 
-      if (
-        pendingLocalMdSaveRef.current &&
-        pendingLocalMdSaveRef.current.filePath === filePath
-      ) {
-        window.clearTimeout(pendingLocalMdSaveRef.current.timer);
+      if (pendingLocalMdSaveRef.current) {
+        const prev = pendingLocalMdSaveRef.current;
+        window.clearTimeout(prev.timer);
+        if (prev.filePath !== filePath) {
+          pendingLocalMdSaveRef.current = null;
+          saveLocalChecked(prev.filePath, prev.items, prev.rawMarkdown).catch(() => {
+            showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
+          });
+        }
       }
 
       setIsSaving(true);
@@ -1837,6 +1911,8 @@ export const App: React.FC = () => {
                 }
               : prev
           );
+        } catch {
+          showToast("保存失败，请检查磁盘权限或稍后重试", 3600);
         } finally {
           setIsSaving(false);
         }
@@ -1849,7 +1925,7 @@ export const App: React.FC = () => {
         rawMarkdown,
       };
     },
-    []
+    [saveLocalChecked, showToast]
   );
 
   const handleTrashPage = useCallback(
@@ -2431,8 +2507,12 @@ export const App: React.FC = () => {
             </>
           ) : freshWindowRef.current ? (
             <FreshStart
-              onCreateDoc={(title) => {
-                handleCreatePage({ pageType: "doc", icon: "📄", title: title || "无标题" }).catch(() => {});
+              onCreateDoc={async (title) => {
+                try {
+                  await handleCreatePage({ pageType: "doc", icon: "📄", title: title || "无标题" });
+                } catch (err) {
+                  showToast(`新建页面失败：${err instanceof Error ? err.message : String(err)}`, 3600);
+                }
               }}
               onCreateDatabase={() => {
                 handleCreatePage({ pageType: "database", icon: "🗃️", title: "无标题数据库" }).catch(() => {});

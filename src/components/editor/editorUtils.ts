@@ -1,5 +1,7 @@
 import katex from "katex";
+import { openExternalUrl } from "../../api/sync";
 import type { Block, BlockProps, BlockType } from "../../types/notion";
+import { isSafeInlineHref } from "./sanitizeHtml";
 
 export type SlashActionType = BlockType | "subpage";
 
@@ -789,7 +791,22 @@ export interface ParsedEmbedSource {
 export function normalizeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
-  if (/^(https?:\/\/|data:)/i.test(trimmed)) return trimmed;
+  const compact = trimmed.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase();
+  if (
+    compact.startsWith("javascript:") ||
+    compact.startsWith("vbscript:") ||
+    compact.startsWith("data:text/html") ||
+    compact.startsWith("data:image/svg+xml")
+  ) {
+    return "";
+  }
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^data:(?:image\/(?:png|jpeg|jpg|gif|webp|bmp|avif|x-icon)|video\/[a-z0-9.+-]+)[;,]/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(compact)) {
+    return "";
+  }
   return `https://${trimmed}`;
 }
 
@@ -806,11 +823,16 @@ export function normalizeInlineLinkHref(rawHref: string): string {
     return `file:///${forward}`;
   }
 
-  // Standard schemes (`file://`, `https://`, `http://`, `vscode://`, `mailto:`, `tel:`, `data:`)
+  // Strictly block javascript:, vbscript:, data: and other unsafe schemes before normalization
+  if (!isSafeInlineHref(trimmed)) {
+    return "";
+  }
+
+  // Standard safe schemes (`file://`, `https://`, `http://`, `vscode://`, `mailto:`, `tel:`)
   if (/^(?:file|https?|vscode):\/\//i.test(trimmed)) {
     return trimmed.replace(/ /g, "%20");
   }
-  if (/^(?:mailto|tel|data):/i.test(trimmed)) {
+  if (/^(?:mailto|tel):/i.test(trimmed)) {
     return trimmed;
   }
 
@@ -883,7 +905,14 @@ export function activateInlineHref(
     return true;
   }
 
-  if (/^(?:https?:\/\/|vscode:\/\/|mailto:|tel:)/i.test(rawHref)) {
+  if (/^(?:https?:\/\/|mailto:)/i.test(rawHref)) {
+    openExternalUrl(rawHref).catch(() =>
+      window.open(rawHref, "_blank", "noopener,noreferrer")
+    );
+    return true;
+  }
+
+  if (/^(?:vscode:\/\/|tel:)/i.test(rawHref)) {
     window.open(rawHref, "_blank", "noopener,noreferrer");
     return true;
   }
@@ -901,10 +930,11 @@ export function parseEmbedSource(rawUrl: string): ParsedEmbedSource | null {
   const normalized = normalizeExternalUrl(rawUrl);
   if (!normalized) return null;
 
-  // Direct video files (.mp4 / .webm / .ogg) or data:video URI
+  // Direct video files (.mp4 / .webm / .ogg) over http(s) or data:video URI
   if (
     /^data:video\//i.test(normalized) ||
-    /\.(mp4|webm|ogg)(\?.*|#.*)?$/i.test(normalized)
+    (/^https?:\/\//i.test(normalized) &&
+      /\.(mp4|webm|ogg)(\?.*|#.*)?$/i.test(normalized))
   ) {
     return {
       kind: "video",
@@ -912,6 +942,10 @@ export function parseEmbedSource(rawUrl: string): ParsedEmbedSource | null {
       embedUrl: normalized,
       originalUrl: normalized,
     };
+  }
+
+  if (!/^https?:\/\//i.test(normalized)) {
+    return null;
   }
 
   // YouTube watch / youtu.be / shorts / embed

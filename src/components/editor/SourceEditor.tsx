@@ -9,6 +9,7 @@ import {
   Globe,
 } from "lucide-react";
 import { openPathInExplorer } from "../../api/client";
+import { openExternalUrl } from "../../api/sync";
 import type {
   Block,
   EditorPreferences,
@@ -19,6 +20,7 @@ import {
   activateInlineHref,
   escapeHtml,
   looksLikeMermaidCode,
+  normalizeExternalUrl,
   parseEmbedSource,
 } from "./editorUtils";
 import {
@@ -28,6 +30,7 @@ import {
 } from "./editorKeybindings";
 import { upgradeResidualInlineMarkdown } from "./markdownCodec";
 import { MermaidBlock } from "./MermaidBlock";
+import { sanitizeRichInlineHtml } from "./sanitizeHtml";
 
 export interface SourceEditorProps {
   mode: Extract<EditorViewMode, "source" | "split">;
@@ -54,7 +57,7 @@ function renderLivePreviewBlock(
           key={blk.id}
           data-preview-block-id={blk.id}
           className="nb-editor-preview-h1 nb-editor-h1"
-          dangerouslySetInnerHTML={{ __html: blk.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
         />
       );
     case "heading2":
@@ -63,7 +66,7 @@ function renderLivePreviewBlock(
           key={blk.id}
           data-preview-block-id={blk.id}
           className="nb-editor-preview-h2 nb-editor-h2"
-          dangerouslySetInnerHTML={{ __html: blk.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
         />
       );
     case "heading3":
@@ -72,7 +75,7 @@ function renderLivePreviewBlock(
           key={blk.id}
           data-preview-block-id={blk.id}
           className="nb-editor-preview-h3 nb-editor-h3"
-          dangerouslySetInnerHTML={{ __html: blk.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
         />
       );
     case "paragraph":
@@ -81,7 +84,9 @@ function renderLivePreviewBlock(
           key={blk.id}
           data-preview-block-id={blk.id}
           className="nb-editor-preview-p"
-          dangerouslySetInnerHTML={{ __html: blk.content || "&nbsp;" }}
+          dangerouslySetInnerHTML={{
+            __html: sanitizeRichInlineHtml(blk.content) || "&nbsp;",
+          }}
         />
       );
     case "bullet":
@@ -90,7 +95,7 @@ function renderLivePreviewBlock(
           <span className="nb-editor-bullet-marker">•</span>
           <div
             className="nb-editor-preview-inline"
-            dangerouslySetInnerHTML={{ __html: blk.content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
           />
         </div>
       );
@@ -100,7 +105,7 @@ function renderLivePreviewBlock(
           <span className="nb-editor-number-marker">{numberedIdx}.</span>
           <div
             className="nb-editor-preview-inline"
-            dangerouslySetInnerHTML={{ __html: blk.content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
           />
         </div>
       );
@@ -124,7 +129,7 @@ function renderLivePreviewBlock(
             className={`nb-editor-preview-inline ${
               checked ? "is-checked-text" : ""
             }`}
-            dangerouslySetInnerHTML={{ __html: blk.content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
           />
         </div>
       );
@@ -134,7 +139,7 @@ function renderLivePreviewBlock(
         <blockquote
           key={blk.id}
           className="nb-editor-quote-wrap nb-editor-preview-quote"
-          dangerouslySetInnerHTML={{ __html: blk.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
         />
       );
     case "callout":
@@ -149,7 +154,7 @@ function renderLivePreviewBlock(
           </span>
           <div
             className="nb-editor-preview-inline"
-            dangerouslySetInnerHTML={{ __html: blk.content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichInlineHtml(blk.content) }}
           />
         </div>
       );
@@ -161,7 +166,9 @@ function renderLivePreviewBlock(
           className="nb-editor-preview-details"
         >
           <summary
-            dangerouslySetInnerHTML={{ __html: blk.content || "折叠标题" }}
+            dangerouslySetInnerHTML={{
+              __html: sanitizeRichInlineHtml(blk.content) || "折叠标题",
+            }}
           />
           {blk.props.childrenText && (
             <div className="nb-editor-preview-details-body">
@@ -256,7 +263,9 @@ function renderLivePreviewBlock(
                       className="nb-editor-preview-cell"
                       style={{ textAlign: colAlignments[i] || "left" }}
                       dangerouslySetInnerHTML={{
-                        __html: upgradeResidualInlineMarkdown(h || "", pages),
+                        __html: sanitizeRichInlineHtml(
+                          upgradeResidualInlineMarkdown(h || "", pages)
+                        ),
                       }}
                     />
                   ))}
@@ -271,9 +280,8 @@ function renderLivePreviewBlock(
                         className="nb-editor-preview-cell"
                         style={{ textAlign: colAlignments[ci] || "left" }}
                         dangerouslySetInnerHTML={{
-                          __html: upgradeResidualInlineMarkdown(
-                            r[ci] ?? "",
-                            pages
+                          __html: sanitizeRichInlineHtml(
+                            upgradeResidualInlineMarkdown(r[ci] ?? "", pages)
                           ),
                         }}
                       />
@@ -313,11 +321,18 @@ function renderLivePreviewBlock(
     case "bookmark": {
       const url = blk.props.url || "";
       if (!url) return null;
+      const safeUrl = normalizeExternalUrl(url);
       return (
         <div
           key={blk.id}
           className="nb-editor-bookmark-card"
-          onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+          onClick={() => {
+            if (safeUrl && /^https?:\/\//i.test(safeUrl)) {
+              openExternalUrl(safeUrl).catch(() =>
+                window.open(safeUrl, "_blank", "noopener,noreferrer")
+              );
+            }
+          }}
         >
           <div className="nb-editor-bookmark-body">
             <div className="nb-editor-bookmark-title">

@@ -538,11 +538,14 @@ pub fn set_watched_paths(
     })
 }
 
-/// 用系统默认浏览器打开网址（只允许 http / https）
+/// 用系统默认浏览器打开网址（只允许 http / https / mailto）
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
     let u = url.trim();
-    if !(u.starts_with("https://") || u.starts_with("http://") || u.starts_with("mailto:")) || u.chars().any(|c| c.is_whitespace() || c == '"') {
+    let lower = u.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:"))
+        || u.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"')
+    {
         return Err("只能打开 http / https / mailto 链接".into());
     }
     #[cfg(target_os = "windows")]

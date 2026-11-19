@@ -384,6 +384,217 @@ fn normalize_snippet(input: &PublishInput, fallback_author: &str) -> Result<(Str
     Ok((slug, raw_name, author, version, desc, base_mode, preview, canonical))
 }
 
+fn is_dangerous_url(raw: &str) -> bool {
+    let compact: String = raw
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    compact.starts_with("javascript:")
+        || compact.starts_with("vbscript:")
+        || compact.starts_with("data:text/html")
+        || compact.starts_with("data:image/svg+xml")
+}
+
+fn tag_has_event_attr(tag_inner: &str) -> bool {
+    let b = tag_inner.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'/' {
+        i += 1;
+    }
+    while i < b.len() {
+        while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'/') {
+            i += 1;
+        }
+        if i >= b.len() {
+            break;
+        }
+        let name_start = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'=' && b[i] != b'/' {
+            i += 1;
+        }
+        let attr_name = &tag_inner[name_start..i];
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i < b.len() && b[i] == b'=' {
+            if attr_name.len() > 2
+                && attr_name[..2].eq_ignore_ascii_case("on")
+                && attr_name[2..].bytes().all(|c| c.is_ascii_alphabetic())
+            {
+                return true;
+            }
+            i += 1;
+            while i < b.len() && b[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < b.len() && (b[i] == b'"' || b[i] == b'\'') {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    i += 1;
+                }
+                if i < b.len() {
+                    i += 1;
+                }
+            } else {
+                while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'/' {
+                    i += 1;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn has_any_tag_event_attr(raw: &str) -> bool {
+    let mut rest = raw;
+    while let Some(lt) = rest.find('<') {
+        let after_lt = &rest[lt + 1..];
+        let tag_inner = match after_lt.find('>') {
+            Some(gt) => {
+                rest = &after_lt[gt + 1..];
+                &after_lt[..gt]
+            }
+            None => {
+                rest = "";
+                after_lt
+            }
+        };
+        if tag_has_event_attr(tag_inner.trim_start()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_tag_prefix(lower: &str, prefix: &str) -> bool {
+    let mut rest = lower;
+    while let Some(pos) = rest.find(prefix) {
+        let after = &rest[pos + prefix.len()..];
+        if after.is_empty()
+            || after
+                .as_bytes()
+                .first()
+                .is_some_and(|&c| c.is_ascii_whitespace() || c == b'>' || c == b'/')
+        {
+            return true;
+        }
+        rest = &rest[pos + prefix.len()..];
+    }
+    false
+}
+
+fn contains_dangerous_html_payload(raw: &str) -> bool {
+    if raw.trim().is_empty() {
+        return false;
+    }
+    let no_nul: String = raw.chars().filter(|&c| c != '\0').collect();
+    let lower = no_nul.to_ascii_lowercase();
+    for tag in ["<script", "</script", "<iframe", "<object", "<embed", "<img", "<svg", "<style", "<form"] {
+        if contains_tag_prefix(&lower, tag) {
+            return true;
+        }
+    }
+    let compact: String = no_nul
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if compact.contains("javascript:")
+        || compact.contains("vbscript:")
+        || compact.contains("data:text/html")
+    {
+        return true;
+    }
+    has_any_tag_event_attr(&no_nul)
+}
+
+fn contains_dangerous_mermaid_payload(raw: &str) -> bool {
+    if raw.trim().is_empty() {
+        return false;
+    }
+    let no_nul: String = raw.chars().filter(|&c| c != '\0').collect();
+    let lower = no_nul.to_ascii_lowercase();
+    if contains_tag_prefix(&lower, "<script") || contains_tag_prefix(&lower, "</script") {
+        return true;
+    }
+    let compact: String = no_nul
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if compact.contains("javascript:") || compact.contains("vbscript:") {
+        return true;
+    }
+    has_any_tag_event_attr(&no_nul)
+}
+
+fn validate_template_safety(items: &[Value]) -> Result<(), String> {
+    const UNSAFE_MSG: &str = "模板内容包含不安全的 HTML 脚本或危险链接，已拒绝发布";
+    for item in items {
+        let Some(payload) = item.get("payload").and_then(|p| p.as_object()) else {
+            continue;
+        };
+        let Some(blocks) = payload.get("blocks").and_then(|b| b.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            let btype = b
+                .get("blockType")
+                .or_else(|| b.get("block_type"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let content = b.get("content").and_then(|x| x.as_str()).unwrap_or("");
+            match btype {
+                "code" | "math" => {}
+                "mermaid" => {
+                    if contains_dangerous_mermaid_payload(content) {
+                        return Err(UNSAFE_MSG.into());
+                    }
+                }
+                _ => {
+                    if contains_dangerous_html_payload(content) {
+                        return Err(UNSAFE_MSG.into());
+                    }
+                }
+            }
+            if let Some(props) = b.get("props").and_then(|p| p.as_object()) {
+                if let Some(headers) = props.get("headers").and_then(|h| h.as_array()) {
+                    for h in headers {
+                        if let Some(s) = h.as_str() {
+                            if contains_dangerous_html_payload(s) {
+                                return Err(UNSAFE_MSG.into());
+                            }
+                        }
+                    }
+                }
+                if let Some(rows) = props.get("rows").and_then(|r| r.as_array()) {
+                    for row in rows {
+                        if let Some(cells) = row.as_array() {
+                            for cell in cells {
+                                if let Some(s) = cell.as_str() {
+                                    if contains_dangerous_html_payload(s) {
+                                        return Err(UNSAFE_MSG.into());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for url_key in ["url", "bookmarkIcon", "bookmark_icon"] {
+                    if let Some(u) = props.get(url_key).and_then(|v| v.as_str()) {
+                        if is_dangerous_url(u) {
+                            return Err(UNSAFE_MSG.into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn normalize_template(input: &PublishInput, fallback_author: &str) -> Result<(String, String, String, String, String, String, Value, String), String> {
     let v: Value = serde_json::from_str(input.content.trim())
         .map_err(|e| format!("模板文件必须是 XyNote 导出的 .json 格式：{}", e))?;
@@ -399,6 +610,7 @@ fn normalize_template(input: &PublishInput, fallback_author: &str) -> Result<(St
     if items.is_empty() {
         return Err("模板文件里至少要包含 1 个模板".into());
     }
+    validate_template_safety(&items)?;
     let first = items[0].as_object().ok_or("模板项必须是 JSON 对象")?;
     let payload = first.get("payload").and_then(|p| p.as_object()).ok_or("模板缺少 payload 数据")?;
     let page_type = match first.get("pageType").and_then(|p| p.as_str()).unwrap_or("doc") {
@@ -1122,5 +1334,67 @@ mod tests {
         assert!(delete_item(&conn, snip.summary.id, Some(2), false).is_err());
         assert!(delete_item(&conn, snip.summary.id, Some(10), false).is_ok());
         assert!(delete_item(&conn, theme.summary.id, None, true).is_ok());
+    }
+
+    #[test]
+    fn template_safety_blocks_xss_and_allows_code_examples() {
+        let conn = test_db();
+
+        // 1. Rejects <img onerror=...> in paragraph block
+        let bad_img = publish(
+            &conn,
+            Some(10),
+            "Alice",
+            "u:10",
+            &PublishInput {
+                kind: "template".into(),
+                name: "恶意富文本模板".into(),
+                author: "Alice".into(),
+                version: "1.0.0".into(),
+                description: "".into(),
+                tags: "".into(),
+                base_mode: "".into(),
+                content: r#"{"schema":"xynote-templates-v1","templates":[{"title":"恶意富文本模板","pageType":"doc","payload":{"blocks":[{"blockType":"paragraph","content":"<img src=x onerror=alert(1)>","props":{},"sortOrder":0}]}}]}"#.into(),
+            },
+        );
+        assert!(bad_img.is_err());
+
+        // 2. Rejects javascript: url in bookmark/image/embed props & table cell XSS
+        let bad_url = publish(
+            &conn,
+            Some(10),
+            "Alice",
+            "u:10",
+            &PublishInput {
+                kind: "template".into(),
+                name: "恶意链接模板".into(),
+                author: "Alice".into(),
+                version: "1.0.0".into(),
+                description: "".into(),
+                tags: "".into(),
+                base_mode: "".into(),
+                content: r#"{"schema":"xynote-templates-v1","templates":[{"title":"恶意链接模板","pageType":"doc","payload":{"blocks":[{"blockType":"bookmark","content":"","props":{"url":"  java\tscript:alert(1)"},"sortOrder":0}]}}]}"#.into(),
+            },
+        );
+        assert!(bad_url.is_err());
+
+        // 3. Allows legitimate code block containing <script> examples and mermaid <br/>
+        let good_tech = publish(
+            &conn,
+            Some(10),
+            "Alice",
+            "u:10",
+            &PublishInput {
+                kind: "template".into(),
+                name: "前端技术文档模板".into(),
+                author: "Alice".into(),
+                version: "1.0.0".into(),
+                description: "含代码块与 Mermaid 流程图".into(),
+                tags: "技术".into(),
+                base_mode: "".into(),
+                content: r#"{"schema":"xynote-templates-v1","templates":[{"title":"前端技术文档模板","pageType":"doc","payload":{"blocks":[{"blockType":"code","content":"<script>console.log('example')</script>","props":{"language":"html"},"sortOrder":0},{"blockType":"mermaid","content":"flowchart TB\n  A[\"前端<br/>入口\"] --> B[\"后端\"]","props":{},"sortOrder":1}]}}]}"#.into(),
+            },
+        );
+        assert!(good_tech.is_ok(), "{:?}", good_tech.err());
     }
 }

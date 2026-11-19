@@ -15,6 +15,7 @@ import {
   normalizeInlineLinkHref,
   parseEmbedSource,
 } from "./editorUtils";
+import { sanitizeRichInlineHtml } from "./sanitizeHtml";
 
 /* ============================================================================
  * Lossless Inline HTML <-> Markdown Conversion & Idempotent Residual Upgrader
@@ -350,7 +351,7 @@ export function inlineMarkdownToHtml(text: string, pages: Page[]): string {
     safety += 1;
   }
 
-  return working;
+  return sanitizeRichInlineHtml(working);
 }
 
 /**
@@ -376,7 +377,7 @@ export function upgradeResidualInlineMarkdown(
     !html.includes("\n") &&
     !/&lt;br\s*\/?&gt;/i.test(html)
   ) {
-    return html;
+    return html.includes("<") ? sanitizeRichInlineHtml(html) : html;
   }
 
   const tokens: string[] = [];
@@ -474,7 +475,7 @@ export function upgradeResidualInlineMarkdown(
     safety += 1;
   }
 
-  return working;
+  return sanitizeRichInlineHtml(working);
 }
 
 /* ============================================================================

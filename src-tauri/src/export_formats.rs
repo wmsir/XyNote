@@ -5,7 +5,7 @@
 use crate::models::AppError;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::io::Write;
 
 fn md_options() -> Options {
@@ -52,8 +52,16 @@ pub fn load_image(src: &str) -> Option<(&'static str, Vec<u8>)> {
     if src.starts_with("http://") || src.starts_with("https://") {
         return None;
     }
-    let path = src.strip_prefix("file:///").or_else(|| src.strip_prefix("file://")).unwrap_or(src);
-    let path = path.replace("%20", " ");
+    let path = if src.to_ascii_lowercase().starts_with("file://") {
+        crate::file_assoc::file_uri_to_local_path(src)?
+    } else {
+        let decoded = crate::importer::url_decode(src);
+        if std::path::Path::new(&decoded).is_file() || !std::path::Path::new(src).is_file() {
+            decoded
+        } else {
+            src.to_string()
+        }
+    };
     let meta = std::fs::metadata(&path).ok()?;
     if !meta.is_file() || meta.len() as usize > MAX_IMAGE_BYTES {
         return None;
@@ -121,11 +129,87 @@ const HTML_STYLE: &str = r#"
   @media print { main { padding: 0; } a { color: inherit; } footer { display: none; } }
 "#;
 
+fn is_safe_export_inline_html(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "<br>"
+            | "<br/>"
+            | "<br />"
+            | "<mark>"
+            | "</mark>"
+            | "<u>"
+            | "</u>"
+            | "<sub>"
+            | "</sub>"
+            | "<sup>"
+            | "</sup>"
+            | "<kbd>"
+            | "</kbd>"
+            | "<details>"
+            | "</details>"
+            | "<summary>"
+            | "</summary>"
+    )
+}
+
+fn is_dangerous_export_url(raw: &str, allow_svg_data: bool) -> bool {
+    let compact: String = raw
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    compact.starts_with("javascript:")
+        || compact.starts_with("vbscript:")
+        || compact.starts_with("data:text/html")
+        || (!allow_svg_data && compact.starts_with("data:image/svg+xml"))
+}
+
 /// 完整的 HTML 文档
 pub fn markdown_to_html_document(title: &str, markdown: &str) -> String {
     let md = inline_markdown_images(markdown);
+    let sanitized_events = Parser::new_ext(&md, md_options()).map(|ev| match ev {
+        Event::Html(h) if !is_safe_export_inline_html(&h) => Event::Text(h),
+        Event::InlineHtml(h) if !is_safe_export_inline_html(&h) => Event::Text(h),
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => {
+            let safe_url = if is_dangerous_export_url(dest_url.as_ref(), false) {
+                CowStr::from("#")
+            } else {
+                dest_url
+            };
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url: safe_url,
+                title,
+                id,
+            })
+        }
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => {
+            let safe_url = if is_dangerous_export_url(dest_url.as_ref(), true) {
+                CowStr::from("")
+            } else {
+                dest_url
+            };
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url: safe_url,
+                title,
+                id,
+            })
+        }
+        other => other,
+    });
     let mut body = String::new();
-    pulldown_cmark::html::push_html(&mut body, Parser::new_ext(&md, md_options()));
+    pulldown_cmark::html::push_html(&mut body, sanitized_events);
     format!(
         "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>{}</style>\n</head>\n<body>\n<main>\n{}</main>\n<footer>由小悦笔记导出 · fwpt.cn</footer>\n</body>\n</html>\n",
         html_escape(title),
@@ -162,27 +246,51 @@ fn strip_tags(s: &str) -> String {
 
 /// 图片像素尺寸（PNG / JPEG / GIF）
 fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    if bytes.starts_with(b"\x89PNG") && bytes.len() > 24 {
+    if bytes.starts_with(b"\x89PNG") && bytes.len() >= 24 {
         let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
         let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
-        return Some((w, h));
+        return (w > 0 && h > 0).then_some((w, h));
     }
-    if bytes.starts_with(b"GIF8") && bytes.len() > 10 {
-        return Some((u16::from_le_bytes([bytes[6], bytes[7]]) as u32, u16::from_le_bytes([bytes[8], bytes[9]]) as u32));
+    if bytes.starts_with(b"GIF8") && bytes.len() >= 10 {
+        let w = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
+        let h = u16::from_le_bytes([bytes[8], bytes[9]]) as u32;
+        return (w > 0 && h > 0).then_some((w, h));
     }
     if bytes.starts_with(b"\xFF\xD8") {
-        let mut i = 2;
-        while i + 9 < bytes.len() {
+        let mut i = 2usize;
+        while i + 1 < bytes.len() {
             if bytes[i] != 0xFF {
                 i += 1;
                 continue;
             }
+            while i + 1 < bytes.len() && bytes[i + 1] == 0xFF {
+                i += 1;
+            }
+            if i + 1 >= bytes.len() {
+                break;
+            }
             let marker = bytes[i + 1];
+            if marker == 0x00 || marker == 0x01 || (0xD0..=0xD8).contains(&marker) {
+                i += 2;
+                continue;
+            }
+            if marker == 0xD9 || marker == 0xDA {
+                break;
+            }
+            if i + 3 >= bytes.len() {
+                break;
+            }
             let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+            if len < 2 {
+                break;
+            }
             if matches!(marker, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF) {
+                if i + 8 >= bytes.len() {
+                    break;
+                }
                 let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
                 let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
-                return Some((w, h));
+                return (w > 0 && h > 0).then_some((w, h));
             }
             i += 2 + len;
         }
@@ -677,5 +785,48 @@ mod tests {
         let png = B64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==").unwrap();
         assert_eq!(image_size(&png), Some((1, 1)));
         assert_eq!(image_size(b"GIF89a\x10\x00\x20\x00\x00"), Some((16, 32)));
+        // JPEG with 0xFF padding, standalone RST0 marker (0xD0), APP0, then SOF0
+        let jpeg_padded = vec![
+            0xFF, 0xD8, // SOI
+            0xFF, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, // padded APP0
+            0xFF, 0xD0, // standalone RST0 (no length)
+            0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0xE0, 0x02, 0x80, 0x01, 0x01, 0x11, 0x00, // SOF0: h=480, w=640
+            0xFF, 0xD9,
+        ];
+        assert_eq!(image_size(&jpeg_padded), Some((640, 480)));
+    }
+
+    #[test]
+    fn html_export_sanitizes_xss_and_loads_percent_encoded_file_uris() {
+        let malicious = "<script>alert(1)</script>\n\n<img src=x onerror=\"alert(2)\">\n\n[点我](javascript:alert(3))\n\n<mark>安全高亮</mark><br/>继续";
+        let html = markdown_to_html_document("安全测试", malicious);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(!html.contains("<img src=x onerror="));
+        assert!(!html.contains("href=\"javascript:"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(html.contains("<mark>安全高亮</mark>"));
+        assert!(html.contains("<br/>"));
+
+        let dir = std::env::temp_dir().join(format!("xynote-export-cn-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = B64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==").unwrap();
+        let img_path = dir.join("架构 截图.png");
+        std::fs::write(&img_path, &png).unwrap();
+
+        let encoded_rel = img_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace("架构", "%E6%9E%B6%E6%9E%84")
+            .replace("截图", "%E6%88%AA%E5%9B%BE")
+            .replace(' ', "%20");
+        let uri = if cfg!(target_os = "windows") {
+            format!("file:///{}", encoded_rel)
+        } else {
+            format!("file://{}", encoded_rel)
+        };
+        let (mime, bytes) = load_image(&uri).expect("should resolve percent-encoded file URI");
+        assert_eq!(mime, "image/png");
+        assert_eq!(bytes, png);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

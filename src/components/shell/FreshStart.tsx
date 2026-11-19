@@ -10,7 +10,7 @@ import {
 
 export interface FreshStartProps {
   /** 用输入的标题新建页面（空标题 = 无标题） */
-  onCreateDoc: (title: string) => void;
+  onCreateDoc: (title: string) => void | Promise<unknown>;
   onCreateDatabase: () => void;
   onOpenTemplates: () => void;
   onOpenFile: () => void;
@@ -35,16 +35,25 @@ export const FreshStart: React.FC<FreshStartProps> = ({
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     const t = window.setTimeout(() => inputRef.current?.focus(), 60);
-    return () => window.clearTimeout(t);
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(t);
+    };
   }, []);
 
-  const start = () => {
+  const start = async () => {
     if (busy) return;
     setBusy(true);
-    onCreateDoc(title.trim());
+    try {
+      await onCreateDoc(title.trim());
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
   };
 
   const actions: { icon: React.ReactNode; label: string; hint?: string; run: () => void }[] = [

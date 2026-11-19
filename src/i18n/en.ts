@@ -1752,7 +1752,9 @@ const EN: Record<string, string> = {
   "已关闭匿名装机与活跃统计": "Anonymous install statistics disabled",
   "保存统计偏好失败": "Failed to save telemetry preference",
   "隐私优先架构": "Privacy-first architecture",
-  "：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。": ": notes and images stay 100% offline with no forced login; optional anonymized device count never uploads note content and can be disabled above."
+  "：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。": ": notes and images stay 100% offline with no forced login; optional anonymized device count never uploads note content and can be disabled above.",
+  "保存失败，请检查磁盘权限或稍后重试": "Save failed. Please check folder permissions or try again.",
+  "新建页面失败：{0}": "Failed to create page: {0}"
 };
 
 export default EN;

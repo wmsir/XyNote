@@ -47,12 +47,24 @@ export function printHtmlDocument(html: string, title: string): Promise<void> {
       try {
         win.document.title = title;
         wrapForPrint(win.document);
-        // 等图片解码完再打印
+        // 等图片解码完再打印（离线或失效图片最多等 4 秒，避免卡死）
         const images = Array.from(win.document.images);
         Promise.all(
-          images.map((img) =>
-            img.complete ? Promise.resolve() : new Promise((r) => img.addEventListener("load", r, { once: true }))
-          )
+          images.map((img) => {
+            if (img.complete) return Promise.resolve();
+            return new Promise<void>((res) => {
+              let settled = false;
+              const done = () => {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timer);
+                res();
+              };
+              const timer = window.setTimeout(done, 4000);
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            });
+          })
         ).then(() => {
           win.focus();
           win.print();

@@ -30,6 +30,7 @@ import {
   X,
 } from "lucide-react";
 import { fetchUrlMetadata } from "../../api/client";
+import { openExternalUrl } from "../../api/sync";
 import type {
   Block,
   BlockProps,
@@ -77,6 +78,7 @@ import {
   upgradeResidualInlineMarkdown,
 } from "./markdownCodec";
 import { MermaidBlock } from "./MermaidBlock";
+import { sanitizeRichInlineHtml } from "./sanitizeHtml";
 import { TableCellRichEditor } from "./TableCellRichEditor";
 
 export interface BlockRowProps {
@@ -300,7 +302,7 @@ export const BlockRow: React.FC<BlockRowProps> = ({
     if (!el || isComposingRef.current) return;
 
     if (block.content !== lastCommittedHtmlRef.current) {
-      el.innerHTML = block.content;
+      el.innerHTML = sanitizeRichInlineHtml(block.content);
       lastCommittedHtmlRef.current = block.content;
     }
   }, [block.blockType, block.content, block.id]);
@@ -311,7 +313,7 @@ export const BlockRow: React.FC<BlockRowProps> = ({
       registerFocusTarget(block.id, node);
       if (node && !mountedEditablesRef.current.has(node)) {
         mountedEditablesRef.current.add(node);
-        node.innerHTML = latestContentRef.current;
+        node.innerHTML = sanitizeRichInlineHtml(latestContentRef.current);
         lastCommittedHtmlRef.current = latestContentRef.current;
       }
     },
@@ -1528,6 +1530,14 @@ export const BlockRow: React.FC<BlockRowProps> = ({
         const displayDesc = block.props.bookmarkDesc || "";
         const displaySite = block.props.bookmarkSite || "";
         const iconSrc = !faviconFailed ? block.props.bookmarkIcon : "";
+        const safeBookmarkHref = normalizeExternalUrl(savedUrl);
+        const openBookmark = () => {
+          if (safeBookmarkHref && /^https?:\/\//i.test(safeBookmarkHref)) {
+            openExternalUrl(safeBookmarkHref).catch(() =>
+              window.open(safeBookmarkHref, "_blank", "noopener,noreferrer")
+            );
+          }
+        };
 
         return (
           <div
@@ -1535,13 +1545,11 @@ export const BlockRow: React.FC<BlockRowProps> = ({
             tabIndex={0}
             role="link"
             className="nb-editor-bookmark-card"
-            onClick={() => {
-              window.open(savedUrl, "_blank", "noopener,noreferrer");
-            }}
+            onClick={openBookmark}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                window.open(savedUrl, "_blank", "noopener,noreferrer");
+                openBookmark();
               }
             }}
           >
@@ -1686,20 +1694,24 @@ export const BlockRow: React.FC<BlockRowProps> = ({
                   >
                     更换链接
                   </button>
-                  <button
-                    type="button"
-                    className="nb-editor-embed-btn"
-                    onClick={() => {
-                      window.open(
-                        parsed.originalUrl,
-                        "_blank",
-                        "noopener,noreferrer"
-                      );
-                    }}
-                  >
-                    <span>打开原链接</span>
-                    <ExternalLink size={12} />
-                  </button>
+                  {/^https?:\/\//i.test(parsed.originalUrl) && (
+                    <button
+                      type="button"
+                      className="nb-editor-embed-btn"
+                      onClick={() => {
+                        openExternalUrl(parsed.originalUrl).catch(() =>
+                          window.open(
+                            parsed.originalUrl,
+                            "_blank",
+                            "noopener,noreferrer"
+                          )
+                        );
+                      }}
+                    >
+                      <span>打开原链接</span>
+                      <ExternalLink size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
 

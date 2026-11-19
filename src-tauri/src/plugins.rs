@@ -137,7 +137,7 @@ fn strip_plugin_ext(filename: &str) -> &str {
     let lower = trimmed.to_ascii_lowercase();
     if lower.ends_with(".xynote-theme.json") && trimmed.len() > 18 {
         &trimmed[..trimmed.len() - 18]
-    } else if lower.ends_with(".xynote-theme.json") && trimmed.len() > 18 {
+    } else if lower.ends_with(".notion-theme.json") && trimmed.len() > 18 {
         &trimmed[..trimmed.len() - 18]
     } else if lower.ends_with(".theme.json") && trimmed.len() > 11 {
         &trimmed[..trimmed.len() - 11]

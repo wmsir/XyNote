@@ -9,16 +9,28 @@ export function WindowControls() {
   useEffect(() => {
     if (!DRAWS_WINDOW_CONTROLS) return;
     const win = getCurrentWindow();
+    let disposed = false;
     let unlisten: (() => void) | null = null;
-    const refresh = () => win.isMaximized().then(setMaximized).catch(() => {});
+    const refresh = () => {
+      win
+        .isMaximized()
+        .then((v) => {
+          if (!disposed) setMaximized(v);
+        })
+        .catch(() => {});
+    };
     refresh();
     win
       .onResized(refresh)
       .then((fn) => {
-        unlisten = fn;
+        if (disposed) fn();
+        else unlisten = fn;
       })
       .catch(() => {});
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   if (!DRAWS_WINDOW_CONTROLS) return null;

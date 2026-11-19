@@ -18,6 +18,7 @@ import {
   tryApplyInlineMarkdownAtCaret,
 } from "./editorUtils";
 import { upgradeResidualInlineMarkdown } from "./markdownCodec";
+import { sanitizeRichInlineHtml } from "./sanitizeHtml";
 
 export interface TableCellRichEditorProps {
   value: string;
@@ -63,7 +64,7 @@ export const TableCellRichEditor: React.FC<TableCellRichEditorProps> = ({
     const el = cellRef.current;
     if (!el || isComposingRef.current) return;
     if (normalizedHtml !== lastCommittedRef.current) {
-      el.innerHTML = normalizedHtml;
+      el.innerHTML = sanitizeRichInlineHtml(normalizedHtml);
       lastCommittedRef.current = normalizedHtml;
       el.setAttribute(
         "data-empty",
@@ -78,7 +79,7 @@ export const TableCellRichEditor: React.FC<TableCellRichEditorProps> = ({
       focusRef?.(node);
       if (node && !mountedNodesRef.current.has(node)) {
         mountedNodesRef.current.add(node);
-        node.innerHTML = latestHtmlRef.current;
+        node.innerHTML = sanitizeRichInlineHtml(latestHtmlRef.current);
         lastCommittedRef.current = latestHtmlRef.current;
         node.setAttribute(
           "data-empty",

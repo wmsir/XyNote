@@ -76,7 +76,7 @@ function ensureMermaidThemeInitialized(themeName: ActiveThemeName): void {
   if (themeName === "dark") {
     mermaid.initialize({
       startOnLoad: false,
-      securityLevel: "loose",
+      securityLevel: "strict",
       htmlLabels: true,
       suppressErrorRendering: true,
       theme: "dark",
@@ -113,7 +113,7 @@ function ensureMermaidThemeInitialized(themeName: ActiveThemeName): void {
   if (themeName === "sepia") {
     mermaid.initialize({
       startOnLoad: false,
-      securityLevel: "loose",
+      securityLevel: "strict",
       htmlLabels: true,
       suppressErrorRendering: true,
       theme: "base",
@@ -149,7 +149,7 @@ function ensureMermaidThemeInitialized(themeName: ActiveThemeName): void {
 
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: "loose",
+    securityLevel: "strict",
     htmlLabels: true,
     suppressErrorRendering: true,
     theme: "default",

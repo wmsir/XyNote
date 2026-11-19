@@ -1049,7 +1049,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">主数据库文件</span>
                       <code className="nb-storage-kv-val">
-                        {info?.dbFilePath ?? ".\\data\\xynote.db"}
+                        {info?.dbFilePath ?? ".\\XyNote-data\\xynote.db"}
                       </code>
                       <span className="nb-storage-kv-tag">
                         {formatBytes(info?.dbSizeBytes ?? 0)} · {info?.pageCount ?? 0} 页 /{" "}
@@ -1059,7 +1059,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">图片附件目录 (assets)</span>
                       <code className="nb-storage-kv-val">
-                        {info?.assetsDir ?? ".\\data\\assets"}
+                        {info?.assetsDir ?? ".\\XyNote-data\\assets"}
                       </code>
                       <button
                         type="button"
@@ -1072,7 +1072,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">自动快照目录 (backups)</span>
                       <code className="nb-storage-kv-val">
-                        {info?.backupsDir ?? ".\\data\\backups"}
+                        {info?.backupsDir ?? ".\\XyNote-data\\backups"}
                       </code>
                       <button
                         type="button"
@@ -2162,6 +2162,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         href="https://fwpt.cn/"
                         target="_blank"
                         rel="noreferrer"
+                        onClick={(e) => {
+                          if (isTauri) {
+                            e.preventDefault();
+                            openExternalUrl("https://fwpt.cn/").catch(() => {});
+                          }
+                        }}
                       >
                         https://fwpt.cn/
                       </a>
@@ -2171,6 +2177,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <a
                         className="nb-storage-kv-val"
                         href="mailto:admin@fwpt.cn"
+                        onClick={(e) => {
+                          if (isTauri) {
+                            e.preventDefault();
+                            openExternalUrl("mailto:admin@fwpt.cn").catch(() => {});
+                          }
+                        }}
                       >
                         admin@fwpt.cn
                       </a>
@@ -2200,7 +2212,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="nb-storage-kv-item">
                       <span className="nb-storage-kv-key">当前主数据库路径</span>
                       <code className="nb-storage-kv-val">
-                        {info?.dbFilePath ?? ".\\data\\xynote.db"}
+                        {info?.dbFilePath ?? ".\\XyNote-data\\xynote.db"}
                       </code>
                     </div>
                     <div className="nb-storage-kv-item">
@@ -2218,7 +2230,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <ul className="nb-about-list">
                     <li>
                       <b>绿色便携即拷即用</b>：默认在软件同级目录自动初始化{" "}
-                      <code>data\</code>（含 SQLite、Markdown 镜像、<code>plugins\</code> 样式插件库与滚动快照）。
+                      <code>XyNote-data\</code>（含 SQLite、Markdown 镜像、<code>plugins\</code> 样式插件库与滚动快照）。
                     </li>
                     <li>
                       <b>可定制主题工坊与全量快捷键录制</b>：内置 5 套精选主题与 5 款可叠加 CSS 样式增强插件，支持 51 项块级与全局快捷键实时录制及冲突检测。

@@ -509,9 +509,15 @@ fn inline_markdown_inner(text: &str, allow_links: bool) -> String {
                 }
                 let encoded_href = clean_href.replace(' ', "%20");
                 let lower_href = encoded_href.to_ascii_lowercase();
-                let is_dangerous = lower_href.starts_with("javascript:")
-                    || lower_href.starts_with("vbscript:")
-                    || lower_href.starts_with("data:text/html");
+                let compact_lower: String = encoded_href
+                    .chars()
+                    .filter(|c| !c.is_control() && !c.is_ascii_whitespace())
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect();
+                let is_dangerous = compact_lower.starts_with("javascript:")
+                    || compact_lower.starts_with("vbscript:")
+                    || compact_lower.starts_with("data:text/html")
+                    || compact_lower.starts_with("data:image/svg+xml");
                 if !encoded_href.is_empty() && !encoded_href.contains('"') && !is_dangerous {
                     let attr_href = escape_html_attr(&encoded_href);
                     if lower_href.starts_with("http://")
@@ -2437,5 +2443,16 @@ flowchart TB
         assert!(exported_md.contains("| :--- | :---: | ---: | :--- |"));
         assert!(exported_md.contains(user_row));
         assert!(exported_md.contains("段落第一行<br/>段落第二行"));
+    }
+
+    #[test]
+    fn test_inline_markdown_blocks_obfuscated_dangerous_links() {
+        let out = inline_markdown_to_html(
+            "[x]( java\tscript:alert(1)) [y](DATA:image/svg+xml;base64,PHN2Zz4=) [z](vbscript:msgbox(1)) [ok](https://fwpt.cn)",
+        );
+        assert!(!out.contains("href=\"java"));
+        assert!(!out.contains("href=\"DATA:image/svg+xml"));
+        assert!(!out.contains("href=\"vbscript:"));
+        assert!(out.contains("href=\"https://fwpt.cn\""));
     }
 }
