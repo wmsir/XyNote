@@ -184,9 +184,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             {
               id: "act-kb-settings",
               label: kbEnabled
-                ? "管理 SAG2 本地知识库"
-                : "开启 SAG2 本地知识库（可选模块）",
-              sublabel: "在独立 kb_index.db 中启用跨文档多跳检索与关联知识推荐",
+                ? "管理本地知识库"
+                : "开启本地知识库（可选）",
+              sublabel: "启用跨文档智能关联搜索与右侧相关笔记推荐",
               icon: <Network size={16} />,
               run: () => {
                 onClose();
@@ -405,17 +405,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 type="button"
                 className={`nb-kb-mode-btn${searchMode === "sag2" ? " is-active" : ""}`}
                 onClick={() => setSearchMode("sag2")}
-                title="启用 SAG2 动态超边跨文档检索"
+                title="启用智能关联搜索，发现跨文档相关内容"
               >
-                SAG2 超边
+                智能关联
               </button>
               <button
                 type="button"
                 className={`nb-kb-mode-btn${searchMode === "literal" ? " is-active" : ""}`}
                 onClick={() => setSearchMode("literal")}
-                title="切换传统精确字面检索"
+                title="切换精确字面搜索"
               >
-                字面检索
+                精确匹配
               </button>
             </div>
           )}
@@ -438,7 +438,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             <>
               {kbDirectHits.length > 0 && (
                 <>
-                  <div className="nb-cmd-group-label">直接命中（SAG2 检索）</div>
+                  <div className="nb-cmd-group-label">直接匹配</div>
                   {kbDirectHits.map((hit, idx) => {
                     const isSelected = idx === activeIndex;
                     return (
@@ -506,7 +506,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
               {kbHyperHits.length > 0 && (
                 <>
-                  <div className="nb-cmd-group-label">动态超边关联（跨文档发现）</div>
+                  <div className="nb-cmd-group-label">相关推荐（跨文档关联）</div>
                   {kbHyperHits.map((hit, idx) => {
                     const globalIdx = kbDirectHits.length + idx;
                     const isSelected = globalIdx === activeIndex;
@@ -555,7 +555,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                             <div className="nb-kb-bridge-row">
                               {hit.sharedEntities.map((ent) => (
                                 <span key={ent} className="nb-kb-bridge-pill">
-                                  {`超边桥梁：${ent}`}
+                                  {`关联主题：${ent}`}
                                 </span>
                               ))}
                             </div>
@@ -722,7 +722,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           <span>↑↓ 选择条目 · Enter 跳转打开 · Esc 关闭</span>
           <span>
             {useSag2Mode
-              ? `SAG2 动态超边检索（独立 kb_index.db · ${kbElapsedMs} ms）`
+              ? `智能关联搜索（${kbElapsedMs} ms）`
               : folderRoots.length > 0
                 ? "工作区 + 文件夹全文检索"
                 : "工作区全文检索"}

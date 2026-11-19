@@ -787,7 +787,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }> = [
     { id: "storage", label: "存储与路径", icon: <HardDrive size={15} /> },
     { id: "sync", label: "同步", icon: <Cloud size={15} /> },
-    { id: "kb", label: "知识库引擎 (SAG2)", icon: <Network size={15} /> },
+    { id: "kb", label: "本地知识库", icon: <Network size={15} /> },
     { id: "themes", label: "主题与样式插件", icon: <Sparkles size={15} /> },
     { id: "shortcuts", label: "快捷键配置", icon: <Keyboard size={15} /> },
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
@@ -992,9 +992,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="nb-settings-card-box">
                   <div className="nb-settings-row-head">
                     <div>
-                      <div className="nb-settings-label">当前数据存储根目录 (activeDataDir)</div>
+                      <div className="nb-settings-label">当前数据存储目录</div>
                       <div className="nb-settings-sub">
-                        包含 SQLite 数据库、自动备份与粘贴图片资源文件夹
+                        包含本地笔记数据、自动备份与粘贴图片文件夹
                       </div>
                     </div>
                     <button
@@ -1059,7 +1059,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {/* Detailed Sub-paths */}
                   <div className="nb-storage-kv-grid">
                     <div className="nb-storage-kv-item">
-                      <span className="nb-storage-kv-key">主数据库文件</span>
+                      <span className="nb-storage-kv-key">本地笔记数据</span>
                       <code className="nb-storage-kv-val">
                         {info?.dbFilePath ?? ".\\XyNote-data\\xynote.db"}
                       </code>
@@ -1069,7 +1069,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </span>
                     </div>
                     <div className="nb-storage-kv-item">
-                      <span className="nb-storage-kv-key">图片附件目录 (assets)</span>
+                      <span className="nb-storage-kv-key">图片附件目录</span>
                       <code className="nb-storage-kv-val">
                         {info?.assetsDir ?? ".\\XyNote-data\\assets"}
                       </code>
@@ -1920,7 +1920,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div>
                   <h3 className="nb-settings-heading">滚动快照备份与整库安全导出</h3>
                   <p className="nb-settings-desc">
-                    自动为 SQLite 主数据库建立时间点快照，支持零重启一键回滚及全工作区开放格式 ZIP 导出。
+                    自动为本地笔记建立定时快照，支持一键恢复历史状态及全工作区 ZIP 备份导出。
                   </p>
                 </div>
 
@@ -2071,7 +2071,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === "kb" && (
               <React.Suspense
                 fallback={
-                  <div className="nb-settings-desc">正在加载 SAG2 本地知识库设置面板…</div>
+                  <div className="nb-settings-desc">正在加载本地知识库设置…</div>
                 }
               >
                 <KbSettingsPanel
@@ -2133,7 +2133,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div>
                       <div className="nb-settings-label">匿名装机与活跃统计</div>
                       <div className="nb-settings-sub">
-                        仅在每日首次启动或升级后后台上报匿名设备哈希、系统架构与版本号（不含任何笔记内容与个人信息），随时可关闭
+                        仅在每日首次启动或升级后上报匿名设备标识与版本号（不含任何笔记内容与个人信息），随时可关闭
                       </div>
                     </div>
                     <button
@@ -2218,26 +2218,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div className="nb-settings-card-box">
-                  <div className="nb-settings-label">运行环境与存储诊断摘要</div>
+                  <div className="nb-settings-label">存储与数据摘要</div>
                   <div className="nb-storage-kv-grid">
                     <div className="nb-storage-kv-item">
-                      <span className="nb-storage-kv-key">桌面引擎版本</span>
-                      <span className="nb-storage-kv-val">
-                        v{__APP_VERSION__} (
-                        {isTauri
-                          ? "Tauri v2 Native + Rust SQLite WAL/FTS5"
-                          : "Browser Preview LocalStorage Engine"}
-                        )
-                      </span>
-                    </div>
-                    <div className="nb-storage-kv-item">
-                      <span className="nb-storage-kv-key">软件运行目录 (exeDir)</span>
+                      <span className="nb-storage-kv-key">软件安装目录</span>
                       <code className="nb-storage-kv-val">
                         {info?.exeDir ?? "C:\\XyNote"}
                       </code>
                     </div>
                     <div className="nb-storage-kv-item">
-                      <span className="nb-storage-kv-key">当前主数据库路径</span>
+                      <span className="nb-storage-kv-key">本地数据位置</span>
                       <code className="nb-storage-kv-val">
                         {info?.dbFilePath ?? ".\\XyNote-data\\xynote.db"}
                       </code>
@@ -2246,27 +2236,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <span className="nb-storage-kv-key">工作区数据统计</span>
                       <span className="nb-storage-kv-val">
                         {info?.pageCount ?? 0} 篇活跃页面 · {info?.blockCount ?? 0} 个内容块 ·
-                        数据库大小 {formatBytes(info?.dbSizeBytes ?? 0)}
+                        数据占用 {formatBytes(info?.dbSizeBytes ?? 0)}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="nb-settings-card-box">
-                  <div className="nb-settings-label">核心架构特性</div>
+                  <div className="nb-settings-label">核心功能特点</div>
                   <ul className="nb-about-list">
                     <li>
                       <b>绿色便携即拷即用</b>：默认在软件同级目录自动初始化{" "}
-                      <code>XyNote-data\</code>（含 SQLite、Markdown 镜像、<code>plugins\</code> 样式插件库与滚动快照）。
+                      <code>XyNote-data\</code>（含本地笔记库、Markdown 同步文件夹、外观主题与自动备份）。
                     </li>
                     <li>
-                      <b>可定制主题工坊与全量快捷键录制</b>：内置 5 套精选主题与 5 款可叠加 CSS 样式增强插件，支持 51 项块级与全局快捷键实时录制及冲突检测。
+                      <b>可定制主题工坊与全量快捷键录制</b>：内置 5 套精选主题与多款可叠加外观样式，支持自定义全部快捷键及冲突提醒。
                     </li>
                     <li>
-                      <b>块级编辑 + Markdown 双剑合璧</b>：同时具备 18 种块级组件（含原生 Mermaid 图表与 KaTeX 公式）、三视图数据库以及所见即所得 / 源码 / 分屏三态切换。
+                      <b>块级编辑 + Markdown 双剑合璧</b>：内置 18 种内容模块（含流程图与数学公式）、表格/看板/画廊三视图，以及所见即所得 / 源码 / 分屏自由切换。
                     </li>
                     <li>
-                      <b>隐私优先架构</b>：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。
+                      <b>隐私优先</b>：全部笔记与图片 100% 本地离线存储、免登录即用；仅做可选的匿名设备去重计数，绝不上传任何笔记内容，可在上方随时关闭。
                     </li>
                   </ul>
                 </div>

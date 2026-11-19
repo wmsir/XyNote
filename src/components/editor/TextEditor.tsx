@@ -29,12 +29,20 @@ import { buildTextShortcutLookup, mergeKeybindings, normalizeTextEditorShortcut 
 import type { KeybindingMap } from "../../types/notion";
 import "./textEditor.css";
 
+export interface TextEditorActions {
+  isDirty: () => boolean;
+  flush: () => Promise<void>;
+  discard: () => void;
+}
+
 export interface TextEditorProps {
   doc: TextFileDocument;
   onNotify: (msg: string, ms?: number) => void;
   onRevealInExplorer: (path: string) => void;
   /** 保存状态变化，供顶栏显示 */
   onSavingChange?: (saving: boolean) => void;
+  /** 注册当前文本编辑器的脏状态检查/主动刷盘/放弃句柄 */
+  onRegisterActions?: (actions: TextEditorActions | null) => void;
   /** 快捷键设置（含文本编辑器的 text.* 动作） */
   keybindings?: KeybindingMap;
 }
@@ -114,7 +122,7 @@ function replaceRange(ta: HTMLTextAreaElement, start: number, end: number, text:
   if (selectStart !== undefined) ta.setSelectionRange(selectStart, selectEnd ?? selectStart);
 }
 
-export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSavingChange, keybindings }: TextEditorProps) {
+export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSavingChange, onRegisterActions, keybindings }: TextEditorProps) {
   const shortcutLookup = useMemo(() => buildTextShortcutLookup(keybindings), [keybindings]);
   const mergedKeys = useMemo(() => mergeKeybindings(keybindings), [keybindings]);
   /** 提示文字里显示当前绑定的快捷键 */
@@ -163,11 +171,23 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
   if (highlighterRef.current.lang !== lang) highlighterRef.current = new Highlighter(lang);
 
   // 保存用的最新值（定时器 / 卸载时读取）
-  const latest = useRef({ content, encoding, lineEnding, modifiedMs: initialDoc.modifiedMs, path: initialDoc.filePath, dirty: false });
+  const latest = useRef({
+    content,
+    encoding,
+    lineEnding,
+    modifiedMs: initialDoc.modifiedMs,
+    path: initialDoc.filePath,
+    dirty: false,
+    decodeWarning: initialDoc.hadErrors,
+    conflict: false,
+    discarded: false,
+  });
   latest.current.content = content;
   latest.current.encoding = encoding;
   latest.current.lineEnding = lineEnding;
   latest.current.path = doc.filePath;
+  latest.current.decodeWarning = decodeWarning;
+  latest.current.conflict = conflict;
   const timerRef = useRef<number | null>(null);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -192,7 +212,7 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
       }
       const run = async () => {
         const snap = { ...latest.current };
-        if (!snap.dirty && !force) return;
+        if (snap.discarded || (!snap.dirty && !force)) return;
         setSaveState("saving");
         try {
           const res = await saveTextFile(snap.path, snap.content, snap.encoding, snap.lineEnding, force ? null : snap.modifiedMs);
@@ -229,17 +249,45 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
     }
   }, [autoSave, decodeWarning, conflict, doSave]);
 
-  // 切换文件 / 关闭编辑器时把没写入的内容存下来
+  // 切换文件 / 关闭编辑器时把没写入的内容存下来（编码解码异常、冲突或已放弃修改时不覆盖磁盘）
   useEffect(() => {
     const ref = latest;
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       const snap = ref.current;
-      if (snap.dirty) {
+      if (snap.dirty && !snap.decodeWarning && !snap.conflict && !snap.discarded) {
         void saveTextFile(snap.path, snap.content, snap.encoding, snap.lineEnding, snap.modifiedMs).catch(() => {});
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!onRegisterActions) return;
+    const actions: TextEditorActions = {
+      isDirty: () => {
+        const s = latest.current;
+        return s.dirty && !s.decodeWarning && !s.conflict && !s.discarded;
+      },
+      flush: async () => {
+        const s = latest.current;
+        if (s.dirty && !s.decodeWarning && !s.conflict && !s.discarded) {
+          await doSave();
+        } else {
+          await saveChain.current.catch(() => {});
+        }
+      },
+      discard: () => {
+        if (timerRef.current) {
+          window.clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        latest.current.discarded = true;
+        latest.current.dirty = false;
+      },
+    };
+    onRegisterActions(actions);
+    return () => onRegisterActions(null);
+  }, [onRegisterActions, doSave]);
 
   /* ---------------- 重新载入 / 外部修改 ---------------- */
 
@@ -266,28 +314,34 @@ export function TextEditor({ doc: initialDoc, onNotify, onRevealInExplorer, onSa
   );
 
   useEffect(() => {
+    let mounted = true;
     const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
     const onChanged = (e: Event) => {
       const paths = (e as CustomEvent<string[]>).detail ?? [];
       if (!paths.some((p) => norm(p) === norm(latest.current.path))) return;
       void saveChain.current.then(async () => {
+        if (!mounted || latest.current.discarded) return;
         let disk: TextFileDocument;
         try {
           disk = await openTextFile(latest.current.path, latest.current.encoding);
         } catch {
           return;
         }
+        if (!mounted || latest.current.discarded) return;
         if (disk.modifiedMs === latest.current.modifiedMs) return;
         if (latest.current.dirty) {
           setConflict(true);
           return;
         }
         await reload(latest.current.encoding);
-        onNotify(`已载入「${disk.fileName}」在别处的修改`);
+        if (mounted) onNotify(`已载入「${disk.fileName}」在别处的修改`);
       });
     };
     window.addEventListener("xynote:fs-changed", onChanged);
-    return () => window.removeEventListener("xynote:fs-changed", onChanged);
+    return () => {
+      mounted = false;
+      window.removeEventListener("xynote:fs-changed", onChanged);
+    };
   }, [reload, onNotify]);
 
   /* ---------------- 光标与滚动 ---------------- */

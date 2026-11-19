@@ -346,7 +346,7 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     category: "workspace",
     categoryLabel: "全局与视图",
     label: "全局搜索与快捷命令面板",
-    description: "打开 FTS5 毫秒级全文检索与页面快捷跳转面板",
+    description: "打开全文搜索与页面快捷跳转面板",
     defaultShortcut: "Ctrl+K",
   },
   {
@@ -386,7 +386,7 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     category: "workspace",
     categoryLabel: "全局与视图",
     label: "立即保存文档 / 本地 .md",
-    description: "立即将当前缓冲区写入 SQLite 数据库或磁盘 .md 文件",
+    description: "立即保存当前笔记或本地 .md 文件",
     defaultShortcut: "Ctrl+S",
   },
   {

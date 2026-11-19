@@ -52,7 +52,7 @@ function writeBrowserPrefs(prefs: BrowserKbPrefs): KbStatus {
     enabled: prefs.enabled,
     includeFolders: prefs.includeFolders,
     showRelatedPanel: prefs.showRelatedPanel,
-    dbPath: "浏览器预览模式（独立 kb_index.db 仅在桌面版启用）",
+    dbPath: "浏览器预览模式（本地知识库仅在桌面版可用）",
     dbExists: false,
     dbSizeBytes: 0,
     sourceCount: 0,

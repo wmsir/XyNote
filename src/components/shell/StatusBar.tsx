@@ -120,8 +120,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
               : activeLocalMd
               ? "本地 .md 实时直写"
               : storageInfo?.autoSyncMarkdown
-              ? "SQLite + .md 实时同步"
-              : "SQLite 已保存"}
+              ? "本地 + .md 实时同步"
+              : "已保存到本地"}
           </span>
         </span>
 

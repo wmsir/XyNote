@@ -50,6 +50,8 @@ struct KbRuntime {
 pub struct KbEngine {
     enabled_flag: Arc<AtomicBool>,
     indexing_flag: Arc<AtomicBool>,
+    sync_all_running: Arc<AtomicBool>,
+    sync_all_pending: Arc<AtomicBool>,
     cached_sources: AtomicUsize,
     cached_events: AtomicUsize,
     cached_entities: AtomicUsize,
@@ -69,6 +71,13 @@ impl Drop for IndexingGuard {
     }
 }
 
+struct SyncAllGuard(Arc<AtomicBool>);
+impl Drop for SyncAllGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 fn parse_bool_setting(val: Option<&String>, default_val: bool) -> bool {
     match val.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
         Some("true") | Some("1") | Some("yes") | Some("on") => true,
@@ -83,6 +92,8 @@ impl KbEngine {
         Self {
             enabled_flag: Arc::new(AtomicBool::new(false)),
             indexing_flag: Arc::new(AtomicBool::new(false)),
+            sync_all_running: Arc::new(AtomicBool::new(false)),
+            sync_all_pending: Arc::new(AtomicBool::new(false)),
             cached_sources: AtomicUsize::new(0),
             cached_events: AtomicUsize::new(0),
             cached_entities: AtomicUsize::new(0),
@@ -410,14 +421,25 @@ impl KbEngine {
             rt.conn = index::open_kb_conn(&kb_path).ok();
             rt.db_path = Some(kb_path);
         }
-        if let Some(ref mut conn) = rt.conn {
+        let updated = if let Some(ref mut conn) = rt.conn {
             match index::sync_single_page_into_kb(conn, page.as_ref(), page_id, &links) {
                 Ok(()) => {
                     rt.last_indexed_at = Some(now_iso());
                     rt.last_error = None;
+                    true
                 }
                 Err(e) => {
                     rt.last_error = Some(e.to_string());
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if updated {
+            if let Some(ref conn) = rt.conn {
+                if let Ok((s, e, ent, _)) = index::read_kb_counts(conn) {
+                    self.store_cached_counts(s, e, ent);
                 }
             }
         }
@@ -431,7 +453,27 @@ impl KbEngine {
         if !self.is_enabled() {
             return;
         }
-        let _ = self.rebuild_index(db, false);
+        self.sync_all_pending.store(true, Ordering::Release);
+        loop {
+            if self
+                .sync_all_running
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return;
+            }
+            let _guard = SyncAllGuard(Arc::clone(&self.sync_all_running));
+            while self.sync_all_pending.swap(false, Ordering::AcqRel) {
+                if !self.is_enabled() {
+                    return;
+                }
+                let _ = self.rebuild_index(db, false);
+            }
+            drop(_guard);
+            if !self.sync_all_pending.load(Ordering::Acquire) || !self.is_enabled() {
+                return;
+            }
+        }
     }
 
     pub fn sync_disk_paths(&self, db: &Database, paths: &[String]) {
@@ -453,12 +495,23 @@ impl KbEngine {
             rt.conn = index::open_kb_conn(&kb_path).ok();
             rt.db_path = Some(kb_path);
         }
-        if let Some(ref mut conn) = rt.conn {
+        let updated = if let Some(ref mut conn) = rt.conn {
             if let Err(e) = index::sync_disk_paths_into_kb(conn, &mounted, paths) {
                 rt.last_error = Some(e.to_string());
+                false
             } else {
                 rt.last_indexed_at = Some(now_iso());
                 rt.last_error = None;
+                true
+            }
+        } else {
+            false
+        };
+        if updated {
+            if let Some(ref conn) = rt.conn {
+                if let Ok((s, e, ent, _)) = index::read_kb_counts(conn) {
+                    self.store_cached_counts(s, e, ent);
+                }
             }
         }
     }
@@ -772,6 +825,74 @@ mod tests {
         let timeline = kb.entity_events("Kafka", 20).unwrap();
         assert!(timeline.iter().any(|h| h.source_kind == "workspace_page" && h.ref_id == p_ws));
         assert!(timeline.iter().any(|h| h.source_kind == "mounted_file"));
+
+        drop(kb);
+        drop(db);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn deleted_subdirectory_prunes_nested_disk_sources() {
+        let dir = temp_dir("subdir-prune");
+        let root_dir = dir.join("vault");
+        let sub_dir = root_dir.join("sub");
+        let deep_dir = sub_dir.join("deep");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+        std::fs::write(sub_dir.join("note1.md"), "# 笔记一\n\nAlphaSubdirTag 内容。\n").unwrap();
+        std::fs::write(deep_dir.join("note2.md"), "# 笔记二\n\nBetaSubdirTag 内容。\n").unwrap();
+
+        let db = Database::open(dir.join("xynote.db")).unwrap();
+        let folders_json = serde_json::json!([{
+            "path": clean_display_path(&root_dir),
+            "name": "测试库"
+        }])
+        .to_string();
+        db.set_setting("workspaceFolders", &folders_json).unwrap();
+
+        let kb = KbEngine::new();
+        let st_before = kb.set_enabled(&db, true, false).unwrap();
+        assert!(st_before.source_count >= 2);
+        assert!(kb
+            .search("AlphaSubdirTag", 10, 1)
+            .unwrap()
+            .hits
+            .iter()
+            .any(|h| h.source_kind == "mounted_file"));
+        assert!(kb
+            .search("BetaSubdirTag", 10, 1)
+            .unwrap()
+            .hits
+            .iter()
+            .any(|h| h.source_kind == "mounted_file"));
+
+        std::fs::remove_dir_all(&sub_dir).unwrap();
+        kb.sync_disk_paths(&db, &[clean_display_path(&sub_dir)]);
+
+        let st_after = kb.get_status(&db).unwrap();
+        assert_eq!(st_after.source_count, st_before.source_count - 2);
+        assert!(kb.search("AlphaSubdirTag", 10, 1).unwrap().hits.is_empty());
+        assert!(kb.search("BetaSubdirTag", 10, 1).unwrap().hits.is_empty());
+
+        drop(kb);
+        drop(db);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn entity_prefix_search_escapes_sql_like_wildcards() {
+        assert_eq!(index::escape_sql_like("a_b%c!d"), "a!_b!%c!!d");
+
+        let dir = temp_dir("like-escape");
+        let db = Database::open(dir.join("xynote.db")).unwrap();
+        let p_under = save_doc(&db, "文档A", vec![("paragraph", "变量名 #alpha_beta 用于配置。")]);
+        let p_other = save_doc(&db, "文档B", vec![("paragraph", "标识符 #alphaxbeta 完全无关。")]);
+
+        let kb = KbEngine::new();
+        kb.set_enabled(&db, true, false).unwrap();
+
+        let res = kb.search("alpha_beta", 10, 0).unwrap();
+        assert!(res.hits.iter().any(|h| h.ref_id == p_under));
+        assert!(!res.hits.iter().any(|h| h.ref_id == p_other));
 
         drop(kb);
         drop(db);

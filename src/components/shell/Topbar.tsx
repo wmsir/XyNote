@@ -272,7 +272,7 @@ export const Topbar: React.FC<TopbarProps> = ({
             type="button"
             className={`nb-icon-btn${showKbPanel ? " is-mode-on" : ""}`}
             onClick={onToggleKbPanel}
-            title="关联知识面板 (SAG2)"
+            title="关联知识面板"
           >
             <Network size={15} />
           </button>

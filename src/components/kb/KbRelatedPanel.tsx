@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   FileCode2,
@@ -46,11 +46,17 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
   const [focusedEntity, setFocusedEntity] = useState<string | null>(null);
   const [entityHits, setEntityHits] = useState<KbSearchHit[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
+  const traceSeqRef = useRef(0);
 
-  // 切换文档时清除概念追踪子视图
+  // 切换文档时清除概念追踪子视图并作废在途概念追踪请求
   useEffect(() => {
+    traceSeqRef.current += 1;
     setFocusedEntity(null);
     setEntityHits([]);
+    setLoading(false);
+    return () => {
+      traceSeqRef.current += 1;
+    };
   }, [sourceKind, refId]);
 
   // 实时计算当前笔记的 SAG2 动态超边关联推荐（420ms 防抖）
@@ -88,12 +94,19 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
   }, [sourceKind, refId, title, contentText, refreshTick]);
 
   const openEntityTrace = useCallback((name: string) => {
+    const seq = ++traceSeqRef.current;
     setFocusedEntity(name);
     setLoading(true);
     kbEntityEvents(name, 30)
-      .then((res) => setEntityHits(res))
-      .catch(() => setEntityHits([]))
-      .finally(() => setLoading(false));
+      .then((res) => {
+        if (seq === traceSeqRef.current) setEntityHits(res);
+      })
+      .catch(() => {
+        if (seq === traceSeqRef.current) setEntityHits([]);
+      })
+      .finally(() => {
+        if (seq === traceSeqRef.current) setLoading(false);
+      });
   }, []);
 
   const handleOpenHit = useCallback(
@@ -110,12 +123,12 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
   const visibleHits = focusedEntity ? entityHits : hits;
 
   return (
-    <aside className="nb-kb-panel" aria-label="SAG2 关联知识面板">
+    <aside className="nb-kb-panel" aria-label="关联知识面板">
       <div className="nb-kb-panel-header">
         <div className="nb-kb-panel-title-wrap">
           <Network size={15} />
           <span className="nb-kb-panel-title">关联知识</span>
-          <span className="nb-kb-badge">SAG2</span>
+          <span className="nb-kb-badge">智能</span>
         </div>
         <div className="nb-kb-panel-actions">
           <button
@@ -136,7 +149,7 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
             type="button"
             className="nb-icon-btn"
             onClick={onOpenSettings}
-            title="知识库引擎设置"
+            title="本地知识库设置"
           >
             <Settings size={13} />
           </button>
@@ -152,7 +165,7 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
       </div>
 
       <div className="nb-kb-panel-sub">
-        <span>{`已索引 ${sourceCount} 篇 · ${entityCount} 个概念`}</span>
+        <span>{`已收录 ${sourceCount} 篇 · ${entityCount} 个主题`}</span>
         {elapsedMs > 0 && !focusedEntity && <span>{elapsedMs} ms</span>}
       </div>
 
@@ -161,19 +174,23 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
           <button
             type="button"
             className="nb-kb-back-btn"
-            onClick={() => setFocusedEntity(null)}
+            onClick={() => {
+              traceSeqRef.current += 1;
+              setFocusedEntity(null);
+              setLoading(false);
+            }}
           >
             <ArrowLeft size={13} />
             <span>返回关联推荐</span>
           </button>
           <span className="nb-kb-trace-name" title={focusedEntity}>
-            {`概念追踪：${focusedEntity}`}
+            {`主题线索：${focusedEntity}`}
           </span>
         </div>
       ) : (
         entities.length > 0 && (
           <div className="nb-kb-section">
-            <div className="nb-kb-section-label">当前笔记概念（点击追踪时间线）</div>
+            <div className="nb-kb-section-label">当前笔记主题词（点击查看相关记录）</div>
             <div className="nb-kb-chips">
               {entities.map((ent) => (
                 <button
@@ -181,7 +198,7 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
                   type="button"
                   className="nb-kb-chip"
                   onClick={() => openEntityTrace(ent.name)}
-                  title={`跨 ${ent.docFreq} 篇文档出现，点击查看全部提及`}
+                  title={`在 ${ent.docFreq} 篇笔记中出现，点击查看全部提及`}
                 >
                   <span>{ent.name}</span>
                   <span className="nb-kb-chip-df">{ent.docFreq}</span>
@@ -195,15 +212,15 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
       <div className="nb-kb-list">
         {!sourceKind || !refId ? (
           <div className="nb-kb-empty">
-            打开任意工作区页面或磁盘笔记，SAG2 将在此自动浮现跨文档概念关联。
+            打开任意工作区页面或本地笔记，这里会自动推荐相关的历史内容。
           </div>
         ) : loading && visibleHits.length === 0 ? (
-          <div className="nb-kb-empty">正在通过动态超边检索关联内容…</div>
+          <div className="nb-kb-empty">正在查找相关笔记…</div>
         ) : visibleHits.length === 0 ? (
           <div className="nb-kb-empty">
             {focusedEntity
-              ? "未找到该概念在其它文档中的记录。"
-              : "暂未发现其它文档与当前内容共享概念，继续写作或点击设置执行全量同步即可自动串联。"}
+              ? "未找到该主题在其他笔记中的记录。"
+              : "暂未发现其他相关笔记，继续写作或在设置中更新索引后会自动关联。"}
           </div>
         ) : (
           visibleHits.map((hit) => (
@@ -268,7 +285,7 @@ export const KbRelatedPanel: React.FC<KbRelatedPanelProps> = ({
                         e.stopPropagation();
                         openEntityTrace(entName);
                       }}
-                      title="点击追踪此关联概念"
+                      title="点击查看此主题的相关笔记"
                     >
                       {`关联：${entName}`}
                     </button>

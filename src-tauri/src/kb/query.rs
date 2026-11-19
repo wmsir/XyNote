@@ -6,6 +6,7 @@
 //!    按 IDF 权重 + 共现超边度 + `kb_page_links` 双链实时拼出跨文档关联事件 `E1`；
 //! 3. 附带可解释的关联概念（`shared_entities`）与精准块/行溯源坐标（`block_id` / `line_start`）。
 
+use crate::kb::index::escape_sql_like;
 use crate::kb::tokenizer::{build_fts_match_expr, extract_entities, extract_query_terms};
 use crate::models::AppError;
 use crate::storage::normalize_path_key;
@@ -250,16 +251,17 @@ pub fn search(
     // 2. 实体词典精准/前缀匹配（支持搜 #tag / [[WikiLink]] / 专有名词）
     let mut query_entity_weights: HashMap<i64, (String, f64, i64, String)> = HashMap::new();
     for term in &query_terms {
+        let like_pat = format!("{}%", escape_sql_like(term));
         let mut stmt = conn.prepare(
             "SELECT entity_id, display_name, entity_type, doc_freq
              FROM kb_entities
              WHERE norm_name = ?1
-                OR (length(?1) >= 2 AND norm_name LIKE ?1 || '%')
+                OR (length(?1) >= 2 AND norm_name LIKE ?2 ESCAPE '!')
              ORDER BY CASE WHEN norm_name = ?1 THEN 0 ELSE 1 END, doc_freq ASC
              LIMIT 6",
         )?;
         let rows = stmt
-            .query_map(params![term], |r| {
+            .query_map(params![term, &like_pat], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
                     r.get::<_, String>(1)?,

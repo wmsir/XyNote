@@ -1280,7 +1280,22 @@ pub fn sync_single_page_into_kb(
     Ok(())
 }
 
-/// 按文件系统路径列表增量更新/移除挂载目录里的文件索引
+/// 转义 SQL LIKE 模式中的通配符（与 `ESCAPE '!'` 配合，避免 Windows 路径的反斜杠冲突）
+pub(crate) fn escape_sql_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '!' | '%' | '_' => {
+                out.push('!');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// 按文件系统路径列表增量更新/移除挂载目录里的文件或子目录索引
 pub fn sync_disk_paths_into_kb(
     conn: &mut Connection,
     mounted_folders: &[MountedFolderRoot],
@@ -1297,10 +1312,18 @@ pub fn sync_disk_paths_into_kb(
         let p = Path::new(&clean);
         let key = normalize_path_key(p);
 
-        // 确认该路径仍位于某个已挂载文件夹下
-        let matched_root = roots_norm
-            .iter()
-            .find(|(rk, _)| key == *rk || key.starts_with(&format!("{}/", rk)) || key.starts_with(&format!("{}\\", rk)));
+        // 确认该路径仍位于某个已挂载文件夹下（兼容盘符根目录及 "/" 根目录）
+        let matched_root = roots_norm.iter().find(|(rk, _)| {
+            let rk_clean = rk.trim_end_matches(|c| c == '/' || c == '\\');
+            if rk_clean.is_empty() {
+                key.starts_with('/')
+            } else {
+                key == rk_clean
+                    || key == *rk
+                    || key.starts_with(&format!("{}/", rk_clean))
+                    || key.starts_with(&format!("{}\\", rk_clean))
+            }
+        });
 
         let Some((_, root_name)) = matched_root else {
             continue;
@@ -1311,18 +1334,33 @@ pub fn sync_disk_paths_into_kb(
                 changed = true;
             }
         } else if !p.exists() {
-            let source_id = format!("file:{}", key);
-            let exists: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM kb_sources WHERE source_id = ?1",
-                    params![&source_id],
-                    |r| r.get::<_, i64>(0),
-                )
-                .unwrap_or(0)
-                > 0;
-            if exists {
+            // 同步清理精确匹配的文件以及整个已删除/移走子目录下的嵌套索引条目
+            let trimmed_key = key.trim_end_matches(|c| c == '/' || c == '\\');
+            let exact_raw = format!("file:{}", key);
+            let exact_trimmed = format!("file:{}", trimmed_key);
+            let prefix_slash = format!("{}%", escape_sql_like(&format!("file:{}/", trimmed_key)));
+            let prefix_backslash = format!("{}%", escape_sql_like(&format!("file:{}\\", trimmed_key)));
+            let doomed: Vec<String> = {
+                let mut stmt = conn.prepare(
+                    "SELECT source_id FROM kb_sources
+                     WHERE source_id = ?1
+                        OR source_id = ?2
+                        OR source_id LIKE ?3 ESCAPE '!'
+                        OR source_id LIKE ?4 ESCAPE '!'",
+                )?;
+                let rows: Vec<String> = stmt
+                    .query_map(
+                        params![&exact_raw, &exact_trimmed, &prefix_slash, &prefix_backslash],
+                        |r| r.get::<_, String>(0),
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            if !doomed.is_empty() {
                 let tx = conn.transaction()?;
-                delete_source_tx(&tx, &source_id)?;
+                for sid in &doomed {
+                    delete_source_tx(&tx, sid)?;
+                }
                 tx.commit()?;
                 changed = true;
             }

@@ -5,7 +5,7 @@ import { useSyncController } from "./hooks/useSyncController";
 import { exportPageFile, exportPageHtml } from "./api/pro";
 import { printHtmlDocument } from "./utils/printHtml";
 import { PageHistoryModal } from "./components/shell/PageHistoryModal";
-import { TextEditor } from "./components/editor/TextEditor";
+import { TextEditor, type TextEditorActions } from "./components/editor/TextEditor";
 import {
   isBinaryFileError,
   isMarkdownPath,
@@ -295,6 +295,8 @@ export const App: React.FC = () => {
   const toastTimerRef = useRef<number | null>(null);
   const detailRef = useRef<PageDetail | null>(null);
   const activeLocalMdRef = useRef<LocalMarkdownDocument | null>(null);
+  const activeTextFileRef = useRef<TextFileDocument | null>(null);
+  const textEditorActionsRef = useRef<TextEditorActions | null>(null);
   const editorPrefsRef = useRef<EditorPreferences>(DEFAULT_EDITOR_PREFS);
   const keybindingsRef = useRef<KeybindingMap>(keybindings);
   const dragDepthRef = useRef<number>(0);
@@ -307,6 +309,14 @@ export const App: React.FC = () => {
   useEffect(() => {
     activeLocalMdRef.current = activeLocalMd;
   }, [activeLocalMd]);
+
+  useEffect(() => {
+    activeTextFileRef.current = activeTextFile;
+  }, [activeTextFile]);
+
+  const handleRegisterTextEditorActions = useCallback((actions: TextEditorActions | null) => {
+    textEditorActionsRef.current = actions;
+  }, []);
 
   useEffect(() => {
     editorPrefsRef.current = editorPrefs;
@@ -451,6 +461,15 @@ export const App: React.FC = () => {
         setIsSaving(false);
       }
     }
+
+    const textActions = textEditorActionsRef.current;
+    if (textActions?.isDirty()) {
+      try {
+        await textActions.flush();
+      } catch {
+        // Ignore transient save failure
+      }
+    }
   }, [saveLocalChecked]);
 
   const flushPendingBlockSaveRef = useRef(flushPendingBlockSave);
@@ -460,7 +479,11 @@ export const App: React.FC = () => {
   // 关闭窗口前自动刷盘未落地的 300ms 防抖编辑内容，避免最后一笔输入丢失
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (pendingSaveRef.current || pendingLocalMdSaveRef.current) {
+      if (
+        pendingSaveRef.current ||
+        pendingLocalMdSaveRef.current ||
+        textEditorActionsRef.current?.isDirty()
+      ) {
         void flushPendingBlockSaveRef.current();
         e.preventDefault();
         e.returnValue = "";
@@ -479,7 +502,11 @@ export const App: React.FC = () => {
       .onCloseRequested(async () => {
         if (closingConfirmedRef.current) return;
         closingConfirmedRef.current = true;
-        if (pendingSaveRef.current || pendingLocalMdSaveRef.current) {
+        if (
+          pendingSaveRef.current ||
+          pendingLocalMdSaveRef.current ||
+          textEditorActionsRef.current?.isDirty()
+        ) {
           try {
             await Promise.race([
               flushPendingBlockSaveRef.current(),
@@ -761,6 +788,16 @@ export const App: React.FC = () => {
           })
           .catch(() => {});
       }
+      const curText = activeTextFileRef.current;
+      const movedText = curText ? remap(curText.filePath) : null;
+      if (movedText) {
+        textEditorActionsRef.current?.discard();
+        openTextFile(movedText)
+          .then((doc) => setActiveTextFile(doc))
+          .catch(() => {
+            setActiveTextFile(null);
+          });
+      }
     },
     []
   );
@@ -783,6 +820,11 @@ export const App: React.FC = () => {
         pendingLocalMdSaveRef.current = null;
       }
       setActiveLocalMd(null);
+    }
+    const curText = activeTextFileRef.current;
+    if (curText && gone(curText.filePath)) {
+      textEditorActionsRef.current?.discard();
+      setActiveTextFile(null);
     }
   }, []);
 
@@ -1563,7 +1605,7 @@ export const App: React.FC = () => {
     getStorageInfo()
       .then(setStorageInfo)
       .catch(() => {});
-    showToast(`已将「${createdPage.title}」收入 SQLite 工作区知识库`);
+    showToast(`已将「${createdPage.title}」保存到当前工作区`);
   }, [flushPendingBlockSave, loadPageDetailById, refreshSidebarLists, showToast]);
 
   const handleOpenSettingsAtTab = useCallback((tab: SettingsTabId = "storage") => {
@@ -2462,6 +2504,7 @@ export const App: React.FC = () => {
               keybindings={keybindings}
               onNotify={showToast}
               onSavingChange={setIsSaving}
+              onRegisterActions={handleRegisterTextEditorActions}
               onRevealInExplorer={(p) => {
                 openPathInExplorer(p).catch(() => {});
               }}
@@ -2793,7 +2836,7 @@ export const App: React.FC = () => {
         onClose={() => setSearchOpen(false)}
         folderRoots={workspaceFolders.map((f) => [f.path, f.name] as [string, string])}
         onOpenFile={(fp) => {
-          openLocalMdByPath(fp).catch(() => {});
+          openFileByPath(fp).catch(() => {});
         }}
         onSelectResult={(pageId, blockId) => {
           loadPageDetailById(pageId, blockId).catch(() => {});

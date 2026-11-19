@@ -51,7 +51,7 @@ fn spawn_kb_reindex_page(app: &AppHandle, page_id: String) {
         return;
     }
     let handle = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let db = handle.state::<Database>();
         let kb = handle.state::<KbEngine>();
         kb.sync_single_page(&db, &page_id);
@@ -64,7 +64,7 @@ fn spawn_kb_remove_page(app: &AppHandle, page_id: String) {
         return;
     }
     let handle = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let db = handle.state::<Database>();
         let kb = handle.state::<KbEngine>();
         kb.remove_page(&db, &page_id);
@@ -77,7 +77,7 @@ fn spawn_kb_sync_all(app: &AppHandle) {
         return;
     }
     let handle = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let db = handle.state::<Database>();
         let kb = handle.state::<KbEngine>();
         kb.sync_all(&db);
@@ -90,7 +90,7 @@ fn spawn_kb_sync_paths(app: &AppHandle, paths: Vec<String>) {
         return;
     }
     let handle = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let db = handle.state::<Database>();
         let kb = handle.state::<KbEngine>();
         kb.sync_disk_paths(&db, &paths);
@@ -100,11 +100,8 @@ fn spawn_kb_sync_paths(app: &AppHandle, paths: Vec<String>) {
 fn trigger_kb_rebind(app: &AppHandle, _db: &Database, kb: &KbEngine) {
     use tauri::Manager;
     kb.close_connection();
-    if !kb.is_enabled() {
-        return;
-    }
     let handle = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let db = handle.state::<Database>();
         let kb = handle.state::<KbEngine>();
         kb.rebind_storage(&db);
@@ -551,20 +548,24 @@ pub async fn open_local_markdown_file(file_path: String) -> Result<LocalMarkdown
 }
 
 #[tauri::command]
-pub fn save_local_markdown_file(
+pub async fn save_local_markdown_file(
     app: AppHandle,
     file_path: String,
     blocks: Option<Vec<SaveBlockItem>>,
     raw_markdown: Option<String>,
     expected_updated_at: Option<String>,
 ) -> Result<LocalMarkdownDocument, String> {
-    let doc = crate::storage::save_local_markdown_file_checked(
-        &file_path,
-        blocks,
-        raw_markdown,
-        expected_updated_at.as_deref(),
-    )
-    .map_err(String::from)?;
+    let doc = tauri::async_runtime::spawn_blocking(move || {
+        crate::storage::save_local_markdown_file_checked(
+            &file_path,
+            blocks,
+            raw_markdown,
+            expected_updated_at.as_deref(),
+        )
+        .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     spawn_kb_sync_paths(&app, vec![doc.file_path.clone()]);
     Ok(doc)
 }
@@ -622,7 +623,7 @@ pub async fn open_text_file(
 
 /// 保存文本文件，保留编码与换行符；expected_modified_ms 用于检测外部修改
 #[tauri::command]
-pub fn save_text_file(
+pub async fn save_text_file(
     app: AppHandle,
     path: String,
     content: String,
@@ -630,9 +631,14 @@ pub fn save_text_file(
     line_ending: String,
     expected_modified_ms: Option<u64>,
 ) -> Result<crate::textfile::TextSaveResult, String> {
-    let res = crate::textfile::save_text_file(&path, &content, &encoding, &line_ending, expected_modified_ms)
-        .map_err(String::from)?;
-    spawn_kb_sync_paths(&app, vec![path]);
+    let kb_path = path.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        crate::textfile::save_text_file(&path, &content, &encoding, &line_ending, expected_modified_ms)
+            .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    spawn_kb_sync_paths(&app, vec![kb_path]);
     Ok(res)
 }
 
