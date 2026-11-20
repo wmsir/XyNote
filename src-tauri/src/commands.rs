@@ -4,7 +4,7 @@ use crate::models::{
     AppError, BackupEntry, BatchImportResult, Block, CreatePageInput, DatabaseFull, DbColumn,
     DbRow, ImportedCustomFont, LocalMarkdownDocument, MarkdownExport, MarkdownTreeEntry, Page,
     PageDetail, SaveBlockItem, SaveStylePluginInput, SavedAssetResult, SearchResult,
-    StorageConfigInfo, StylePluginItem, StylePluginState, UpdatePagePatch,
+    StorageConfigInfo, StylePluginItem, StylePluginState, TodoItem, UpdatePagePatch,
     UpdateStorageConfigInput, UpsertBlockInput, UpsertDbColumnInput, UpsertDbRowInput,
     UrlMetadata,
 };
@@ -218,6 +218,11 @@ pub fn duplicate_page(app: AppHandle, db: State<'_, Database>, id: String) -> Re
     let page = db.duplicate_page(&id).map_err(String::from)?;
     spawn_kb_reindex_page(&app, page.id.clone());
     Ok(page)
+}
+
+#[tauri::command]
+pub fn list_open_todos(db: State<'_, Database>) -> Result<Vec<TodoItem>, String> {
+    db.list_open_todos().map_err(String::from)
 }
 
 #[tauri::command]

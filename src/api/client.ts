@@ -32,6 +32,7 @@ import type {
   UpsertDbColumnInput,
   UpsertDbRowInput,
   UrlMetadata,
+  TodoItem,
 } from "../types/notion";
 
 export function isTauriRuntime(): boolean {
@@ -2051,6 +2052,26 @@ export async function duplicatePage(id: string): Promise<Page> {
 
   saveStore(store);
   return { ...copyPage };
+}
+
+/** 所有未完成的待办（不含回收站） */
+export async function listOpenTodos(): Promise<TodoItem[]> {
+  if (isTauriRuntime()) {
+    return invoke<TodoItem[]>("list_open_todos");
+  }
+  const store = loadStore();
+  const pageById = new Map(store.pages.map((p) => [p.id, p]));
+  const out: TodoItem[] = [];
+  for (const b of store.blocks) {
+    if (b.blockType !== "todo" || b.props.checked) continue;
+    const page = pageById.get(b.pageId);
+    if (!page || page.isTrashed) continue;
+    const dueAt = b.props.dueAt?.trim() || null;
+    const text = (b.plainText || b.content.replace(/<[^>]+>/g, "")).trim();
+    if (!text && !dueAt) continue;
+    out.push({ blockId: b.id, pageId: b.pageId, pageTitle: page.title, pageIcon: page.icon, text, dueAt });
+  }
+  return out;
 }
 
 export async function upsertBlock(block: UpsertBlockInput): Promise<Block> {

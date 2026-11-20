@@ -374,6 +374,22 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     defaultShortcut: "Ctrl+Shift+N",
   },
   {
+    id: "app.dailyNote",
+    category: "workspace",
+    categoryLabel: "全局与视图",
+    label: "打开今天的每日笔记",
+    description: "按日期自动建好「今天」这一页，已有就直接打开",
+    defaultShortcut: "Ctrl+Shift+D",
+  },
+  {
+    id: "app.todos",
+    category: "workspace",
+    categoryLabel: "全局与视图",
+    label: "打开待办汇总",
+    description: "集中查看所有页面里没做完的待办，按已逾期、今天、未来 7 天分组",
+    defaultShortcut: "Ctrl+Shift+T",
+  },
+  {
     id: "app.openMd",
     category: "workspace",
     categoryLabel: "全局与视图",

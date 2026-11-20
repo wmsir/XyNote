@@ -29,6 +29,8 @@ import { UpdateNotice } from "./components/shell/UpdateCheck";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExportFormat } from "./components/shell/Topbar";
 import { FreshStart } from "./components/shell/FreshStart";
+import { TodoCenter } from "./components/shell/TodoCenter";
+import { useDailyAndTodos } from "./hooks/useDailyAndTodos";
 import { savePageAsTemplate } from "./api/templates";
 import {
   convertMarkdownBlocks,
@@ -553,6 +555,18 @@ export const App: React.FC = () => {
     },
     [flushPendingBlockSave]
   );
+
+  const productivity = useDailyAndTodos({
+    pages,
+    detail,
+    activePageId,
+    loadPageDetailById,
+    refreshSidebarLists,
+    flushPendingBlockSave,
+    showToast,
+  });
+  const productivityRef = useRef(productivity);
+  productivityRef.current = productivity;
 
   /** 同步下载了远端变更：刷新列表；当前页在别处被改过或被删除时重新载入 */
   const handleRemoteSyncChanges = useCallback(async () => {
@@ -1658,6 +1672,18 @@ export const App: React.FC = () => {
         return;
       }
 
+      if (combo === kb["app.dailyNote"]) {
+        e.preventDefault();
+        productivityRef.current.openDailyNote().catch(() => {});
+        return;
+      }
+
+      if (combo === kb["app.todos"]) {
+        e.preventDefault();
+        productivityRef.current.openTodoCenter();
+        return;
+      }
+
       if (combo === kb["app.newWindow"]) {
         e.preventDefault();
         openNewWindow(null).catch((err) => showToast(`无法打开新窗口：${err instanceof Error ? err.message : String(err)}`));
@@ -2340,6 +2366,24 @@ export const App: React.FC = () => {
         onSelectPage={(id) => {
           loadPageDetailById(id, null).catch(() => {});
         }}
+        recentPages={productivity.recentPages}
+        onClearRecent={productivity.clearRecent}
+        onOpenDailyNote={() => {
+          productivity.openDailyNote().catch(() => {});
+        }}
+        dailyCalendar={{
+          noteDates: productivity.dailyDates,
+          templateId: productivity.dailyTemplateId,
+          templates: productivity.dailyTemplates,
+          onPick: (d) => {
+            productivity.openDailyNote(d).catch(() => {});
+          },
+          onChangeTemplate: (id) => {
+            productivity.setDailyTemplate(id).catch(() => {});
+          },
+        }}
+        onOpenTodos={productivity.openTodoCenter}
+        todoBadge={productivity.todoBadge}
         onOpenLocalMdDialog={() => {
           handleOpenLocalMdDialog().catch(() => {});
         }}
@@ -2979,6 +3023,19 @@ export const App: React.FC = () => {
           onSaveCopy={() => void resolveConflict("copy")}
         />
       )}
+
+      <TodoCenter
+        open={productivity.todoOpen}
+        todos={productivity.todos}
+        loading={productivity.todoLoading}
+        onClose={() => productivity.setTodoOpen(false)}
+        onRefresh={() => {
+          productivity.refreshTodos().catch(() => {});
+        }}
+        onOpenItem={productivity.openTodoItem}
+        onToggleDone={productivity.completeTodo}
+        onSetDue={productivity.setTodoDue}
+      />
 
       <TrashModal
         open={trashOpen}

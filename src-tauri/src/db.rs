@@ -5,7 +5,7 @@ use crate::markdown::{
 use crate::models::{
     AppError, BacklinkItem, Block, BlockProps, BreadcrumbItem, CreatePageInput, DatabaseFull,
     DbColumn, DbRow, MarkdownExport, Page, PageDetail, SaveBlockItem, SearchResult, SelectOption,
-    UpdatePagePatch, UpsertBlockInput, UpsertDbColumnInput, UpsertDbRowInput,
+    TodoItem, UpdatePagePatch, UpsertBlockInput, UpsertDbColumnInput, UpsertDbRowInput,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -797,6 +797,50 @@ impl Database {
             pages.push(r?);
         }
         Ok(pages)
+    }
+
+    /// 所有未完成的待办（不含回收站里的页面），用于「待办汇总」和到点提醒
+    pub fn list_open_todos(&self) -> Result<Vec<TodoItem>, AppError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT b.id, b.page_id, b.plain_text, b.props_json, p.title, p.icon
+             FROM blocks b JOIN pages p ON p.id = b.page_id
+             WHERE b.block_type = 'todo' AND p.is_trashed = 0
+             ORDER BY p.updated_at DESC, b.sort_order ASC
+             LIMIT 5000",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (block_id, page_id, text, props_raw, page_title, page_icon) = r?;
+            let props: BlockProps = serde_json::from_str(&props_raw).unwrap_or_default();
+            if props.checked == Some(true) {
+                continue;
+            }
+            let due_at = props.due_at.filter(|d| !d.trim().is_empty());
+            // 没有文字也没有时间的空待办不列出
+            if text.trim().is_empty() && due_at.is_none() {
+                continue;
+            }
+            out.push(TodoItem {
+                block_id,
+                page_id,
+                page_title,
+                page_icon,
+                text,
+                due_at,
+            });
+        }
+        Ok(out)
     }
 
     pub fn list_trashed_pages(&self) -> Result<Vec<Page>, AppError> {
@@ -3089,6 +3133,53 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_list_open_todos_skips_done_empty_and_trashed() {
+        let db = Database::open_in_memory_unseeded().unwrap();
+        let page = db
+            .create_page(CreatePageInput {
+                title: Some("本周计划".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let todo = |id: &str, text: &str, checked: bool, due: Option<&str>, order: i64| SaveBlockItem {
+            id: id.into(),
+            block_type: "todo".into(),
+            content: text.into(),
+            plain_text: text.into(),
+            props: BlockProps {
+                checked: Some(checked),
+                due_at: due.map(|d| d.to_string()),
+                ..Default::default()
+            },
+            sort_order: order,
+        };
+        db.save_page_blocks(
+            &page.id,
+            vec![
+                todo("t1", "交周报", false, Some("2026-11-21T18:00"), 0),
+                todo("t2", "已完成的事", true, Some("2026-11-20T09:00"), 1),
+                todo("t3", "", false, None, 2),
+                todo("t4", "买牛奶", false, None, 3),
+            ],
+        )
+        .unwrap();
+
+        let open = db.list_open_todos().unwrap();
+        let ids: Vec<&str> = open.iter().map(|t| t.block_id.as_str()).collect();
+        assert_eq!(ids, vec!["t1", "t4"]);
+        assert_eq!(open[0].due_at.as_deref(), Some("2026-11-21T18:00"));
+        assert_eq!(open[0].page_title, "本周计划");
+
+        // 截止时间在保存后原样保留
+        let detail = db.get_page_detail(&page.id).unwrap();
+        let t1 = detail.blocks.iter().find(|b| b.id == "t1").unwrap();
+        assert_eq!(t1.props.due_at.as_deref(), Some("2026-11-21T18:00"));
+
+        db.trash_page(&page.id).unwrap();
+        assert!(db.list_open_todos().unwrap().is_empty());
+    }
 
     #[test]
     fn test_seeded_workspace_has_only_the_guide() {

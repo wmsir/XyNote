@@ -243,3 +243,46 @@ export function skipVersion(v: string) {
     /* 忽略 */
   }
 }
+
+/**
+ * 发一条系统通知（待办到点提醒等）。
+ * 桌面端走 tauri-plugin-notification；浏览器里用 Notification API；都不可用时返回 false。
+ */
+export async function sendSystemNotification(title: string, body: string): Promise<boolean> {
+  if (isTauriRuntime()) {
+    try {
+      let granted = await invoke<boolean | null>("plugin:notification|is_permission_granted");
+      if (!granted) {
+        const res = await invoke<string>("plugin:notification|request_permission");
+        granted = res === "granted";
+      }
+      if (!granted) return false;
+      await invoke("plugin:notification|notify", { options: { title, body } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    if (typeof Notification === "undefined") return false;
+    if (Notification.permission === "default") await Notification.requestPermission();
+    if (Notification.permission !== "granted") return false;
+    new Notification(title, { body });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 当前窗口是不是主窗口（多窗口时只让主窗口发提醒，避免重复） */
+export function isMainWindow(): boolean {
+  if (!isTauriRuntime()) return true;
+  try {
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } })
+      .__TAURI_INTERNALS__;
+    const label = internals?.metadata?.currentWindow?.label;
+    return !label || label === "main";
+  } catch {
+    return true;
+  }
+}
