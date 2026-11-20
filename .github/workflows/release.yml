@@ -133,6 +133,9 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
     runs-on: ${{ matrix.platform }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -150,7 +153,9 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
+          echo "NO_STRIP=true" >> "$GITHUB_ENV"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -298,7 +303,8 @@ jobs:
             | Windows | `*_x64-setup.exe`（推荐）、`*.msi`，或免安装的 `*-portable.exe` |
             | macOS（Apple 芯片） | `*-macos-arm64.dmg` |
             | macOS（Intel） | `*-macos-x64.dmg` |
-            | Linux | `*.AppImage`、`*.deb`、`*.rpm` |
+            | Linux x86_64（银河麒麟 / 统信 UOS / Ubuntu / Debian / Fedora / openEuler） | `*_amd64.deb`、`*.x86_64.rpm`、`*_amd64.AppImage` |
+            | Linux ARM64（银河麒麟 V10 飞腾 / 鲲鹏 / ARM64 发行版） | `*_arm64.deb`、`*.aarch64.rpm`、`*_aarch64.AppImage` |
             | 同步服务器（自建） | `xynote-sync-server-*-linux-x64.tar.gz`，部署说明见其中的 README |
 
             安装包未做代码签名：Windows 若提示「已保护你的电脑」，点「更多信息 → 仍要运行」；macOS 首次打开请在「系统设置 → 隐私与安全性」中允许。

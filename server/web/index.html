@@ -1220,7 +1220,7 @@
           <a class="btn ghost" href="#marketplace">逛插件市场 →</a>
         </div>
         <div class="dl-sub">
-          <span id="dlSubHint">自动适配当前操作系统 · 支持 Windows / macOS / Linux</span>
+          <span id="dlSubHint">自动适配当前操作系统 · 支持 Windows / macOS / 银河麒麟 KylinOS / 统信 UOS / 主流 Linux</span>
           <a href="/downloads/xynote/SHA256SUMS.txt" target="_blank" rel="noopener">🛡️ SHA256 校验值 ↗</a>
         </div>
 
@@ -1242,17 +1242,29 @@
             <span class="dl-tile-sub" data-xy-size="xynote_mac_x64">Intel · macOS 10.15+</span>
           </a>
           <a class="dl-tile" id="dlDeb" href="/downloads/xynote/XyNote-latest-linux-amd64.deb" download>
-            <span class="dl-tile-top"><span>Ubuntu / Debian</span><span class="dl-tile-fmt">.deb</span></span>
-            <span class="dl-tile-sub" data-xy-size="xynote_linux_deb">amd64 安装包</span>
+            <span class="dl-tile-top"><span>银河麒麟 / Ubuntu / UOS</span><span class="dl-tile-fmt">x64 .deb</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_linux_deb">x86_64 · 桌面版</span>
+          </a>
+          <a class="dl-tile" id="dlDebArm" href="/downloads/xynote/XyNote-latest-linux-arm64.deb" download>
+            <span class="dl-tile-top"><span>银河麒麟 ARM64</span><span class="dl-tile-fmt">arm64 .deb</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_linux_deb_arm64">飞腾 / 鲲鹏 · V10</span>
           </a>
           <a class="dl-tile" id="dlRpm" href="/downloads/xynote/XyNote-latest-linux-x86_64.rpm" download>
-            <span class="dl-tile-top"><span>Fedora / RHEL</span><span class="dl-tile-fmt">.rpm</span></span>
-            <span class="dl-tile-sub" data-xy-size="xynote_linux_rpm">x86_64 安装包</span>
+            <span class="dl-tile-top"><span>Fedora / openEuler</span><span class="dl-tile-fmt">x64 .rpm</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_linux_rpm">RHEL / 麒麟服务版</span>
+          </a>
+          <a class="dl-tile" id="dlRpmArm" href="/downloads/xynote/XyNote-latest-linux-aarch64.rpm" download>
+            <span class="dl-tile-top"><span>ARM64 RPM 发行版</span><span class="dl-tile-fmt">arm64 .rpm</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_linux_rpm_arm64">openEuler / 麒麟 V10</span>
+          </a>
+          <a class="dl-tile" id="dlAppImage" href="/downloads/xynote/XyNote-latest-linux-amd64.AppImage" download>
+            <span class="dl-tile-top"><span>Linux 通用免安装</span><span class="dl-tile-fmt">AppImage</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_linux_appimage">x86_64 · 跨发行版</span>
           </a>
         </div>
 
         <div class="dl-foot-links">
-          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；Windows 便携版支持右键「用小悦笔记打开」及一键默认打开 <code>.md</code>；macOS 支持 10.15 Catalina（Intel）/ 11.0 Big Sur（M 芯片）及以上（含 macOS 12 Monterey），首次打开如遇系统拦截可在「访达」右键应用选「打开」</span>
+          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；银河麒麟 KylinOS V10（含飞腾/鲲鹏 ARM64）、统信 UOS、Ubuntu/Debian 请下载 <code>.deb</code>（<code>sudo apt install ./XyNote_*.deb</code>），Fedora/openEuler 请下载 <code>.rpm</code>，已内置 WebKitGTK 渲染防白屏保护与只读目录自动回退；macOS 首次打开如遇系统拦截请在「访达」右键应用选「打开」。</span>
         </div>
       </div>
     </div>
@@ -1992,6 +2004,7 @@
   (function initDownloads() {
     var ua = (navigator.userAgent || '').toLowerCase();
     var os = ua.indexOf('mac') >= 0 ? 'mac' : ((ua.indexOf('linux') >= 0 && ua.indexOf('android') < 0) ? 'linux' : 'win');
+    var isLinuxArm = os === 'linux' && (ua.indexOf('aarch64') >= 0 || ua.indexOf('arm64') >= 0);
     var btn = $('mainDlBtn');
     var lbl = $('mainDlLabel');
 
@@ -2007,12 +2020,15 @@
       };
 
       var def = {
-        winSetup: { url: '/downloads/xynote/XyNote-latest-windows-x64-setup.exe', key: 'xynote_win_setup', asset: pick(function (n) { return n.endsWith('-setup.exe'); }) },
-        winPort:  { url: '/downloads/xynote/XyNote-latest-windows-x64-portable.exe', key: 'xynote_win_portable', asset: pick(function (n) { return n.endsWith('-portable.exe'); }) },
-        macArm:   { url: '/downloads/xynote/XyNote-latest-macos-arm64.dmg', key: 'xynote_mac_arm64', asset: pick(function (n) { return n.endsWith('.dmg') && (n.indexOf('arm64') >= 0 || n.indexOf('aarch64') >= 0); }) },
-        macX64:   { url: '/downloads/xynote/XyNote-latest-macos-x64.dmg', key: 'xynote_mac_x64', asset: pick(function (n) { return n.endsWith('.dmg') && n.indexOf('macos-x64') >= 0; }) },
-        deb:      { url: '/downloads/xynote/XyNote-latest-linux-amd64.deb', key: 'xynote_linux_deb', asset: pick(function (n) { return n.endsWith('.deb'); }) },
-        rpm:      { url: '/downloads/xynote/XyNote-latest-linux-x86_64.rpm', key: 'xynote_linux_rpm', asset: pick(function (n) { return n.endsWith('.rpm'); }) }
+        winSetup:  { url: '/downloads/xynote/XyNote-latest-windows-x64-setup.exe', key: 'xynote_win_setup', asset: pick(function (n) { return n.endsWith('-setup.exe'); }) },
+        winPort:   { url: '/downloads/xynote/XyNote-latest-windows-x64-portable.exe', key: 'xynote_win_portable', asset: pick(function (n) { return n.endsWith('-portable.exe'); }) },
+        macArm:    { url: '/downloads/xynote/XyNote-latest-macos-arm64.dmg', key: 'xynote_mac_arm64', asset: pick(function (n) { return n.endsWith('.dmg') && (n.indexOf('arm64') >= 0 || n.indexOf('aarch64') >= 0); }) },
+        macX64:    { url: '/downloads/xynote/XyNote-latest-macos-x64.dmg', key: 'xynote_mac_x64', asset: pick(function (n) { return n.endsWith('.dmg') && n.indexOf('macos-x64') >= 0; }) },
+        deb:       { url: '/downloads/xynote/XyNote-latest-linux-amd64.deb', key: 'xynote_linux_deb', asset: pick(function (n) { return n.endsWith('_amd64.deb') || (n.endsWith('.deb') && n.indexOf('arm64') < 0 && n.indexOf('aarch64') < 0); }) },
+        debArm:    { url: '/downloads/xynote/XyNote-latest-linux-arm64.deb', key: 'xynote_linux_deb_arm64', asset: pick(function (n) { return n.endsWith('.deb') && (n.indexOf('arm64') >= 0 || n.indexOf('aarch64') >= 0); }) },
+        rpm:       { url: '/downloads/xynote/XyNote-latest-linux-x86_64.rpm', key: 'xynote_linux_rpm', asset: pick(function (n) { return n.endsWith('.x86_64.rpm') || (n.endsWith('.rpm') && n.indexOf('aarch64') < 0 && n.indexOf('arm64') < 0); }) },
+        rpmArm:    { url: '/downloads/xynote/XyNote-latest-linux-aarch64.rpm', key: 'xynote_linux_rpm_arm64', asset: pick(function (n) { return n.endsWith('.rpm') && (n.indexOf('aarch64') >= 0 || n.indexOf('arm64') >= 0); }) },
+        appImage:  { url: '/downloads/xynote/XyNote-latest-linux-amd64.AppImage', key: 'xynote_linux_appimage', asset: pick(function (n) { return n.endsWith('.appimage') && (n.indexOf('amd64') >= 0 || n.indexOf('x86_64') >= 0); }) }
       };
 
       var resolved = {};
@@ -2035,7 +2051,7 @@
         resolved[k] = { url: url, size: size, version: itemVer };
       });
 
-      var activeVer = (os === 'mac' ? resolved.macArm.version : (os === 'linux' ? resolved.deb.version : resolved.winSetup.version)) || ver;
+      var activeVer = (os === 'mac' ? resolved.macArm.version : (os === 'linux' ? (isLinuxArm ? resolved.debArm.version : resolved.deb.version) : resolved.winSetup.version)) || ver;
       if (activeVer) {
         if ($('verBadge')) $('verBadge').textContent = activeVer + ' · 全部功能永久免费';
         if ($('winVer')) $('winVer').textContent = '小悦笔记 XyNote ' + activeVer;
@@ -2047,15 +2063,21 @@
       if ($('dlMacArm')) $('dlMacArm').href = resolved.macArm.url;
       if ($('dlMacX64')) $('dlMacX64').href = resolved.macX64.url;
       if ($('dlDeb')) $('dlDeb').href = resolved.deb.url;
+      if ($('dlDebArm')) $('dlDebArm').href = resolved.debArm.url;
       if ($('dlRpm')) $('dlRpm').href = resolved.rpm.url;
+      if ($('dlRpmArm')) $('dlRpmArm').href = resolved.rpmArm.url;
+      if ($('dlAppImage')) $('dlAppImage').href = resolved.appImage.url;
 
       var sizeSet = {
         xynote_win_setup: resolved.winSetup.size ? ('x64 Setup · ' + resolved.winSetup.size) : '',
         xynote_win_portable: resolved.winPort.size ? ('单文件便携 · ' + resolved.winPort.size) : '',
         xynote_mac_arm64: resolved.macArm.size ? ('macOS 11+ · ' + resolved.macArm.size) : '',
         xynote_mac_x64: resolved.macX64.size ? ('macOS 10.15+ · ' + resolved.macX64.size) : '',
-        xynote_linux_deb: resolved.deb.size ? ('amd64 · ' + resolved.deb.size) : '',
-        xynote_linux_rpm: resolved.rpm.size ? ('x86_64 · ' + resolved.rpm.size) : ''
+        xynote_linux_deb: resolved.deb.size ? ('x86_64 · ' + resolved.deb.size) : '',
+        xynote_linux_deb_arm64: resolved.debArm.size ? ('飞腾/鲲鹏 · ' + resolved.debArm.size) : '',
+        xynote_linux_rpm: resolved.rpm.size ? ('x86_64 · ' + resolved.rpm.size) : '',
+        xynote_linux_rpm_arm64: resolved.rpmArm.size ? ('aarch64 · ' + resolved.rpmArm.size) : '',
+        xynote_linux_appimage: resolved.appImage.size ? ('x86_64 · ' + resolved.appImage.size) : ''
       };
       Object.keys(sizeSet).forEach(function (itemKey) {
         if (!sizeSet[itemKey]) return;
@@ -2070,13 +2092,18 @@
         primary = resolved.macArm;
         labelText = '下载 macOS Apple 芯片版' + (primary.version ? ' (' + primary.version + ')' : '');
       } else if (os === 'linux') {
-        primary = resolved.deb;
-        labelText = '下载 Linux .deb 版' + (primary.version ? ' (' + primary.version + ')' : '');
+        if (isLinuxArm) {
+          primary = resolved.debArm;
+          labelText = '下载银河麒麟 / Linux ARM64 .deb' + (primary.version ? ' (' + primary.version + ')' : '');
+        } else {
+          primary = resolved.deb;
+          labelText = '下载银河麒麟 / Linux .deb 版' + (primary.version ? ' (' + primary.version + ')' : '');
+        }
       }
       if (btn) btn.href = primary.url;
       if (lbl) lbl.textContent = labelText;
       if ($('dlSubHint')) {
-        $('dlSubHint').textContent = (primary.size ? '安装包大小 ' + primary.size + ' · ' : '') + '全平台 64 位原生客户端 · 支持增量更新';
+        $('dlSubHint').textContent = (primary.size ? '安装包大小 ' + primary.size + ' · ' : '') + '全平台 64 位原生客户端 · 支持银河麒麟 KylinOS / UOS / Linux';
       }
     }
 

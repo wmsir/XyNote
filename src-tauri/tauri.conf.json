@@ -51,6 +51,21 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "category": "Productivity",
+    "shortDescription": "小悦笔记 XyNote - 本地优先的块级笔记与多维表格",
+    "longDescription": "小悦笔记 XyNote 是一款本地优先的跨平台桌面笔记，支持块级大纲编辑、多维表格、磁盘 Markdown 直编与多端同步，原生支持银河麒麟 KylinOS、统信 UOS、Ubuntu、Debian、Fedora、openEuler（x86_64 / ARM64）。",
+    "linux": {
+      "deb": {
+        "section": "editors",
+        "priority": "optional"
+      },
+      "rpm": {
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
     }
   }
 }

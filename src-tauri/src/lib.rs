@@ -26,11 +26,65 @@ pub mod storage;
 pub mod url_meta;
 pub mod win_dialogs;
 
+#[cfg(all(not(test), target_os = "linux"))]
+fn configure_linux_webview_env() {
+    // 银河麒麟 KylinOS (UKUI)、统信 UOS (DDE)、国产 GPU（景嘉微/摩尔线程等）以及部分 Wayland/虚拟机环境下，
+    // WebKitGTK 4.1 默认启用的 DMABUF 硬件渲染可能导致白屏、黑屏或 EGL 崩溃。
+    // 默认禁用 DMABUF 渲染器（不影响常规流畅度），如需强制启用可设置 XYNOTE_LINUX_GPU=1。
+    let force_gpu = std::env::var("XYNOTE_LINUX_GPU")
+        .map(|v| v.trim() == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !force_gpu && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+fn is_linux_readonly_install_dir(dir: &std::path::Path) -> bool {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return true;
+    }
+    let s = dir.to_string_lossy();
+    let system_prefixes = [
+        "/usr/",
+        "/usr",
+        "/opt/",
+        "/snap/",
+        "/app/",
+        "/bin",
+        "/sbin",
+        "/nix/",
+        "/tmp/.mount_",
+    ];
+    if system_prefixes
+        .iter()
+        .any(|p| s == *p || s.starts_with(p))
+    {
+        return true;
+    }
+    // 进一步探测目录是否可写：若为只读系统目录或无写权限，自动回退到用户数据目录
+    let probe = dir.join(format!(".xynote-write-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            false
+        }
+        Err(_) => true,
+    }
+}
+
 #[cfg(not(test))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use db::Database;
     use tauri::Manager;
+
+    #[cfg(target_os = "linux")]
+    configure_linux_webview_env();
 
     let cli_files = file_assoc::collect_cli_open_files();
     let ipc_server = match file_assoc::acquire_or_forward_single_instance(&cli_files) {
@@ -52,6 +106,10 @@ pub fn run() {
             let exe_dir = match raw_exe_dir {
                 #[cfg(target_os = "macos")]
                 Some(dir) if dir.to_string_lossy().contains(".app/Contents/MacOS") => {
+                    fallback_app_data_dir.clone()
+                }
+                #[cfg(target_os = "linux")]
+                Some(dir) if is_linux_readonly_install_dir(&dir) => {
                     fallback_app_data_dir.clone()
                 }
                 Some(dir) => dir,

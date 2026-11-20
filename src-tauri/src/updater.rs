@@ -62,12 +62,72 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     parse_version(latest) > parse_version(current)
 }
 
-/// 按系统挑安装包：Windows 安装版 → MSI → 便携版；便携模式运行且存在 portable 包时优先挑便携版
-pub fn pick_asset_for_mode<'a>(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxPkgPref {
+    AppImage,
+    Deb,
+    Rpm,
+}
+
+fn linux_asset_matches_arch(lower_name: &str, arch: &str) -> bool {
+    if arch == "aarch64" || arch == "arm64" {
+        lower_name.contains("aarch64") || lower_name.contains("arm64")
+    } else {
+        lower_name.contains("amd64")
+            || lower_name.contains("x86_64")
+            || lower_name.contains("x64")
+    }
+}
+
+fn detect_linux_pkg_pref() -> LinuxPkgPref {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return LinuxPkgPref::AppImage;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let has_dpkg = std::path::Path::new("/usr/bin/dpkg").exists();
+        let has_rpm = std::path::Path::new("/usr/bin/rpm").exists();
+        if has_dpkg && !has_rpm {
+            return LinuxPkgPref::Deb;
+        }
+        if has_rpm && !has_dpkg {
+            return LinuxPkgPref::Rpm;
+        }
+        if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
+            let lower = os_release.to_ascii_lowercase();
+            if lower.contains("kylin")
+                || lower.contains("ubuntu")
+                || lower.contains("debian")
+                || lower.contains("uos")
+                || lower.contains("uniontech")
+                || lower.contains("deepin")
+            {
+                return if has_dpkg {
+                    LinuxPkgPref::Deb
+                } else {
+                    LinuxPkgPref::Rpm
+                };
+            }
+            if lower.contains("fedora")
+                || lower.contains("rhel")
+                || lower.contains("centos")
+                || lower.contains("openeuler")
+                || lower.contains("suse")
+            {
+                return LinuxPkgPref::Rpm;
+            }
+        }
+    }
+    LinuxPkgPref::AppImage
+}
+
+/// 按系统、架构与 Linux 包格式偏好挑安装包
+pub fn pick_asset_for_mode_and_linux<'a>(
     names: &'a [String],
     os: &str,
     arch: &str,
     prefer_portable: bool,
+    linux_pref: LinuxPkgPref,
 ) -> Option<&'a String> {
     let find = |pred: &dyn Fn(&str) -> bool| names.iter().find(|n| pred(&n.to_lowercase()));
     match os {
@@ -87,10 +147,37 @@ pub fn pick_asset_for_mode<'a>(
             let want = if arch == "aarch64" { "aarch64" } else { "x64" };
             find(&|n| n.ends_with(".dmg") && n.contains(want)).or_else(|| find(&|n| n.ends_with(".dmg")))
         }
-        _ => find(&|n| n.ends_with(".appimage"))
-            .or_else(|| find(&|n| n.ends_with(".deb")))
-            .or_else(|| find(&|n| n.ends_with(".rpm"))),
+        _ => {
+            let exts: [&str; 3] = match linux_pref {
+                LinuxPkgPref::AppImage => [".appimage", ".deb", ".rpm"],
+                LinuxPkgPref::Deb => [".deb", ".appimage", ".rpm"],
+                LinuxPkgPref::Rpm => [".rpm", ".appimage", ".deb"],
+            };
+            // 优先严格匹配本机 CPU 架构（区分 x86_64 与银河麒麟 ARM64 飞腾/鲲鹏）
+            for ext in exts {
+                if let Some(hit) = find(&|n| n.ends_with(ext) && linux_asset_matches_arch(n, arch)) {
+                    return Some(hit);
+                }
+            }
+            // 若旧版本发布产物未带架构后缀，再按后缀兜底
+            for ext in exts {
+                if let Some(hit) = find(&|n| n.ends_with(ext)) {
+                    return Some(hit);
+                }
+            }
+            None
+        }
     }
+}
+
+/// 按系统挑安装包：Windows 安装版 → MSI → 便携版；便携模式运行且存在 portable 包时优先挑便携版
+pub fn pick_asset_for_mode<'a>(
+    names: &'a [String],
+    os: &str,
+    arch: &str,
+    prefer_portable: bool,
+) -> Option<&'a String> {
+    pick_asset_for_mode_and_linux(names, os, arch, prefer_portable, LinuxPkgPref::AppImage)
 }
 
 pub fn pick_asset<'a>(names: &'a [String], os: &str, arch: &str) -> Option<&'a String> {
@@ -112,8 +199,15 @@ pub fn cache_busted_url(base: &str, ts_secs: u64) -> String {
 fn build_info(rel: GhRelease, current: &str) -> UpdateInfo {
     let names: Vec<String> = rel.assets.iter().map(|a| a.name.clone()).collect();
     let prefer_portable = is_running_portable();
-    let picked = pick_asset_for_mode(&names, std::env::consts::OS, std::env::consts::ARCH, prefer_portable)
-        .and_then(|n| rel.assets.iter().find(|a| &a.name == n));
+    let linux_pref = detect_linux_pkg_pref();
+    let picked = pick_asset_for_mode_and_linux(
+        &names,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        prefer_portable,
+        linux_pref,
+    )
+    .and_then(|n| rel.assets.iter().find(|a| &a.name == n));
     let latest = rel.tag_name.trim().trim_start_matches(['v', 'V']).to_string();
     UpdateInfo {
         current_version: current.to_string(),
@@ -262,6 +356,46 @@ mod tests {
         assert_eq!(
             pick_asset_for_mode(&names, "windows", "x86_64", false).unwrap(),
             "XyNote_0.8.5_x64-setup.exe"
+        );
+    }
+
+    #[test]
+    fn picks_linux_asset_by_arch_and_distro_pref() {
+        let names: Vec<String> = [
+            "XyNote_0.8.10_amd64.deb",
+            "XyNote_0.8.10_arm64.deb",
+            "XyNote-0.8.10-1.x86_64.rpm",
+            "XyNote-0.8.10-1.aarch64.rpm",
+            "XyNote_0.8.10_amd64.AppImage",
+            "XyNote_0.8.10_aarch64.AppImage",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // 银河麒麟 KylinOS / 统信 UOS / Ubuntu (ARM64 飞腾/鲲鹏)
+        assert_eq!(
+            pick_asset_for_mode_and_linux(&names, "linux", "aarch64", false, LinuxPkgPref::Deb).unwrap(),
+            "XyNote_0.8.10_arm64.deb"
+        );
+        // 银河麒麟服务器版 / openEuler (ARM64)
+        assert_eq!(
+            pick_asset_for_mode_and_linux(&names, "linux", "aarch64", false, LinuxPkgPref::Rpm).unwrap(),
+            "XyNote-0.8.10-1.aarch64.rpm"
+        );
+        // AppImage (ARM64)
+        assert_eq!(
+            pick_asset_for_mode_and_linux(&names, "linux", "aarch64", false, LinuxPkgPref::AppImage).unwrap(),
+            "XyNote_0.8.10_aarch64.AppImage"
+        );
+        // 银河麒麟 / Ubuntu / Debian (x86_64)
+        assert_eq!(
+            pick_asset_for_mode_and_linux(&names, "linux", "x86_64", false, LinuxPkgPref::Deb).unwrap(),
+            "XyNote_0.8.10_amd64.deb"
+        );
+        // Fedora / RHEL / openEuler (x86_64)
+        assert_eq!(
+            pick_asset_for_mode_and_linux(&names, "linux", "x86_64", false, LinuxPkgPref::Rpm).unwrap(),
+            "XyNote-0.8.10-1.x86_64.rpm"
         );
     }
 
