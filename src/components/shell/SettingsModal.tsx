@@ -33,6 +33,7 @@ import {
   Type,
   ExternalLink,
   X,
+  Zap,
 } from "lucide-react";
 import {
   createBackupNow,
@@ -68,6 +69,7 @@ import { XyLogoIcon } from "./XyLogoIcon";
 import { SyncSettingsPanel } from "./SyncSettingsPanel";
 import { DonatePanel } from "./DonatePanel";
 import { FeedbackPanel } from "./FeedbackPanel";
+import { QuickCaptureSettingsPanel } from "./QuickCaptureSettingsPanel";
 import { openExternalUrl, type SyncConfig } from "../../api/sync";
 import {
   getShellIntegrationStatus,
@@ -99,6 +101,7 @@ export type SettingsTabId =
   | "themes"
   | "appearance"
   | "shortcuts"
+  | "quick"
   | "editor"
   | "backup"
   | "about";
@@ -790,6 +793,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: "kb", label: "本地知识库", icon: <Network size={15} /> },
     { id: "themes", label: "主题与样式插件", icon: <Sparkles size={15} /> },
     { id: "shortcuts", label: "快捷键配置", icon: <Keyboard size={15} /> },
+    { id: "quick", label: "快速记录与托盘", icon: <Zap size={15} /> },
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
     { id: "appearance", label: "外观与排版", icon: <Palette size={15} /> },
     { id: "backup", label: "备份与数据安全", icon: <ShieldCheck size={15} /> },
@@ -2107,6 +2111,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onNotify={onNotify}
               />
             )}
+
+            {activeTab === "quick" && <QuickCaptureSettingsPanel onNotify={onNotify} />}
 
             {/* TAB 6: 关于软件 */}
             {activeTab === "about" && (

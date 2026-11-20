@@ -1205,6 +1205,54 @@ pub async fn open_new_window(app: AppHandle, page_id: Option<String>) -> Result<
     Ok(label)
 }
 
+/// 快速记录与托盘的当前设置
+#[tauri::command]
+pub fn quick_capture_get_config(app: AppHandle, db: State<'_, Database>) -> crate::quick::QuickCaptureConfig {
+    crate::quick::current_config(&app, &db)
+}
+
+/// 修改快速记录快捷键、托盘与「关闭到托盘」。快捷键注册失败时恢复原来的并返回错误。
+#[tauri::command]
+pub fn quick_capture_set_config(
+    app: AppHandle,
+    db: State<'_, Database>,
+    shortcut: String,
+    tray: bool,
+    close_to_tray: bool,
+) -> Result<crate::quick::QuickCaptureConfig, String> {
+    use crate::quick::*;
+    let (old_shortcut, _, _) = read_config(&db);
+    let shortcut = shortcut.trim().to_string();
+    if shortcut != old_shortcut {
+        if let Err(e) = apply_shortcut(&app, &shortcut) {
+            let _ = apply_shortcut(&app, &old_shortcut);
+            return Err(e);
+        }
+        db.set_setting(SETTING_SHORTCUT, &shortcut).map_err(String::from)?;
+    }
+    db.set_setting(SETTING_TRAY, if tray { "true" } else { "false" })
+        .map_err(String::from)?;
+    db.set_setting(SETTING_CLOSE_TO_TRAY, if close_to_tray { "true" } else { "false" })
+        .map_err(String::from)?;
+    if tray {
+        if let Err(e) = setup_tray(&app) {
+            return Err(e);
+        }
+    } else {
+        remove_tray(&app);
+    }
+    Ok(current_config(&app, &db))
+}
+
+/// 隐藏快速记录小窗
+#[tauri::command]
+pub fn quick_capture_hide(app: AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window(crate::quick::QUICK_LABEL) {
+        let _ = w.hide();
+    }
+}
+
 /// 检查更新：读取 GitHub 上最新发布的版本
 #[tauri::command]
 pub async fn check_for_update() -> Result<crate::updater::UpdateInfo, String> {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { useSyncController } from "./hooks/useSyncController";
 import { exportMarkdownFile, exportMarkdownHtml, exportPageFile, exportPageHtml } from "./api/pro";
 import { printHtmlDocument } from "./utils/printHtml";
@@ -605,6 +606,23 @@ export const App: React.FC = () => {
       }
     }
   }, [refreshSidebarLists, loadPageDetailById]);
+
+  // 快速记录小窗存了内容、托盘菜单点了「今天的每日笔记」
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const offs: Array<() => void> = [];
+    listen("quick-capture:saved", () => {
+      handleRemoteSyncChanges().catch(() => {});
+    })
+      .then((u) => offs.push(u))
+      .catch(() => {});
+    listen("tray:daily-note", () => {
+      productivityRef.current.openDailyNote().catch(() => {});
+    })
+      .then((u) => offs.push(u))
+      .catch(() => {});
+    return () => offs.forEach((u) => u());
+  }, [handleRemoteSyncChanges]);
 
   // 多窗口：切回这个窗口时，载入其他窗口里的修改（页面列表与当前页面）
   const focusRefreshAt = useRef(0);
