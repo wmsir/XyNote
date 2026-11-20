@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "cn.fwpt.xynote",
     "vendor": "FWPT",
-    "versionCode": 8010,
-    "versionName": "0.8.10",
+    "versionCode": 8011,
+    "versionName": "0.8.11",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
