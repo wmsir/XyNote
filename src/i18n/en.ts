@@ -1908,7 +1908,6 @@ const EN: Record<string, string> = {
   "集中查看所有页面里没做完的待办，按已逾期、今天、未来 7 天分组": "See unfinished to-dos from every page, grouped by overdue, today and the next 7 days",
   "项未完成": "open",
   "（未命名待办）": "(Untitled to-do)",
-  "设置提醒时间": "Set reminder",
   "导出为 {0} ({1})": "Export as {0} ({1})",
   "导出此页": "Export this page",
   "思维导图": "Mind map",
