@@ -717,6 +717,11 @@ export function buildPropsForBlockType(
         embedProvider: currentProps.embedProvider,
         caption: currentProps.caption ?? "",
       };
+    case "ref":
+      return {
+        refPageId: currentProps.refPageId ?? "",
+        refBlockId: currentProps.refBlockId ?? "",
+      };
     case "file":
       return {
         filePath: currentProps.filePath ?? "",
@@ -763,7 +768,8 @@ export function isRichTextEditableBlock(blockType: BlockType): boolean {
     blockType !== "image" &&
     blockType !== "bookmark" &&
     blockType !== "embed" &&
-    blockType !== "file"
+    blockType !== "file" &&
+    blockType !== "ref"
   );
 }
 

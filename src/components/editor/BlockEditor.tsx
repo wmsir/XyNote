@@ -2156,6 +2156,21 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
             onChangeColor={handleChangeBlockColor}
             onInsertBelow={handleInsertBlockBelow}
             onDuplicate={handleDuplicateBlock}
+            onCopyRef={
+              pageId.startsWith("local:")
+                ? undefined
+                : (id) => {
+                    const link = `xynote://block/${pageId}/${id}`;
+                    navigator.clipboard
+                      ?.writeText(link)
+                      .then(() =>
+                        window.dispatchEvent(
+                          new CustomEvent("xynote:toast", { detail: "已复制块引用，粘贴到其他页面的空行即可" })
+                        )
+                      )
+                      .catch(() => {});
+                  }
+            }
             onMoveUp={(id) => handleMoveBlock(id, -1)}
             onMoveDown={(id) => handleMoveBlock(id, 1)}
             onDelete={handleDeleteBlock}

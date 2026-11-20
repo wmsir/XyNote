@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Code2,
   Copy,
+  Link2,
   Film,
   GitBranch,
   Heading1,
@@ -43,6 +44,8 @@ export interface BlockActionMenuProps {
   onChangeColor: (blockId: string, color: string) => void;
   onInsertBelow?: (blockId: string) => void;
   onDuplicate: (blockId: string) => void;
+  /** 复制块引用链接，粘贴到别的页面会显示这一块的实时内容 */
+  onCopyRef?: (blockId: string) => void;
   onMoveUp: (blockId: string) => void;
   onMoveDown: (blockId: string) => void;
   onDelete: (blockId: string) => void;
@@ -87,6 +90,7 @@ export const BlockActionMenu: React.FC<BlockActionMenuProps> = ({
   onChangeColor,
   onInsertBelow,
   onDuplicate,
+  onCopyRef,
   onMoveUp,
   onMoveDown,
   onDelete,
@@ -278,6 +282,23 @@ export const BlockActionMenu: React.FC<BlockActionMenuProps> = ({
           <kbd className="nb-editor-kbd-badge">{duplicateShortcut}</kbd>
         )}
       </button>
+
+      {onCopyRef && block.blockType !== "ref" && (
+        <button
+          type="button"
+          className="nb-editor-action-row"
+          onClick={() => {
+            onCopyRef(block.id);
+            onClose();
+          }}
+          title="粘贴到其他页面，会显示这一块的实时内容"
+        >
+          <span className="nb-editor-action-row-left">
+            <Link2 size={14} />
+            <span>复制块引用</span>
+          </span>
+        </button>
+      )}
 
       <button
         type="button"

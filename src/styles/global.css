@@ -6022,3 +6022,199 @@ body.is-quick-window #root {
   color: var(--text-tertiary);
   white-space: nowrap;
 }
+
+/* ===== 写作统计 ===== */
+.nb-statusbar-stats-wrap {
+  position: relative;
+}
+.nb-statusbar-stats.is-clickable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.nb-statusbar-stats.is-clickable:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nb-statusbar-goal {
+  display: inline-block;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+.nb-statusbar-goal > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-color);
+}
+.nb-statusbar-goal > span.is-done {
+  background: #2f9e44;
+}
+.nb-wstats {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 70;
+  width: 300px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-primary));
+  box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.18));
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+}
+.nb-wstats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.nb-wstats-goal {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+.nb-wstats-goal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.nb-wstats-goal-row input {
+  margin-left: auto;
+  width: 90px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.nb-wstats-bar {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+.nb-wstats-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-color);
+  transition: width 0.3s ease;
+}
+.nb-wstats-bar > span.is-done {
+  background: #2f9e44;
+}
+.nb-wstats-goal-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.nb-wstats-nums {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.nb-wstats-nums > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nb-wstats-nums strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.nb-wstats-nums span {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+.nb-wstats-flame {
+  color: #e8590c;
+}
+.nb-wstats-heat {
+  display: flex;
+  gap: 3px;
+}
+.nb-wstats-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.nb-wstats-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+}
+.nb-wstats-cell.l1 { background: color-mix(in srgb, var(--accent-color) 25%, transparent); }
+.nb-wstats-cell.l2 { background: color-mix(in srgb, var(--accent-color) 50%, transparent); }
+.nb-wstats-cell.l3 { background: color-mix(in srgb, var(--accent-color) 75%, transparent); }
+.nb-wstats-cell.l4 { background: var(--accent-color); }
+.nb-wstats-cell.lx { background: transparent; }
+.nb-wstats-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* ===== 页面锁定 ===== */
+.nb-page-locked .nb-editor-gutter,
+.nb-page-locked .nb-todo-due:not(.has-due),
+.nb-page-locked .nb-db-cal-add {
+  display: none !important;
+}
+.nb-page-locked [contenteditable="true"],
+.nb-page-locked textarea {
+  caret-color: transparent;
+}
+.nb-lock-banner {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 720px;
+  margin: 8px auto 0;
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-primary));
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.nb-lock-banner-btn {
+  margin-left: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.nb-lock-banner-btn:hover {
+  background: var(--bg-hover);
+}

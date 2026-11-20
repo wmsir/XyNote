@@ -33,7 +33,8 @@ export type BlockType =
   | "bookmark"
   | "embed"
   | "mermaid"
-  | "file";
+  | "file"
+  | "ref";
 
 export interface BlockProps {
   checked?: boolean;
@@ -62,6 +63,9 @@ export interface BlockProps {
   fileName?: string;
   fileSize?: number;
   mimeType?: string;
+  /** 块引用：被引用块所在页面和块 */
+  refPageId?: string;
+  refBlockId?: string;
   /** 待办的截止 / 提醒时间，本地时间 YYYY-MM-DDTHH:mm */
   dueAt?: string;
 }

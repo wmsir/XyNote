@@ -110,6 +110,11 @@ pub struct BlockProps {
     pub file_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// 块引用：被引用块所在页面和块
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_page_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_block_id: Option<String>,
     /// 待办的截止 / 提醒时间（本地时间 `YYYY-MM-DDTHH:mm`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_at: Option<String>,
