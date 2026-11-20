@@ -22,7 +22,12 @@ import {
   Upload,
   X,
   AppWindow,
+  CalendarDays,
+  CalendarRange,
+  Clock,
+  ListTodo,
 } from "lucide-react";
+import { DailyCalendar, type DailyCalendarProps } from "./DailyCalendar";
 import type { Page, WorkspaceFolder } from "../../types/notion";
 import { XyLogoIcon } from "./XyLogoIcon";
 import { FolderTree } from "./FolderTree";
@@ -78,6 +83,17 @@ export interface SidebarProps {
   /** 重命名快捷键的显示文字，例如 F2 */
   renameShortcutLabel?: string;
   notify: (message: string, durationMs?: number) => void;
+  /** 最近访问的页面（新到旧） */
+  recentPages?: Page[];
+  onClearRecent?: () => void;
+  /** 打开今天的每日笔记 */
+  onOpenDailyNote?: () => void;
+  /** 每日笔记日历（不含 onClose） */
+  dailyCalendar?: Omit<DailyCalendarProps, "onClose">;
+  /** 打开待办汇总 */
+  onOpenTodos?: () => void;
+  /** 已逾期 + 今天到期的待办数 */
+  todoBadge?: number;
 }
 
 const SIDEBAR_WIDTH_KEY = "xynote.sidebarWidth";
@@ -172,7 +188,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   renameFileRequest,
   renameShortcutLabel = "F2",
   notify,
+  recentPages = [],
+  onClearRecent,
+  onOpenDailyNote,
+  dailyCalendar,
+  onOpenTodos,
+  todoBadge = 0,
 }) => {
+  const [calOpen, setCalOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(() => {
+    try {
+      return localStorage.getItem("xynote.sidebar.recentOpen") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({
     "page-welcome": true,
   });
@@ -557,6 +587,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Sparkles size={16} strokeWidth={1.6} />
           <span className="nb-sidebar-item-label">模板中心</span>
         </button>
+
+        {onOpenDailyNote && (
+          <div className="nb-sidebar-daily">
+            <button
+              type="button"
+              className="nb-sidebar-item"
+              onClick={onOpenDailyNote}
+              title="打开今天的每日笔记 (Ctrl+Shift+D)"
+            >
+              <CalendarDays size={16} strokeWidth={1.6} />
+              <span className="nb-sidebar-item-label">今天</span>
+              <kbd className="nb-kbd">Ctrl+Shift+D</kbd>
+            </button>
+            {dailyCalendar && (
+              <button
+                type="button"
+                className="nb-sidebar-daily-cal"
+                title="按日期打开每日笔记"
+                aria-label="每日笔记日历"
+                aria-expanded={calOpen}
+                onClick={() => setCalOpen((v) => !v)}
+              >
+                <CalendarRange size={15} strokeWidth={1.6} />
+              </button>
+            )}
+            {calOpen && dailyCalendar && (
+              <DailyCalendar
+                {...dailyCalendar}
+                onPick={(d) => {
+                  setCalOpen(false);
+                  dailyCalendar.onPick(d);
+                }}
+                onClose={() => setCalOpen(false)}
+              />
+            )}
+          </div>
+        )}
+
+        {onOpenTodos && (
+          <button
+            type="button"
+            className="nb-sidebar-item"
+            onClick={onOpenTodos}
+            title="所有页面里没做完的待办 (Ctrl+Shift+T)"
+          >
+            <ListTodo size={16} strokeWidth={1.6} />
+            <span className="nb-sidebar-item-label">待办</span>
+            {todoBadge > 0 && (
+              <span className="nb-sidebar-badge" title="已逾期和今天到期">
+                {todoBadge > 99 ? "99+" : todoBadge}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Scrollable Workspace Tree Sections (Favorites + Workspace Pages) */}
@@ -626,6 +710,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Star size={16} strokeWidth={1.6} fill="currentColor" />
                     </button>
                   </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {recentPages.length > 0 && (
+          <div className="nb-sidebar-section nb-recent-section">
+            <div className="nb-sidebar-section-header">
+              <button
+                type="button"
+                className="nb-sidebar-section-toggle"
+                onClick={() =>
+                  setRecentOpen((v) => {
+                    try {
+                      localStorage.setItem("xynote.sidebar.recentOpen", v ? "0" : "1");
+                    } catch {
+                      /* ignore */
+                    }
+                    return !v;
+                  })
+                }
+                aria-expanded={recentOpen}
+              >
+                <ChevronRight
+                  size={16}
+                  strokeWidth={1.6}
+                  className={`nb-section-chevron${recentOpen ? " is-expanded" : ""}`}
+                />
+                <span>最近访问</span>
+              </button>
+              {onClearRecent && recentOpen && (
+                <button
+                  type="button"
+                  className="nb-sidebar-section-action"
+                  onClick={onClearRecent}
+                  title="清空最近访问"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+            {recentOpen &&
+              recentPages.map((rp) => (
+                <div
+                  key={`recent-${rp.id}`}
+                  className={`nb-tree-row${!activeLocalMdPath && rp.id === activePageId ? " is-active" : ""}`}
+                  style={{ paddingLeft: "8px" }}
+                  onClick={() => onSelectPage(rp.id)}
+                  title={rp.title || "无标题"}
+                >
+                  <div className="nb-tree-leading">
+                    <span className="nb-tree-glyph">
+                      <PageNodeGlyph page={rp} />
+                    </span>
+                  </div>
+                  <span className="nb-tree-title" data-i18n-skip="">
+                    {rp.title || "无标题"}
+                  </span>
+                  <Clock size={12} strokeWidth={1.6} className="nb-recent-clock" aria-hidden="true" />
                 </div>
               ))}
           </div>

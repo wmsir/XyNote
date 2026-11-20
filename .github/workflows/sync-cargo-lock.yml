@@ -1,0 +1,43 @@
+name: 同步 Cargo.lock
+
+# 改了 Cargo.toml（新增 / 调整依赖）但没有本地 Rust 环境更新 Cargo.lock 时，
+# 在 GitHub 上解析依赖并把更新后的 Cargo.lock 提交回同一分支。
+# 只补上新依赖，不会升级已锁定的版本。提交由 GITHUB_TOKEN 完成，不会再次触发本工作流。
+on:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - "src-tauri/Cargo.toml"
+      - "server/Cargo.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-cargo-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 解析依赖（只补缺失项）
+        run: |
+          cargo metadata --format-version 1 --manifest-path src-tauri/Cargo.toml > /dev/null
+          if [ -f server/Cargo.toml ]; then
+            cargo metadata --format-version 1 --manifest-path server/Cargo.toml > /dev/null
+          fi
+      - name: 有变化就提交
+        run: |
+          if git diff --quiet -- src-tauri/Cargo.lock server/Cargo.lock; then
+            echo "Cargo.lock 已是最新"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.lock server/Cargo.lock
+          git commit -m "chore: 同步 Cargo.lock"
+          git push

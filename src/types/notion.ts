@@ -56,6 +56,18 @@ export interface BlockProps {
   mermaidView?: "preview" | "split" | "code";
   wordWrap?: boolean;
   colAlignments?: Array<"left" | "center" | "right">;
+  /** 待办的截止 / 提醒时间，本地时间 YYYY-MM-DDTHH:mm */
+  dueAt?: string;
+}
+
+/** 「待办汇总」里的一条未完成待办 */
+export interface TodoItem {
+  blockId: string;
+  pageId: string;
+  pageTitle: string;
+  pageIcon: string;
+  text: string;
+  dueAt: string | null;
 }
 
 export interface Block {
