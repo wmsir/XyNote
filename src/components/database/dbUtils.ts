@@ -5,7 +5,7 @@ import type {
   SelectOption,
 } from "../../types/notion";
 
-export type ViewMode = "table" | "board" | "gallery";
+export type ViewMode = "table" | "board" | "gallery" | "calendar" | "timeline";
 
 export type FilterOperator =
   | "contains"

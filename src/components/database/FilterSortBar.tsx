@@ -6,6 +6,8 @@ import {
   Filter,
   Layers,
   LayoutGrid,
+  CalendarDays,
+  ChartGantt,
   Plus,
   Search,
   Table2,
@@ -191,6 +193,26 @@ export const FilterSortBar: React.FC<FilterSortBarProps> = ({
           >
             <LayoutGrid size={15} />
             <span>画廊视图</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeView === "calendar"}
+            className={`nb-db-view-tab ${activeView === "calendar" ? "is-active" : ""}`}
+            onClick={() => onSwitchView("calendar")}
+          >
+            <CalendarDays size={15} />
+            <span>日历视图</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeView === "timeline"}
+            className={`nb-db-view-tab ${activeView === "timeline" ? "is-active" : ""}`}
+            onClick={() => onSwitchView("timeline")}
+          >
+            <ChartGantt size={15} />
+            <span>时间线</span>
           </button>
         </div>
 

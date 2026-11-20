@@ -19,6 +19,16 @@ import { searchFolderNotes, searchWorkspace } from "../../api/client";
 import { kbSearch } from "../../api/kb";
 import type { FolderSearchHit, KbSearchHit, SearchResult } from "../../types/notion";
 import type { ThemeMode } from "./Topbar";
+import {
+  filterSearchResults,
+  Highlight,
+  parseSearchQuery,
+  relativeTime,
+  SEARCH_TIME_OPTIONS,
+  SEARCH_TYPE_OPTIONS,
+  type SearchTimeFilter,
+  type SearchTypeFilter,
+} from "./searchFilters";
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -48,36 +58,6 @@ interface QuickActionItem {
   run: () => void;
 }
 
-/** 把搜索词在标题、摘要里标出来（不区分大小写，空格分开的多个词分别标） */
-function HighlightText({ text, query }: { text: string; query: string }) {
-  const terms = Array.from(
-    new Set(
-      query
-        .trim()
-        .split(/\s+/)
-        .filter((t) => t.length > 0)
-        .map((t) => t.toLowerCase())
-    )
-  ).sort((a, b) => b.length - a.length);
-  if (!text || terms.length === 0) return <>{text}</>;
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const re = new RegExp(`(${escaped.join("|")})`, "gi");
-  const parts = text.split(re);
-  return (
-    <>
-      {parts.map((part, i) =>
-        i % 2 === 1 ? (
-          <mark key={i} className="nb-cmd-mark">
-            {part}
-          </mark>
-        ) : (
-          part
-        )
-      )}
-    </>
-  );
-}
-
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
   open,
   onClose,
@@ -98,7 +78,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 }) => {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"sag2" | "literal">("sag2");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [rawResults, setResults] = useState<SearchResult[]>([]);
+  /** 搜索筛选：页面类型、修改时间。也可以在搜索框里写 type:db、updated:7d */
+  const [typeFilter, setTypeFilter] = useState<SearchTypeFilter>("all");
+  const [timeFilter, setTimeFilter] = useState<SearchTimeFilter>("any");
+  const parsed = useMemo(() => parseSearchQuery(query), [query]);
+  const effType = parsed.type ?? typeFilter;
+  const effTime = parsed.time ?? timeFilter;
+  const results = useMemo(
+    () => filterSearchResults(rawResults, effType, effTime),
+    [rawResults, effType, effTime]
+  );
   const [fileHits, setFileHits] = useState<FolderSearchHit[]>([]);
   const [kbHits, setKbHits] = useState<KbSearchHit[]>([]);
   const [kbElapsedMs, setKbElapsedMs] = useState(0);
@@ -254,6 +244,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setTypeFilter("all");
+    setTimeFilter("any");
     setActiveIndex(0);
     setKbHits([]);
     setKbElapsedMs(0);
@@ -269,7 +261,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      searchWorkspace(query)
+      searchWorkspace(parsed.text)
         .then((res) => {
           if (!cancelled) {
             setResults(res);
@@ -284,7 +276,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, query, useSag2Mode]);
+  }, [open, parsed.text, useSag2Mode]);
 
   // 文件夹里的笔记：输入停顿一下再搜，避免每敲一个字就扫一遍磁盘
   const rootsKey = JSON.stringify(folderRoots);
@@ -425,7 +417,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             ref={inputRef}
             type="text"
             className="nb-cmd-input"
-            placeholder="搜索页面、文件夹里的笔记或命令…"
+            placeholder="搜索页面、文件夹里的笔记或命令…  可用 type:db  updated:7d"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -463,6 +455,39 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
         </div>
 
+        {!useSag2Mode && (
+          <div className="nb-cmd-filters" role="group" aria-label="搜索筛选">
+            {SEARCH_TYPE_OPTIONS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={`nb-cmd-chip${effType === o.id ? " is-on" : ""}`}
+                aria-pressed={effType === o.id}
+                disabled={parsed.type !== undefined}
+                onClick={() => setTypeFilter(o.id)}
+              >
+                {o.label}
+              </button>
+            ))}
+            <span className="nb-cmd-filter-sep" aria-hidden="true" />
+            {SEARCH_TIME_OPTIONS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={`nb-cmd-chip${effTime === o.id ? " is-on" : ""}`}
+                aria-pressed={effTime === o.id}
+                disabled={parsed.time !== undefined}
+                onClick={() => setTimeFilter(o.id)}
+              >
+                {o.label}
+              </button>
+            ))}
+            {(parsed.type !== undefined || parsed.time !== undefined) && (
+              <span className="nb-cmd-filter-hint">已按搜索框里的条件筛选</span>
+            )}
+          </div>
+        )}
+
         <div className="nb-cmd-list">
           {useSag2Mode ? (
             <>
@@ -499,7 +524,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         )}
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            <HighlightText text={hit.title || "无标题"} query={query} />
+                            <Highlight text={hit.title || "无标题"} terms={parsed.terms} />
                             {hit.rootName && (
                               <span className="nb-cmd-item-meta">{hit.rootName}</span>
                             )}
@@ -510,7 +535,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                           {hit.snippet && (
                             <div className="nb-cmd-item-snippet">
                               {hit.lineStart ? `第 ${hit.lineStart} 行 · ` : null}
-                              <HighlightText text={hit.snippet} query={query} />
+                              <Highlight text={hit.snippet} terms={parsed.terms} />
                             </div>
                           )}
                           {hit.sharedEntities.length > 0 && (
@@ -569,7 +594,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         )}
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            <HighlightText text={hit.title || "无标题"} query={query} />
+                            <Highlight text={hit.title || "无标题"} terms={parsed.terms} />
                             {hit.rootName && (
                               <span className="nb-cmd-item-meta">{hit.rootName}</span>
                             )}
@@ -580,7 +605,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                           {hit.snippet && (
                             <div className="nb-cmd-item-snippet">
                               {hit.lineStart ? `第 ${hit.lineStart} 行 · ` : null}
-                              <HighlightText text={hit.snippet} query={query} />
+                              <Highlight text={hit.snippet} terms={parsed.terms} />
                             </div>
                           )}
                           {hit.sharedEntities.length > 0 && (
@@ -627,8 +652,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       >
                         <PageIcon icon={item.pageIcon} size={17} className="nb-inline-page-icon" />
                         <div className="nb-cmd-item-body">
+                          {item.updatedAt && (
+                            <span className="nb-cmd-item-when" data-i18n-skip="">
+                              {relativeTime(item.updatedAt)}
+                            </span>
+                          )}
                           <div className="nb-cmd-item-title">
-                            <HighlightText text={item.pageTitle || "无标题"} query={query} />
+                            <Highlight text={item.pageTitle || "无标题"} terms={parsed.terms} />
                             {item.pageType === "database" && (
                               <span
                                 className="nb-tree-badge"
@@ -638,9 +668,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                               </span>
                             )}
                           </div>
-                          {item.snippet && (
+                          {item.snippet && item.snippet !== item.pageTitle && (
                             <div className="nb-cmd-item-snippet">
-                              <HighlightText text={item.snippet} query={query} />
+                              <Highlight text={item.snippet} terms={parsed.terms} />
                             </div>
                           )}
                         </div>
@@ -679,13 +709,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         </span>
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            <HighlightText text={hit.name.replace(/\.(md|markdown|mdown|mkd)$/i, "")} query={query} />
+                            <Highlight text={hit.name.replace(/\.(md|markdown|mdown|mkd)$/i, "")} terms={parsed.terms} />
                             <span className="nb-cmd-item-meta">{hit.rootName}</span>
                           </div>
                           <div className="nb-cmd-item-snippet">
                             {hit.line > 0 ? (
                               <>
-                                第 {hit.line} 行 · <HighlightText text={hit.snippet} query={query} />
+                                第 {hit.line} 行 · <Highlight text={hit.snippet} terms={parsed.terms} />
                               </>
                             ) : (
                               "文件名匹配"
