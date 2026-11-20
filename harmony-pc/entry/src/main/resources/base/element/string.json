@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "小悦笔记 XyNote 鸿蒙 PC 桌面客户端"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "本地优先的块级笔记与多维表格"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "小悦笔记"
+    }
+  ]
+}

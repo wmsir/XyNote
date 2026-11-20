@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { readHarmonyWorkspaceJson, writeHarmonyWorkspaceJson } from "./harmony";
 import { iconAsText } from "../icons/pageIcon";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import type {
@@ -513,7 +514,7 @@ export function loadStore(): LocalStore {
     return memoryStore;
   }
   try {
-    let raw = window.localStorage.getItem(STORAGE_KEY);
+    let raw = readHarmonyWorkspaceJson() || window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
       if (legacy) {
@@ -550,8 +551,10 @@ export function loadStore(): LocalStore {
 function saveStore(store: LocalStore): void {
   memoryStore = store;
   if (typeof window !== "undefined") {
+    const serialized = JSON.stringify(store);
+    writeHarmonyWorkspaceJson(serialized);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      window.localStorage.setItem(STORAGE_KEY, serialized);
     } catch {
       // Ignore storage quota errors
     }

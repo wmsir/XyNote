@@ -40,3 +40,5 @@ notion-config.json
 *.key
 /XyNote-data
 xynote-config.json
+
+harmony-pc/entry/src/main/resources/rawfile/web/

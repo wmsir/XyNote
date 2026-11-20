@@ -1,6 +1,19 @@
 /** 桌面端功能：多窗口、检查更新、保存前端生成的导出文件 */
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./client";
+import { isHarmonyRuntime, saveFileViaHarmony } from "./harmony";
+
+function parseVerTuple(v: string): [number, number, number] {
+  const core = v.trim().replace(/^[vV]/, "").split(/[-+]/)[0] || "";
+  const parts = core.split(".").map((n) => parseInt(n, 10) || 0);
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+}
+
+function isVersionNewer(latest: string, current: string): boolean {
+  const a = parseVerTuple(latest);
+  const b = parseVerTuple(current);
+  return a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2];
+}
 
 /** 新建窗口；pageId 有值时新窗口直接打开这个页面。返回窗口标识 */
 export async function openNewWindow(pageId?: string | null): Promise<string> {
@@ -30,7 +43,38 @@ export interface UpdateInfo {
 }
 
 export async function checkForUpdate(): Promise<UpdateInfo> {
-  if (!isTauriRuntime()) throw new Error("检查更新仅支持桌面客户端");
+  if (!isTauriRuntime()) {
+    if (isHarmonyRuntime()) {
+      const current = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.8.10";
+      const resp = await fetch(`https://fwpt.cn/downloads/xynote/latest.json?t=${Math.floor(Date.now() / 1000)}`, {
+        cache: "no-store",
+      });
+      if (!resp.ok) throw new Error(`检查更新失败（${resp.status}）`);
+      const rel = (await resp.json()) as {
+        tag_name?: string;
+        body?: string;
+        published_at?: string;
+        html_url?: string;
+        assets?: Array<{ name: string; browser_download_url: string; size?: number }>;
+      };
+      const latest = (rel.tag_name || current).replace(/^[vV]/, "");
+      const picked = (rel.assets || []).find((a) =>
+        a.name.toLowerCase().includes("harmonyos-pc")
+      );
+      return {
+        currentVersion: current,
+        latestVersion: latest,
+        hasUpdate: isVersionNewer(latest, current),
+        notes: (rel.body || "").trim(),
+        publishedAt: rel.published_at || "",
+        releaseUrl: rel.html_url || "https://fwpt.cn/xynote/#download",
+        assetUrl: picked?.browser_download_url || "https://fwpt.cn/xynote/#download",
+        assetName: picked?.name || "",
+        assetSize: picked?.size || 0,
+      };
+    }
+    throw new Error("检查更新仅支持桌面客户端");
+  }
   return invoke<UpdateInfo>("check_for_update");
 }
 
@@ -63,7 +107,18 @@ export function subscribeUpdateInfo(
 
 /** 保存前端生成的 PNG（可多张），返回保存路径；取消时为 null */
 export async function saveExportImages(filename: string, parts: string[]): Promise<string | null> {
-  if (!isTauriRuntime()) throw new Error("导出图片仅支持桌面客户端");
+  if (!isTauriRuntime()) {
+    if (isHarmonyRuntime() && parts.length > 0) {
+      const first = parts[0] || "";
+      const b64 = first.includes(",") ? first.split(",")[1] : first;
+      const raw = atob(b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const finalName = filename.toLowerCase().endsWith(".png") ? filename : `${filename}.png`;
+      return saveFileViaHarmony(finalName, bytes, "image/png");
+    }
+    throw new Error("导出图片仅支持桌面客户端");
+  }
   return invoke<string | null>("save_export_images", { filename, parts });
 }
 

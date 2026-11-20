@@ -1,11 +1,12 @@
 {
   "name": "xynote",
   "private": true,
-  "version": "0.8.10",
+  "version": "0.8.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:harmony": "npm run build && node scripts/sync-harmony-web.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

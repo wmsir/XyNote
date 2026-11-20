@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "小悦笔记 XyNote 鸿蒙 PC 主入口模块",
+  "main": "",
+  "author": "FWPT",
+  "license": "MIT",
+  "dependencies": {}
+}

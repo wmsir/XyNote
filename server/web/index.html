@@ -1261,10 +1261,14 @@
             <span class="dl-tile-top"><span>Linux 通用免安装</span><span class="dl-tile-fmt">AppImage</span></span>
             <span class="dl-tile-sub" data-xy-size="xynote_linux_appimage">x86_64 · 跨发行版</span>
           </a>
+          <a class="dl-tile" id="dlHarmony" href="/downloads/xynote/XyNote-latest-harmonyos-pc-project.zip" download>
+            <span class="dl-tile-top"><span>鸿蒙 PC 原生工程</span><span class="dl-tile-fmt">HarmonyOS 5</span></span>
+            <span class="dl-tile-sub" data-xy-size="xynote_harmony_pc">API 12+ 2in1 · ArkWeb</span>
+          </a>
         </div>
 
         <div class="dl-foot-links">
-          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；银河麒麟 KylinOS V10（含飞腾/鲲鹏 ARM64）、统信 UOS、Ubuntu/Debian 请下载 <code>.deb</code>（<code>sudo apt install ./XyNote_*.deb</code>），Fedora/openEuler 请下载 <code>.rpm</code>，已内置 WebKitGTK 渲染防白屏保护与只读目录自动回退；macOS 首次打开如遇系统拦截请在「访达」右键应用选「打开」。</span>
+          <span>💡 从 <code>v0.7.1</code> 起旧版 <code>data/</code> 会自动无损迁移至 <code>XyNote-data/</code>；银河麒麟 KylinOS V10（含飞腾/鲲鹏 ARM64）、统信 UOS、Ubuntu/Debian 请下载 <code>.deb</code>（<code>sudo apt install ./XyNote_*.deb</code>），Fedora/openEuler 请下载 <code>.rpm</code>；鸿蒙 PC（HarmonyOS 5 / 2in1）提供完整 ArkTS + ArkWeb 原生工程包，使用 DevEco Studio 5.0+ 即可一键签名打包 <code>.hap</code> 安装运行。</span>
         </div>
       </div>
     </div>
@@ -2003,7 +2007,8 @@
   // 根据访问者的操作系统微调主下载按钮，并同时合并 /downloads/xynote/latest.json 与后台下载链接配置
   (function initDownloads() {
     var ua = (navigator.userAgent || '').toLowerCase();
-    var os = ua.indexOf('mac') >= 0 ? 'mac' : ((ua.indexOf('linux') >= 0 && ua.indexOf('android') < 0) ? 'linux' : 'win');
+    var isHarmony = ua.indexOf('openharmony') >= 0 || ua.indexOf('harmonyos') >= 0;
+    var os = isHarmony ? 'harmony' : (ua.indexOf('mac') >= 0 ? 'mac' : ((ua.indexOf('linux') >= 0 && ua.indexOf('android') < 0) ? 'linux' : 'win'));
     var isLinuxArm = os === 'linux' && (ua.indexOf('aarch64') >= 0 || ua.indexOf('arm64') >= 0);
     var btn = $('mainDlBtn');
     var lbl = $('mainDlLabel');
@@ -2028,7 +2033,8 @@
         debArm:    { url: '/downloads/xynote/XyNote-latest-linux-arm64.deb', key: 'xynote_linux_deb_arm64', asset: pick(function (n) { return n.endsWith('.deb') && (n.indexOf('arm64') >= 0 || n.indexOf('aarch64') >= 0); }) },
         rpm:       { url: '/downloads/xynote/XyNote-latest-linux-x86_64.rpm', key: 'xynote_linux_rpm', asset: pick(function (n) { return n.endsWith('.x86_64.rpm') || (n.endsWith('.rpm') && n.indexOf('aarch64') < 0 && n.indexOf('arm64') < 0); }) },
         rpmArm:    { url: '/downloads/xynote/XyNote-latest-linux-aarch64.rpm', key: 'xynote_linux_rpm_arm64', asset: pick(function (n) { return n.endsWith('.rpm') && (n.indexOf('aarch64') >= 0 || n.indexOf('arm64') >= 0); }) },
-        appImage:  { url: '/downloads/xynote/XyNote-latest-linux-amd64.AppImage', key: 'xynote_linux_appimage', asset: pick(function (n) { return n.endsWith('.appimage') && (n.indexOf('amd64') >= 0 || n.indexOf('x86_64') >= 0); }) }
+        appImage:  { url: '/downloads/xynote/XyNote-latest-linux-amd64.AppImage', key: 'xynote_linux_appimage', asset: pick(function (n) { return n.endsWith('.appimage') && (n.indexOf('amd64') >= 0 || n.indexOf('x86_64') >= 0); }) },
+        harmony:   { url: '/downloads/xynote/XyNote-latest-harmonyos-pc-project.zip', key: 'xynote_harmony_pc', asset: pick(function (n) { return n.endsWith('-harmonyos-pc-project.zip'); }) }
       };
 
       var resolved = {};
@@ -2067,6 +2073,7 @@
       if ($('dlRpm')) $('dlRpm').href = resolved.rpm.url;
       if ($('dlRpmArm')) $('dlRpmArm').href = resolved.rpmArm.url;
       if ($('dlAppImage')) $('dlAppImage').href = resolved.appImage.url;
+      if ($('dlHarmony')) $('dlHarmony').href = resolved.harmony.url;
 
       var sizeSet = {
         xynote_win_setup: resolved.winSetup.size ? ('x64 Setup · ' + resolved.winSetup.size) : '',
@@ -2077,7 +2084,8 @@
         xynote_linux_deb_arm64: resolved.debArm.size ? ('飞腾/鲲鹏 · ' + resolved.debArm.size) : '',
         xynote_linux_rpm: resolved.rpm.size ? ('x86_64 · ' + resolved.rpm.size) : '',
         xynote_linux_rpm_arm64: resolved.rpmArm.size ? ('aarch64 · ' + resolved.rpmArm.size) : '',
-        xynote_linux_appimage: resolved.appImage.size ? ('x86_64 · ' + resolved.appImage.size) : ''
+        xynote_linux_appimage: resolved.appImage.size ? ('x86_64 · ' + resolved.appImage.size) : '',
+        xynote_harmony_pc: resolved.harmony.size ? ('API 12+ 2in1 · ' + resolved.harmony.size) : ''
       };
       Object.keys(sizeSet).forEach(function (itemKey) {
         if (!sizeSet[itemKey]) return;
@@ -2088,7 +2096,10 @@
 
       var primary = resolved.winSetup;
       var labelText = '下载 Windows 安装版' + (primary.version ? ' (' + primary.version + ')' : '');
-      if (os === 'mac') {
+      if (os === 'harmony') {
+        primary = resolved.harmony;
+        labelText = '下载鸿蒙 PC 原生工程' + (primary.version ? ' (' + primary.version + ')' : '');
+      } else if (os === 'mac') {
         primary = resolved.macArm;
         labelText = '下载 macOS Apple 芯片版' + (primary.version ? ' (' + primary.version + ')' : '');
       } else if (os === 'linux') {
