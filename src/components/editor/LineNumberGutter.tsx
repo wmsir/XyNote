@@ -1,4 +1,4 @@
-import React, { type RefObject } from "react";
+import React, { type Ref, type RefObject } from "react";
 import { useWrappedLineHeights } from "../../utils/useWrappedLineHeights";
 
 interface LineNumberGutterProps {
@@ -8,7 +8,7 @@ interface LineNumberGutterProps {
   wrap: boolean;
   className: string;
   lineClassName: string;
-  gutterRef?: RefObject<HTMLDivElement | null>;
+  gutterRef?: Ref<HTMLDivElement>;
 }
 
 /** 行号栏：自动换行时，每个行号的高度跟随它那一行实际占用的高度 */
