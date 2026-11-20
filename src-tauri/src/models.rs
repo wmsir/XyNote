@@ -110,6 +110,9 @@ pub struct BlockProps {
     pub file_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// 图片里识别出的文字（参与搜索）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_text: Option<String>,
     /// 块引用：被引用块所在页面和块
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ref_page_id: Option<String>,

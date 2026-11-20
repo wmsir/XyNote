@@ -1273,6 +1273,160 @@ pub async fn download_image_asset(app: AppHandle, url: String) -> Result<String,
     .map_err(|e| e.to_string())?
 }
 
+const K_PUBLISHED: &str = "publishedPages";
+
+fn published_map(db: &Database) -> HashMap<String, String> {
+    db.get_settings()
+        .ok()
+        .and_then(|s| s.get(K_PUBLISHED).cloned())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn publish_remote(db: &Database) -> Result<crate::sync_remote::ServerRemote, String> {
+    match crate::sync_config::server_target(db).map_err(String::from)? {
+        Some((url, token)) => crate::sync_remote::ServerRemote::new(&url, &token).map_err(String::from),
+        None => Err("发布网页需要小悦同步服务器（自建或官方）。请先到「偏好设置 → 同步」选择并登录".into()),
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedInfo {
+    pub url: String,
+    pub slug: String,
+}
+
+/// 把页面发布成只读网页；同一个页面再次发布会更新原来的链接
+#[tauri::command]
+pub async fn publish_page_web(app: AppHandle, page_id: String, title: String, html: String) -> Result<PublishedInfo, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let remote = publish_remote(&db)?;
+        let mut map = published_map(&db);
+        let prev = map.get(&page_id).cloned();
+        let (slug, url) = remote
+            .publish(prev.as_deref(), &title, &html)
+            .map_err(String::from)?;
+        map.insert(page_id, slug.clone());
+        db.set_setting(K_PUBLISHED, &serde_json::to_string(&map).unwrap_or_default())
+            .map_err(String::from)?;
+        Ok(PublishedInfo { url, slug })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 取消发布
+#[tauri::command]
+pub async fn unpublish_page_web(app: AppHandle, page_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let mut map = published_map(&db);
+        let Some(slug) = map.get(&page_id).cloned() else {
+            return Ok(());
+        };
+        let remote = publish_remote(&db)?;
+        match remote.unpublish(&slug) {
+            Ok(()) => {}
+            // 服务器上已经没有了也算成功
+            Err(crate::models::AppError::Validation(m)) if m.contains("没有找到") || m.contains("404") => {}
+            Err(e) => return Err(String::from(e)),
+        }
+        map.remove(&page_id);
+        db.set_setting(K_PUBLISHED, &serde_json::to_string(&map).unwrap_or_default())
+            .map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 页面已发布时返回它的网址
+#[tauri::command]
+pub fn published_page_url(db: State<'_, Database>, page_id: String) -> Option<String> {
+    let slug = published_map(&db).get(&page_id).cloned()?;
+    let (url, _) = crate::sync_config::server_target(&db).ok().flatten()?;
+    Some(format!("{}/p/{}", url.trim().trim_end_matches('/'), slug))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxRemoteItem {
+    pub id: i64,
+    pub text: String,
+}
+
+/// 读取手机随手记里还没同步到电脑的内容（没有使用小悦服务器时返回空）
+#[tauri::command]
+pub async fn server_inbox_pull(app: AppHandle) -> Result<Vec<InboxRemoteItem>, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let Some((url, token)) = crate::sync_config::server_target(&db).map_err(String::from)? else {
+            return Ok(Vec::new());
+        };
+        let remote = crate::sync_remote::ServerRemote::new(&url, &token).map_err(String::from)?;
+        match remote.inbox_list() {
+            Ok(items) => Ok(items.into_iter().map(|(id, text)| InboxRemoteItem { id, text }).collect()),
+            // 旧版服务器没有这个接口，安静地跳过
+            Err(crate::models::AppError::Validation(m)) if m.contains("404") => Ok(Vec::new()),
+            Err(e) => Err(String::from(e)),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 已经放进收件箱的随手记，从服务器上删掉
+#[tauri::command]
+pub async fn server_inbox_ack(app: AppHandle, ids: Vec<i64>) -> Result<(), String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let Some((url, token)) = crate::sync_config::server_target(&db).map_err(String::from)? else {
+            return Ok(());
+        };
+        let remote = crate::sync_remote::ServerRemote::new(&url, &token).map_err(String::from)?;
+        for id in ids {
+            remote.inbox_delete(id).map_err(String::from)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// AI 写作助手：按设置里的模型服务完成一次请求
+#[tauri::command]
+pub async fn ai_complete(app: AppHandle, system: String, prompt: String) -> Result<String, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let cfg = crate::ai::load(&db);
+        crate::ai::complete(&cfg, &system, &prompt)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 网页剪藏：抓取网页
+#[tauri::command]
+pub async fn fetch_web_page(url: String) -> Result<crate::attachments::WebPage, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::attachments::fetch_web_page(&url).map_err(String::from))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 识别图片里的文字（系统自带 OCR，离线）
+#[tauri::command]
+pub async fn ocr_image(src: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::ocr::recognize(&src))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 快速记录与托盘的当前设置
 #[tauri::command]
 pub fn quick_capture_get_config(app: AppHandle, db: State<'_, Database>) -> crate::quick::QuickCaptureConfig {

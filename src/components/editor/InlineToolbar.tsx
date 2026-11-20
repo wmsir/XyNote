@@ -9,7 +9,12 @@ import {
   Underline,
   Unlink,
   X,
+  Sparkles,
+  Loader2,
+  Copy,
+  RotateCcw,
 } from "lucide-react";
+import { AI_ACTIONS, runAiAction, runAiCustom, useAiEnabled, type AiAction } from "../../api/ai";
 import type { KeybindingMap } from "../../types/notion";
 import { formatTooltipWithShortcut } from "./editorKeybindings";
 import { normalizeInlineLinkHref } from "./editorUtils";
@@ -126,6 +131,13 @@ export const InlineToolbar: React.FC<InlineToolbarProps> = ({
     linkHref: null,
   });
   const [linkMode, setLinkMode] = useState(false);
+  const aiEnabled = useAiEnabled();
+  /** AI 面板：off 关闭 / menu 选动作 / running 等待 / result 显示结果 */
+  const [aiStage, setAiStage] = useState<"off" | "menu" | "running" | "result">("off");
+  const [aiResult, setAiResult] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [aiCustom, setAiCustom] = useState("");
+  const aiLastRef = useRef<{ action: AiAction | null; custom: string; text: string } | null>(null);
   const [linkUrl, setLinkUrl] = useState("");
 
   const toolbarRef = useRef<HTMLDivElement | null>(null);
@@ -137,13 +149,14 @@ export const InlineToolbar: React.FC<InlineToolbarProps> = ({
   useEffect(() => {
     setVisible(false);
     setLinkMode(false);
+    setAiStage("off");
     savedRangeRef.current = null;
     savedEditableRef.current = null;
   }, [pageId]);
 
   const computeFormatsAndPosition = useCallback(() => {
-    // Keep toolbar open while typing inside the URL input
-    if (linkMode) return;
+    // Keep toolbar open while typing inside the URL input / using AI
+    if (linkMode || aiStage !== "off") return;
 
     const root = editorRootRef.current;
     const sel = window.getSelection();
@@ -224,7 +237,7 @@ export const InlineToolbar: React.FC<InlineToolbarProps> = ({
     savedEditableRef.current = startEditable;
     setCoords({ left: clampedLeft, top: clampedTop });
     setVisible(true);
-  }, [editorRootRef, linkMode]);
+  }, [editorRootRef, linkMode, aiStage]);
 
   useEffect(() => {
     const onSelectionChange = () => {
@@ -370,6 +383,79 @@ export const InlineToolbar: React.FC<InlineToolbarProps> = ({
 
   const handleRemoveLink = () => {
     applyLinkUrl("");
+  };
+
+  // AI 面板打开时，点工具栏以外的地方就收起
+  useEffect(() => {
+    if (aiStage === "off") return;
+    const onDown = (e: MouseEvent) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
+        setAiStage("off");
+        setVisible(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [aiStage]);
+
+  const selectedText = () => savedRangeRef.current?.toString() ?? "";
+
+  const runAi = (action: AiAction | null, custom = "") => {
+    const text = aiLastRef.current && !action && !custom ? aiLastRef.current.text : selectedText();
+    if (!text.trim()) return;
+    aiLastRef.current = { action, custom, text };
+    const ctx = savedEditableRef.current?.closest(".nb-editor")?.textContent ?? savedEditableRef.current?.textContent ?? "";
+    setAiStage("running");
+    setAiError("");
+    const p = action ? runAiAction(action, text, ctx) : runAiCustom(custom, text);
+    p.then((res) => {
+      setAiResult(res);
+      setAiStage("result");
+    }).catch((err) => {
+      setAiError(err instanceof Error ? err.message : String(err));
+      setAiStage("result");
+      setAiResult("");
+    });
+  };
+
+  const retryAi = () => {
+    const last = aiLastRef.current;
+    if (!last) return;
+    setAiStage("running");
+    setAiError("");
+    const ctx = savedEditableRef.current?.textContent ?? "";
+    (last.action ? runAiAction(last.action, last.text, ctx) : runAiCustom(last.custom, last.text))
+      .then((res) => {
+        setAiResult(res);
+        setAiStage("result");
+      })
+      .catch((err) => {
+        setAiError(err instanceof Error ? err.message : String(err));
+        setAiStage("result");
+      });
+  };
+
+  /** 把 AI 结果写回：替换选中文字，或接在选中文字后面 */
+  const applyAi = (mode: "replace" | "append") => {
+    const editable = savedEditableRef.current;
+    const range = savedRangeRef.current;
+    if (!editable || !range || !aiResult) return;
+    editable.focus();
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    const r = range.cloneRange();
+    if (mode === "append") r.collapse(false);
+    sel?.addRange(r);
+    document.execCommand("insertText", false, mode === "append" ? `\n${aiResult}` : aiResult);
+    notifyEditableInput(editable);
+    setAiStage("off");
+    setVisible(false);
+  };
+
+  const closeAi = () => {
+    setAiStage("off");
+    setAiResult("");
+    setAiError("");
   };
 
   if (!visible) return null;
@@ -541,7 +627,114 @@ export const InlineToolbar: React.FC<InlineToolbarProps> = ({
           >
             <Link2 size={15} />
           </button>
+          {aiEnabled && (
+            <>
+              <div className="nb-editor-inline-sep" />
+              <button
+                type="button"
+                className={`nb-editor-inline-btn nb-ai-btn ${aiStage !== "off" ? "is-active" : ""}`}
+                title="AI 写作助手：续写、润色、总结、翻译"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setAiStage((s) => (s === "off" ? "menu" : "off"));
+                }}
+              >
+                <Sparkles size={15} />
+              </button>
+            </>
+          )}
         </>
+      )}
+      {aiStage !== "off" && (
+        <div
+          className="nb-ai-panel"
+          onMouseDown={(e) => {
+            // 保留选区；输入框自己需要焦点
+            if ((e.target as HTMLElement).tagName !== "INPUT" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+              e.preventDefault();
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              closeAi();
+            }
+          }}
+        >
+          {aiStage === "menu" && (
+            <>
+              <div className="nb-ai-actions">
+                {AI_ACTIONS.map((a) => (
+                  <button key={a.id} type="button" className="nb-ai-action" onClick={() => runAi(a)}>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+              <form
+                className="nb-ai-custom"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (aiCustom.trim()) runAi(null, aiCustom.trim());
+                }}
+              >
+                <input
+                  type="text"
+                  value={aiCustom}
+                  placeholder="或者直接说要怎么改，回车"
+                  onChange={(e) => setAiCustom(e.target.value)}
+                  aria-label="自定义指令"
+                />
+              </form>
+            </>
+          )}
+          {aiStage === "running" && (
+            <div className="nb-ai-running">
+              <Loader2 size={14} className="nb-spin" />
+              <span>AI 正在处理…</span>
+            </div>
+          )}
+          {aiStage === "result" && (
+            <>
+              {aiError ? (
+                <div className="nb-ai-error">{aiError}</div>
+              ) : (
+                <div className="nb-ai-result" data-i18n-skip="">
+                  {aiResult}
+                </div>
+              )}
+              <div className="nb-ai-result-actions">
+                {!aiError && (
+                  <>
+                    <button type="button" className="nb-ai-primary" onClick={() => applyAi(aiLastRef.current?.action?.mode === "append" ? "append" : "replace")}>
+                      {aiLastRef.current?.action?.mode === "append" ? "插入到后面" : "替换选中文字"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyAi(aiLastRef.current?.action?.mode === "append" ? "replace" : "append")}
+                    >
+                      {aiLastRef.current?.action?.mode === "append" ? "替换选中文字" : "插入到后面"}
+                    </button>
+                    <button
+                      type="button"
+                      title="复制结果"
+                      aria-label="复制结果"
+                      onClick={() => navigator.clipboard?.writeText(aiResult).catch(() => {})}
+                    >
+                      <Copy size={13} />
+                    </button>
+                  </>
+                )}
+                <button type="button" title="重新生成" aria-label="重新生成" onClick={retryAi}>
+                  <RotateCcw size={13} />
+                </button>
+                <button type="button" title="关闭" aria-label="关闭" onClick={closeAi}>
+                  <X size={13} />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

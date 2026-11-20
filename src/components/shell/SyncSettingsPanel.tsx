@@ -326,6 +326,14 @@ export function SyncSettingsPanel({ onRunSync, syncing, onConfigChanged, onNotif
               </div>
             ) : null)}
 
+          {(mode === "server" || official) && loggedIn && cfg && (
+            <div className="nb-settings-sub nb-sync-mobile">
+              手机随手记：在手机浏览器打开{" "}
+              <code data-i18n-skip="">{`${(official ? cfg.officialUrl : cfg.serverUrl).replace(/\/+$/, "")}/m`}</code>
+              ，用同一个账号登录。记下的内容会在电脑同步时放进「收件箱」，可以添加到手机主屏幕当作 App 用。
+            </div>
+          )}
+
           {(mode === "server" || official) && loggedIn && account?.requiresSubscription && (
             <div className="nb-sync-redeem">
               <div className="nb-sync-field">

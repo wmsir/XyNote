@@ -88,6 +88,8 @@ export interface TopbarProps {
   /** 当前页面是否锁定（防误改） */
   pageLocked?: boolean;
   onToggleLock?: () => void;
+  /** 发布为网页 */
+  onOpenPublish?: () => void;
   /** 导出：html / pdf / docx */
   onExportAs?: (format: ExportFormat) => void;
   /** 在新窗口中打开当前页面 */
@@ -138,6 +140,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onDuplicatePage,
   pageLocked = false,
   onToggleLock,
+  onOpenPublish,
   onExportMarkdown,
   onExportAs,
   onOpenInNewWindow,
@@ -572,6 +575,22 @@ export const Topbar: React.FC<TopbarProps> = ({
                         <Copy size={14} /> 复制页面副本
                       </span>
                     </button>
+
+                    {onOpenPublish && (
+                      <button
+                        type="button"
+                        className="nb-menu-item"
+                        onClick={() => {
+                          onOpenPublish();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span className="nb-menu-item-left">
+                          <Globe size={14} />
+                          发布为网页…
+                        </span>
+                      </button>
+                    )}
 
                     {onToggleLock && (
                       <button

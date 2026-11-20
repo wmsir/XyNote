@@ -48,6 +48,8 @@ export interface CommandPaletteProps {
   onOpenFile?: (path: string) => void;
   kbEnabled?: boolean;
   onOpenKbSettings?: () => void;
+  /** 额外的命令（每日笔记、待办、剪藏网页等） */
+  extraActions?: Array<{ id: string; label: string; sublabel: string; icon: React.ReactNode; run: () => void }>;
 }
 
 interface QuickActionItem {
@@ -75,6 +77,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenFile,
   kbEnabled = false,
   onOpenKbSettings,
+  extraActions,
 }) => {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"sag2" | "literal">("sag2");
@@ -99,6 +102,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const quickActions: QuickActionItem[] = useMemo(
     () => [
+      ...(extraActions ?? []).map((a) => ({
+        ...a,
+        run: () => {
+          onClose();
+          a.run();
+        },
+      })),
       {
         id: "act-new-doc",
         label: "新建空白文档页面",
@@ -217,6 +227,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         : []),
     ],
     [
+      extraActions,
       kbEnabled,
       onChangeTheme,
       onClose,

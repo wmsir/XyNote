@@ -158,6 +158,7 @@ impl OpenState for AppState {
         conn.execute_batch(crate::feedback::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::marketplace::SCHEMA_SQL).map_err(|e| e.to_string())?;
         conn.execute_batch(crate::telemetry::SCHEMA_SQL).map_err(|e| e.to_string())?;
+        conn.execute_batch(crate::publish::SCHEMA_SQL).map_err(|e| e.to_string())?;
         crate::marketplace::seed_if_empty(&conn)?;
         let signing_key = match &config.license_key_file {
             Some(path) => {
@@ -187,6 +188,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/me", get(me))
         .route("/api/v1/me/devices/:machine/unbind", post(me_unbind_device))
         .route("/api/v1/feedback", post(feedback_submit))
+        .route("/api/v1/publish", get(publish_list).post(publish_page))
+        .route("/api/v1/publish/:slug", axum::routing::delete(publish_delete))
+        .route("/p/:slug", get(published_view))
+        .route("/api/v1/inbox", get(inbox_list).post(inbox_add))
+        .route("/api/v1/inbox/:id", axum::routing::delete(inbox_delete))
+        .route("/m", get(web_mobile))
         .route("/api/v1/feedback/mine", get(feedback_mine))
         .route("/api/v1/marketplace", get(marketplace_list).post(marketplace_publish))
         .route("/api/v1/marketplace/:id", get(marketplace_detail).delete(marketplace_delete))
@@ -1447,6 +1454,7 @@ async fn admin_reject_order(
 
 const USER_PAGE: &str = include_str!("../web/index.html");
 const ADMIN_PAGE: &str = include_str!("../web/admin.html");
+const MOBILE_PAGE: &str = include_str!("../web/m.html");
 
 fn html(body: &'static str) -> Response {
     (
@@ -1459,6 +1467,139 @@ fn html(body: &'static str) -> Response {
         body,
     )
         .into_response()
+}
+
+async fn web_mobile() -> Response {
+    html(MOBILE_PAGE)
+}
+
+/* ---------------- 发布为网页 / 手机随手记 ---------------- */
+
+#[derive(Deserialize)]
+struct PublishInput {
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    title: String,
+    html: String,
+}
+
+async fn publish_page(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<PublishInput>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::publish::publish(&conn, &state.config.data_dir, user.id, input.slug.as_deref(), &input.title, &input.html) {
+        Ok(slug) => Json(json!({ "slug": slug, "path": format!("/p/{}", slug) })).into_response(),
+        Err(crate::publish::PublishError::TooLarge) => err(StatusCode::PAYLOAD_TOO_LARGE, "页面太大了（超过 8 MB），可以减少图片后再发布"),
+        Err(crate::publish::PublishError::TooMany) => err(StatusCode::FORBIDDEN, "发布的页面太多了，请先取消一些不用的"),
+        Err(crate::publish::PublishError::NotOwner) => err(StatusCode::FORBIDDEN, "这个链接属于别人"),
+        Err(crate::publish::PublishError::Io(e)) => internal(e),
+    }
+}
+
+async fn publish_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    Json(json!({ "pages": crate::publish::list(&conn, user.id) })).into_response()
+}
+
+async fn publish_delete(State(state): State<AppState>, headers: HeaderMap, Path(slug): Path<String>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    if crate::publish::unpublish(&conn, &state.config.data_dir, user.id, &slug) {
+        Json(json!({ "ok": true })).into_response()
+    } else {
+        err(StatusCode::NOT_FOUND, "没有找到这个已发布的页面")
+    }
+}
+
+/// 公开访问已发布的页面。页面里不允许运行脚本，避免被利用。
+async fn published_view(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
+    let body = {
+        let conn = match state.conn.lock() {
+            Ok(c) => c,
+            Err(e) => return internal(e),
+        };
+        crate::publish::load(&conn, &state.config.data_dir, &slug)
+    };
+    match body {
+        Some(html) => (
+            [
+                ("content-type", "text/html; charset=utf-8"),
+                ("cache-control", "public, max-age=60"),
+                (
+                    "content-security-policy",
+                    "default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; font-src data:; media-src https: data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                ),
+                ("x-content-type-options", "nosniff"),
+                ("referrer-policy", "no-referrer"),
+            ],
+            html,
+        )
+            .into_response(),
+        None => err(StatusCode::NOT_FOUND, "这个页面不存在或已取消发布"),
+    }
+}
+
+#[derive(Deserialize)]
+struct InboxInput {
+    text: String,
+}
+
+async fn inbox_add(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<InboxInput>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    match crate::publish::inbox_add(&conn, user.id, &input.text) {
+        Ok(id) => Json(json!({ "id": id })).into_response(),
+        Err(msg) => err(StatusCode::BAD_REQUEST, msg),
+    }
+}
+
+async fn inbox_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    Json(json!({ "items": crate::publish::inbox_list(&conn, user.id) })).into_response()
+}
+
+async fn inbox_delete(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    let user = match authed(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let conn = match state.conn.lock() {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    Json(json!({ "ok": crate::publish::inbox_delete(&conn, user.id, id) })).into_response()
 }
 
 async fn web_user() -> Response {
@@ -2387,6 +2528,55 @@ mod tests {
         let (s, b) = call(app, "POST", "/api/v1/auth/register", None, json!({"email": email, "password": "password123"}).to_string().into_bytes(), true).await;
         assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
         serde_json::from_slice::<serde_json::Value>(&b).unwrap()["token"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn publish_and_inbox_flow() {
+        let app = router(test_state(false));
+        let t1 = register_user(&app, "pub@example.com").await;
+        let t2 = register_user(&app, "other-pub@example.com").await;
+
+        let body = json!({ "title": "周报", "html": "<h1>周报</h1><script>alert(1)</script>" }).to_string().into_bytes();
+        let (s, b) = call(&app, "POST", "/api/v1/publish", Some(&t1), body, true).await;
+        assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+        let slug = val(&b)["slug"].as_str().unwrap().to_string();
+
+        // 不登录也能看，且禁止脚本
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(format!("/p/{}", slug)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let csp = resp.headers().get("content-security-policy").unwrap().to_str().unwrap().to_string();
+        assert!(csp.contains("default-src 'none'") && !csp.contains("script-src"));
+
+        // 别人不能覆盖也不能删除
+        let body = json!({ "slug": slug, "title": "x", "html": "x" }).to_string().into_bytes();
+        let (s, _) = call(&app, "POST", "/api/v1/publish", Some(&t2), body, true).await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        let (s, _) = call(&app, "DELETE", &format!("/api/v1/publish/{}", slug), Some(&t2), vec![], false).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+
+        let (_, b) = call(&app, "GET", "/api/v1/publish", Some(&t1), vec![], false).await;
+        assert_eq!(val(&b)["pages"][0]["title"], "周报");
+        let (s, _) = call(&app, "DELETE", &format!("/api/v1/publish/{}", slug), Some(&t1), vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = call(&app, "GET", &format!("/p/{}", slug), None, vec![], false).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+
+        // 手机随手记
+        let (s, b) = call(&app, "POST", "/api/v1/inbox", Some(&t1), json!({"text": "买牛奶"}).to_string().into_bytes(), true).await;
+        assert_eq!(s, StatusCode::OK);
+        let id = val(&b)["id"].as_i64().unwrap();
+        let (_, b) = call(&app, "GET", "/api/v1/inbox", Some(&t2), vec![], false).await;
+        assert!(val(&b)["items"].as_array().unwrap().is_empty());
+        let (_, b) = call(&app, "GET", "/api/v1/inbox", Some(&t1), vec![], false).await;
+        assert_eq!(val(&b)["items"][0]["text"], "买牛奶");
+        let (_, b) = call(&app, "DELETE", &format!("/api/v1/inbox/{}", id), Some(&t1), vec![], false).await;
+        assert_eq!(val(&b)["ok"], true);
+        let (s, _) = call(&app, "GET", "/m", None, vec![], false).await;
+        assert_eq!(s, StatusCode::OK);
     }
 
     #[tokio::test]

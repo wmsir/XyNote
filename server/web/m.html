@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1f1d" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="小悦随手记">
+<title>小悦随手记</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --card: #ffffff; --text: #2f2e2b; --muted: #8a877f; --line: #e6e3dc;
+    --accent: #2f6fdb; --accent-soft: rgba(47, 111, 219, .10); --danger: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1f1f1d; --card: #2a2a27; --text: #ecebe7; --muted: #9a978f; --line: #3a3934; --accent: #6c9cf0; --accent-soft: rgba(108,156,240,.14); }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
+  .who { font-size: 13px; color: var(--muted); }
+  .who button { border: 0; background: none; color: var(--accent); font: inherit; padding: 0 0 0 8px; cursor: pointer; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  textarea { width: 100%; min-height: 34vh; border: 0; outline: none; resize: vertical; background: transparent; color: var(--text); font: inherit; font-size: 17px; }
+  textarea::placeholder { color: var(--muted); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+  .hint { font-size: 12.5px; color: var(--muted); }
+  .btn { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 10px 22px; cursor: pointer; }
+  .btn:disabled { opacity: .5; }
+  .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--text); font: inherit; }
+  .msg { min-height: 20px; font-size: 13.5px; margin-top: 10px; }
+  .msg.ok { color: var(--accent); }
+  .msg.bad { color: var(--danger); }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 22px 0 8px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; font-size: 15px; }
+  li:last-child { border-bottom: 0; }
+  li time { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .empty { padding: 12px; font-size: 13.5px; color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>小悦随手记</h1>
+    <span class="who" id="who" hidden><span id="email"></span><button type="button" id="logout">退出</button></span>
+  </header>
+
+  <section id="login" hidden>
+    <div class="card">
+      <p class="hint" style="margin:0">用电脑上小悦笔记「同步」里登录的同一个账号。记下的内容会在电脑同步时放进「收件箱」页面。</p>
+      <form id="loginForm">
+        <label for="em">邮箱</label>
+        <input id="em" type="email" autocomplete="username" required>
+        <label for="pw">密码</label>
+        <input id="pw" type="password" autocomplete="current-password" required>
+        <div class="row"><span></span><button class="btn" type="submit">登录</button></div>
+      </form>
+      <div class="msg" id="loginMsg" role="status"></div>
+    </div>
+  </section>
+
+  <section id="note" hidden>
+    <form class="card" id="noteForm">
+      <textarea id="text" placeholder="想到什么就写下来…&#10;以 [] 开头的行会变成待办" aria-label="随手记内容"></textarea>
+      <div class="row">
+        <span class="hint">电脑同步时会存进「收件箱」</span>
+        <button class="btn" id="save" type="submit">保存</button>
+      </div>
+      <div class="msg" id="noteMsg" role="status"></div>
+    </form>
+    <h2>等待电脑同步</h2>
+    <div class="card" style="padding:0"><ul id="pending"></ul></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const KEY = "xynote.m.token", EMAIL = "xynote.m.email";
+  let token = localStorage.getItem(KEY) || "";
+
+  async function api(method, path, body) {
+    const res = await fetch(path, {
+      method,
+      headers: Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { logout(); throw new Error("登录已失效，请重新登录"); }
+    if (!res.ok) throw new Error(data.message || ("服务器返回错误 " + res.status));
+    return data;
+  }
+
+  function show() {
+    const authed = !!token;
+    $("login").hidden = authed;
+    $("note").hidden = !authed;
+    $("who").hidden = !authed;
+    $("email").textContent = localStorage.getItem(EMAIL) || "";
+    if (authed) { loadPending(); setTimeout(() => $("text").focus(), 50); }
+  }
+
+  function logout() {
+    token = "";
+    localStorage.removeItem(KEY);
+    show();
+  }
+
+  async function loadPending() {
+    try {
+      const { items } = await api("GET", "/api/v1/inbox");
+      const ul = $("pending");
+      ul.innerHTML = "";
+      if (!items.length) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = "都已同步到电脑";
+        ul.appendChild(li);
+        return;
+      }
+      items.slice().reverse().forEach((it) => {
+        const li = document.createElement("li");
+        li.textContent = it.text;
+        const t = document.createElement("time");
+        t.textContent = new Date(it.createdAt).toLocaleString();
+        li.appendChild(t);
+        ul.appendChild(li);
+      });
+    } catch (e) { /* 网络问题时不影响记录 */ }
+  }
+
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("loginMsg").className = "msg";
+    $("loginMsg").textContent = "正在登录…";
+    try {
+      const data = await api("POST", "/api/v1/auth/login", { email: $("em").value.trim(), password: $("pw").value });
+      token = data.token;
+      localStorage.setItem(KEY, token);
+      localStorage.setItem(EMAIL, $("em").value.trim());
+      $("loginMsg").textContent = "";
+      show();
+    } catch (err) {
+      $("loginMsg").className = "msg bad";
+      $("loginMsg").textContent = err.message;
+    }
+  });
+
+  $("noteForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = $("text").value.trim();
+    if (!text) return;
+    $("save").disabled = true;
+    try {
+      await api("POST", "/api/v1/inbox", { text });
+      $("text").value = "";
+      $("noteMsg").className = "msg ok";
+      $("noteMsg").textContent = "已保存，电脑同步时会放进收件箱";
+      loadPending();
+    } catch (err) {
+      $("noteMsg").className = "msg bad";
+      $("noteMsg").textContent = "保存失败：" + err.message + "（内容还在输入框里）";
+    } finally {
+      $("save").disabled = false;
+      setTimeout(() => { $("noteMsg").textContent = ""; }, 4000);
+    }
+  });
+
+  $("text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("noteForm").requestSubmit();
+  });
+  $("logout").addEventListener("click", logout);
+  show();
+})();
+</script>
+</body>
+</html>

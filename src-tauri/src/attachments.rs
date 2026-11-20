@@ -305,3 +305,94 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 网页剪藏：抓取网页 HTML（按页面声明的编码解码），正文提取在前端完成
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebPage {
+    pub url: String,
+    pub html: String,
+}
+
+pub fn fetch_web_page(url: &str) -> Result<WebPage, AppError> {
+    let u = url.trim();
+    let lower = u.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(AppError::Validation("请输入以 http:// 或 https:// 开头的网址".into()));
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(6))
+        .timeout(Duration::from_secs(25))
+        .redirects(8)
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        )
+        .build();
+    let resp = agent
+        .get(u)
+        .set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
+        .set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .call()
+        .map_err(|e| AppError::Validation(format!("打不开这个网页：{}", e)))?;
+    let final_url = resp.get_url().to_string();
+    let ctype = resp.header("Content-Type").unwrap_or("").to_ascii_lowercase();
+    if !ctype.is_empty() && !ctype.contains("html") && !ctype.contains("xml") && !ctype.contains("text/plain") {
+        return Err(AppError::Validation("这个链接不是网页".into()));
+    }
+    let header_charset = ctype
+        .split(';')
+        .find_map(|p| p.trim().strip_prefix("charset="))
+        .map(|s| s.trim_matches('"').to_string());
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .take(6 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|e| AppError::Validation(format!("读取网页失败：{}", e)))?;
+    Ok(WebPage {
+        url: final_url,
+        html: decode_html(&bytes, header_charset.as_deref()),
+    })
+}
+
+/// 按 HTTP 头或 <meta charset> 解码，默认 UTF-8
+fn decode_html(bytes: &[u8], header_charset: Option<&str>) -> String {
+    let sniff = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
+    let meta_charset = sniff.find("charset=").map(|i| {
+        sniff[i + 8..]
+            .trim_start_matches(['"', '\''])
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect::<String>()
+    });
+    let label = header_charset
+        .map(str::to_string)
+        .or(meta_charset)
+        .unwrap_or_else(|| "utf-8".into());
+    let enc = encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (text, _, _) = enc.decode(bytes);
+    text.into_owned()
+}
+
+#[cfg(test)]
+mod web_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_gbk_by_meta_charset() {
+        let (gbk, _, _) = encoding_rs::GBK.encode("<meta charset=\"gbk\"><p>中文网页</p>");
+        let s = decode_html(&gbk, None);
+        assert!(s.contains("中文网页"));
+    }
+
+    #[test]
+    fn header_charset_wins() {
+        let s = decode_html("<p>héllo</p>".as_bytes(), Some("utf-8"));
+        assert!(s.contains("héllo"));
+    }
+
+    #[test]
+    fn rejects_non_http() {
+        assert!(fetch_web_page("file:///etc/passwd").is_err());
+    }
+}

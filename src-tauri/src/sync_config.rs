@@ -264,6 +264,16 @@ pub fn redeem(db: &Database, official: bool, code: &str) -> Result<AccountInfo, 
     ServerRemote::new(&url, &token)?.redeem(code)
 }
 
+/// 当前同步方式对应的小悦服务器（自建或官方）：(地址, 令牌)。其他同步方式返回 None。
+pub fn server_target(db: &Database) -> Result<Option<(String, String)>, AppError> {
+    let target = match SyncMode::parse(&get(db, K_MODE)?) {
+        SyncMode::Server => Some((get(db, K_SERVER_URL)?, get(db, &k_server_token())?)),
+        SyncMode::Official => Some((official_server_url().to_string(), get(db, &k_official_token())?)),
+        _ => None,
+    };
+    Ok(target.filter(|(u, t)| !u.trim().is_empty() && !t.trim().is_empty()))
+}
+
 fn device_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))

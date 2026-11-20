@@ -562,7 +562,7 @@ export function computeBlockPlainText(
   if (blockType === "image") {
     const safeUrl =
       props.url && !props.url.startsWith("data:") ? props.url : "";
-    return [props.caption, safeUrl].filter(Boolean).join(" ").trim();
+    return [props.caption, safeUrl, props.ocrText].filter(Boolean).join(" ").trim();
   }
   if (blockType === "file") {
     return (props.fileName ?? "").trim();
@@ -699,6 +699,7 @@ export function buildPropsForBlockType(
         url: currentProps.url ?? "",
         caption: currentProps.caption ?? "",
         imageWidth: currentProps.imageWidth ?? "full",
+        ...(currentProps.ocrText ? { ocrText: currentProps.ocrText } : {}),
       };
     case "bookmark":
       return {

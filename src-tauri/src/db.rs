@@ -133,6 +133,9 @@ pub(crate) fn effective_plain_text(
             {
                 parts.push(url.to_string());
             }
+            if let Some(ocr) = props.ocr_text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                parts.push(ocr.to_string());
+            }
             parts.join(" ")
         }
         "file" => props
