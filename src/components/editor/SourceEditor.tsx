@@ -1,3 +1,4 @@
+import { LineNumberGutter } from "./LineNumberGutter";
 import React, { useLayoutEffect, useMemo, useRef } from "react";
 import katex from "katex";
 import {
@@ -407,10 +408,6 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
   const tabSize = Math.max(2, Math.min(8, preferences?.tabSize ?? 2));
   const spellCheck = preferences?.spellcheck ?? false;
 
-  const lineCount = useMemo(
-    () => Math.max(1, markdown.split("\n").length),
-    [markdown]
-  );
 
   // Auto-grow source textarea cleanly in single-pane `source` mode
   useLayoutEffect(() => {
@@ -615,20 +612,6 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
       </div>
 
       <div className="nb-editor-source-body">
-        {showLineNumbers && (
-          <div
-            ref={gutterRef}
-            className="nb-editor-source-gutter"
-            aria-hidden="true"
-          >
-            {Array.from({ length: lineCount }, (_, idx) => (
-              <div key={idx} className="nb-editor-source-line-num">
-                {idx + 1}
-              </div>
-            ))}
-          </div>
-        )}
-
         <textarea
           ref={textareaRef}
           className={`nb-editor-source-textarea ${
@@ -646,6 +629,16 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
             }
           }}
         />
+        {showLineNumbers && (
+          <LineNumberGutter
+            gutterRef={gutterRef}
+            textareaRef={textareaRef}
+            text={markdown}
+            wrap={wordWrap}
+            className="nb-editor-source-gutter"
+            lineClassName="nb-editor-source-line-num"
+          />
+        )}
       </div>
     </div>
   );
