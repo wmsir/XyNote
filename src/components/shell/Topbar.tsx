@@ -2,21 +2,28 @@ import React, { useEffect, useRef, useState } from "react";
 import { PageIcon } from "../../icons/pageIcon";
 import {
   AlignCenter,
+  BookOpen,
   Columns2,
   Copy,
   Download,
   Eye,
   FileCode2,
   FileInput,
+  FileText,
+  FileType2,
+  Globe,
   History,
+  Image as ImageIcon,
   ListTree,
   Maximize2,
   Minimize2,
   MoreHorizontal,
   Network,
   PanelLeftOpen,
+  Printer,
   Save,
   Search,
+  Sigma,
   Star,
   Target,
   Trash2,
@@ -125,6 +132,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onImportLocalMdToWorkspace,
   onDuplicatePage,
   onExportMarkdown,
+  onExportAs,
   onOpenInNewWindow,
   onOpenHistory,
   onSaveAsTemplate,
@@ -502,6 +510,45 @@ export const Topbar: React.FC<TopbarProps> = ({
                   </>
                 )}
 
+                {(page || activeLocalMd) && onExportAs && (
+                  <>
+                    <div className="nb-menu-divider" />
+                    <div className="nb-menu-label-row">
+                      <span className="nb-menu-label" style={{ padding: 0 }}>导出此页</span>
+                      <span className="nb-menu-item-hint">8 种格式</span>
+                    </div>
+                    <div className="nb-menu-export-grid">
+                      {(
+                        [
+                          { id: "pdf", name: "PDF", ext: ".pdf", icon: <Printer size={13} /> },
+                          { id: "opml", name: "思维导图", ext: ".opml", icon: <ListTree size={13} /> },
+                          { id: "docx", name: "Word", ext: ".docx", icon: <FileType2 size={13} /> },
+                          { id: "md", name: "Markdown", ext: ".md", icon: <FileText size={13} /> },
+                          { id: "html", name: "网页", ext: ".html", icon: <Globe size={13} /> },
+                          { id: "png", name: "图片", ext: ".png", icon: <ImageIcon size={13} /> },
+                          { id: "epub", name: "电子书", ext: ".epub", icon: <BookOpen size={13} /> },
+                          { id: "latex", name: "LaTeX", ext: ".tex", icon: <Sigma size={13} /> },
+                        ] as { id: ExportFormat; name: string; ext: string; icon: React.ReactNode }[]
+                      ).map((fmt) => (
+                        <button
+                          key={fmt.id}
+                          type="button"
+                          className="nb-menu-export-chip"
+                          title={`导出为 ${fmt.name} (${fmt.ext})`}
+                          onClick={() => {
+                            onExportAs(fmt.id);
+                            setMenuOpen(false);
+                          }}
+                        >
+                          <span className="nb-menu-export-chip-icon">{fmt.icon}</span>
+                          <span className="nb-menu-export-chip-name">{fmt.name}</span>
+                          <span className="nb-menu-export-chip-ext" data-i18n-skip="">{fmt.ext}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 {page && !activeLocalMd && (
                   <>
                     <div className="nb-menu-divider" />
@@ -571,9 +618,8 @@ export const Topbar: React.FC<TopbarProps> = ({
                       }}
                     >
                       <span className="nb-menu-item-left">
-                        <Download size={14} /> 导出此页…
+                        <Download size={14} /> 更多导出与源码…
                       </span>
-                      <span className="nb-menu-item-hint">8 种格式</span>
                     </button>
 
                     <div className="nb-menu-divider" />

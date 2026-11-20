@@ -1,6 +1,6 @@
 [package]
 name = "xynote"
-version = "0.8.8"
+version = "0.8.9"
 description = "小悦 · 轻量知识笔记 (XyNote) — 悦享服务、愉悦记录，块级结构与多维表格桌面端 (https://fwpt.cn/)"
 authors = ["fwpt.cn <admin@fwpt.cn>"]
 edition = "2021"

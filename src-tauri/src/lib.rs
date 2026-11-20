@@ -190,6 +190,8 @@ pub fn run() {
             commands::x_s7,
             commands::export_page_html,
             commands::export_page_file,
+            commands::export_markdown_html,
+            commands::export_markdown_file,
             commands::page_versions_list,
             commands::page_version_get,
             commands::page_version_restore,

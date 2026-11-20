@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Archive, FilePlus2, FolderOpen, Sparkles, Trash2 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useSyncController } from "./hooks/useSyncController";
-import { exportPageFile, exportPageHtml } from "./api/pro";
+import { exportMarkdownFile, exportMarkdownHtml, exportPageFile, exportPageHtml } from "./api/pro";
 import { printHtmlDocument } from "./utils/printHtml";
 import { PageHistoryModal } from "./components/shell/PageHistoryModal";
 import { TextEditor, type TextEditorActions } from "./components/editor/TextEditor";
@@ -2100,7 +2100,7 @@ export const App: React.FC = () => {
     [prepareExportTarget]
   );
 
-  /** 导出：HTML / Word 存文件，PDF 走系统打印（选择「另存为 PDF」） */
+  /** 导出：HTML / Word / EPUB / OPML 思维导图 / LaTeX / Markdown 存文件，PDF 走系统打印，PNG 自动分页出图 */
   const handleExportAs = useCallback(
     async (pageId: string, format: ExportFormat) => {
       await flushPendingBlockSave();
@@ -2119,6 +2119,37 @@ export const App: React.FC = () => {
           return;
         }
         const saved = await exportPageFile(pageId, format);
+        if (saved) showToast(`已导出：${saved}`);
+      } catch (err) {
+        showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [flushPendingBlockSave, showToast]
+  );
+
+  /** 磁盘 Markdown 文件导出（共享全部 8 种格式） */
+  const handleExportLocalMdAs = useCallback(
+    async (format: ExportFormat) => {
+      await flushPendingBlockSave();
+      const doc = activeLocalMdRef.current;
+      if (!doc) return;
+      const baseName = doc.title || doc.fileName || "未命名文档";
+      const mdText = doc.markdown || "";
+      try {
+        if (format === "pdf") {
+          const { filename, html } = await exportMarkdownHtml(baseName, mdText);
+          await printHtmlDocument(html, filename);
+          return;
+        }
+        if (format === "png") {
+          showToast("正在生成图片…");
+          const { filename, html } = await exportMarkdownHtml(baseName, mdText);
+          const parts = await renderHtmlToPngParts(html);
+          const saved = await saveExportImages(filename, parts);
+          if (saved) showToast(parts.length > 1 ? `已导出 ${parts.length} 张图片：${saved}` : `已导出：${saved}`);
+          return;
+        }
+        const saved = await exportMarkdownFile(baseName, mdText, format);
         if (saved) showToast(`已导出：${saved}`);
       } catch (err) {
         showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
@@ -2445,7 +2476,9 @@ export const App: React.FC = () => {
             }
           }}
           onExportAs={(fmt) => {
-            if (detail?.page) {
+            if (activeLocalMd) {
+              handleExportLocalMdAs(fmt).catch(() => {});
+            } else if (detail?.page) {
               handleExportAs(detail.page.id, fmt).catch(() => {});
             }
           }}

@@ -161,9 +161,21 @@ export async function exportPageHtml(pageId: string): Promise<{ filename: string
   return invoke<{ filename: string; html: string }>("export_page_html", { pageId });
 }
 
-/** 导出 HTML / Word / EPUB / LaTeX / OPML 文件，返回保存路径；取消时为 null */
+/** 导出 HTML / Word / EPUB / LaTeX / OPML / Markdown 文件，返回保存路径；取消时为 null */
 export async function exportPageFile(pageId: string, format: "md" | "html" | "docx" | "epub" | "latex" | "opml"): Promise<string | null> {
   return invoke<string | null>("export_page_file", { pageId, format });
+}
+
+export async function exportMarkdownHtml(filename: string, markdown: string): Promise<{ filename: string; html: string }> {
+  return invoke<{ filename: string; html: string }>("export_markdown_html", { filename, markdown });
+}
+
+export async function exportMarkdownFile(
+  filename: string,
+  markdown: string,
+  format: "md" | "html" | "docx" | "epub" | "latex" | "opml"
+): Promise<string | null> {
+  return invoke<string | null>("export_markdown_file", { filename, markdown, format });
 }
 
 export async function listPageVersions(pageId: string): Promise<PageVersionMeta[]> {

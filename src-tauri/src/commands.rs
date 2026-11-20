@@ -1059,38 +1059,44 @@ pub fn export_page_html(db: State<'_, Database>, page_id: String) -> Result<Html
     Ok(HtmlExport { html: crate::export_formats::markdown_to_html_document(&base, &md.markdown), filename: base })
 }
 
-/// 页面导出为 HTML 或 Word 文件：弹出另存为对话框，返回保存路径（取消时为 null）
+/// 磁盘 Markdown 文档导出为 HTML（用于 PDF 打印与长图导出）
 #[tauri::command]
-pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -> Result<Option<String>, String> {
-    use tauri::Manager;
-    let (base, bytes, ext, label, title) = {
-        let db = app.state::<Database>();
-        let md = db.export_page_markdown(&page_id).map_err(String::from)?;
-        let base = crate::export_formats::base_filename(&md.filename);
-        match format.as_str() {
-            "md" | "markdown" => {
-                (base, md.markdown.into_bytes(), "md", "Markdown 文件", "导出为 Markdown")
-            }
-            "docx" => {
-                let bytes = crate::export_formats::markdown_to_docx(&base, &md.markdown).map_err(String::from)?;
-                (base, bytes, "docx", "Word 文档", "导出为 Word 文档")
-            }
-            "html" => {
-                let html = crate::export_formats::markdown_to_html_document(&base, &md.markdown);
-                (base, html.into_bytes(), "html", "网页文件", "导出为 HTML")
-            }
-            "epub" => {
-                let bytes = crate::export_more::markdown_to_epub(&base, &md.markdown).map_err(String::from)?;
-                (base, bytes, "epub", "EPUB 电子书", "导出为 EPUB 电子书")
-            }
-            "opml" => {
-                let opml = crate::export_more::markdown_to_opml(&base, &md.markdown);
-                (base, opml.into_bytes(), "opml", "OPML 大纲", "导出为 OPML 大纲")
-            }
-            // LaTeX 的图片文件夹要跟随保存的文件名，选好路径后再生成
-            "latex" => (base, md.markdown.into_bytes(), "tex", "LaTeX 文件", "导出为 LaTeX"),
-            other => return Err(format!("不支持的导出格式：{}", other)),
+pub fn export_markdown_html(filename: String, markdown: String) -> Result<HtmlExport, String> {
+    let base = crate::export_formats::base_filename(&filename);
+    Ok(HtmlExport {
+        html: crate::export_formats::markdown_to_html_document(&base, &markdown),
+        filename: base,
+    })
+}
+
+async fn export_markdown_and_save(
+    app: AppHandle,
+    raw_filename: String,
+    markdown: String,
+    format: String,
+) -> Result<Option<String>, String> {
+    let base = crate::export_formats::base_filename(&raw_filename);
+    let (bytes, ext, label, title) = match format.as_str() {
+        "md" | "markdown" => (markdown.into_bytes(), "md", "Markdown 文件", "导出为 Markdown"),
+        "docx" => {
+            let bytes = crate::export_formats::markdown_to_docx(&base, &markdown).map_err(String::from)?;
+            (bytes, "docx", "Word 文档", "导出为 Word 文档")
         }
+        "html" => {
+            let html = crate::export_formats::markdown_to_html_document(&base, &markdown);
+            (html.into_bytes(), "html", "网页文件", "导出为 HTML")
+        }
+        "epub" => {
+            let bytes = crate::export_more::markdown_to_epub(&base, &markdown).map_err(String::from)?;
+            (bytes, "epub", "EPUB 电子书", "导出为 EPUB 电子书")
+        }
+        "opml" => {
+            let opml = crate::export_more::markdown_to_opml(&base, &markdown);
+            (opml.into_bytes(), "opml", "OPML 思维导图 / 大纲", "导出为思维导图 (OPML)")
+        }
+        // LaTeX 的图片文件夹要跟随保存的文件名，选好路径后再生成
+        "latex" => (markdown.into_bytes(), "tex", "LaTeX 文件", "导出为 LaTeX"),
+        other => return Err(format!("不支持的导出格式：{}", other)),
     };
     let is_latex = format == "latex";
     let base_for_latex = base.clone();
@@ -1100,11 +1106,11 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
     .await?;
     let Some(path) = picked else { return Ok(None) };
     if is_latex {
-        let markdown = String::from_utf8(bytes).unwrap_or_default();
+        let md_text = String::from_utf8(bytes).unwrap_or_default();
         let target = std::path::Path::new(&path);
         let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "export".into());
         let image_dir = format!("{}_images", stem);
-        let bundle = crate::export_more::markdown_to_latex(&base_for_latex, &markdown, &image_dir);
+        let bundle = crate::export_more::markdown_to_latex(&base_for_latex, &md_text, &image_dir);
         std::fs::write(&path, &bundle.bytes).map_err(|e| format!("保存失败：{}", e))?;
         let parent = target.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         for (rel, data) in bundle.extra_files {
@@ -1118,6 +1124,29 @@ pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -
     }
     std::fs::write(&path, bytes).map_err(|e| format!("保存失败：{}", e))?;
     Ok(Some(path))
+}
+
+/// 页面导出为 HTML / Word / EPUB / LaTeX / OPML / Markdown 文件：弹出另存为对话框，返回保存路径（取消时为 null）
+#[tauri::command]
+pub async fn export_page_file(app: AppHandle, page_id: String, format: String) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let (filename, markdown) = {
+        let db = app.state::<Database>();
+        let md = db.export_page_markdown(&page_id).map_err(String::from)?;
+        (md.filename, md.markdown)
+    };
+    export_markdown_and_save(app, filename, markdown, format).await
+}
+
+/// 磁盘 Markdown 文件导出为多种格式（与工作区页面共享全套 8 种导出能力）
+#[tauri::command]
+pub async fn export_markdown_file(
+    app: AppHandle,
+    filename: String,
+    markdown: String,
+    format: String,
+) -> Result<Option<String>, String> {
+    export_markdown_and_save(app, filename, markdown, format).await
 }
 
 /// 保存前端生成的图片（PNG）。页面很长时分成多张：第一张用选择的文件名，其余加 -2、-3…

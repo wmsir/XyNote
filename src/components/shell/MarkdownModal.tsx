@@ -71,7 +71,7 @@ const EXPORT_FORMATS: { id: ExportFormat; name: string; ext: string; desc: strin
   { id: "epub", name: "电子书", ext: ".epub", desc: "带目录，可在阅读器和手机上看", icon: <BookOpen size={18} /> },
   { id: "png", name: "图片", ext: ".png", desc: "长页面自动分成多张，方便发群聊", icon: <ImageIcon size={18} /> },
   { id: "latex", name: "LaTeX", ext: ".tex", desc: "用 XeLaTeX 编译排版，公式原样保留", icon: <Sigma size={18} /> },
-  { id: "opml", name: "大纲", ext: ".opml", desc: "按标题分层，可导入思维导图工具", icon: <ListTree size={18} /> },
+  { id: "opml", name: "思维导图 / 大纲", ext: ".opml", desc: "按标题分层，可导入 XMind 等思维导图工具", icon: <ListTree size={18} /> },
 ];
 
 export const MarkdownModal: React.FC<MarkdownModalProps> = ({
