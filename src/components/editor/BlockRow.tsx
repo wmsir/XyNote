@@ -1,3 +1,4 @@
+import { LineNumberGutter } from "./LineNumberGutter";
 import React, {
   useCallback,
   useEffect,
@@ -947,7 +948,6 @@ export const BlockRow: React.FC<BlockRowProps> = ({
         const codeWordWrap =
           block.props.wordWrap ?? preferences?.codeWordWrap ?? true;
         const codeTabSize = Math.max(2, Math.min(8, preferences?.tabSize ?? 2));
-        const codeLineCount = Math.max(1, block.content.split("\n").length);
         const hasKnownLang = CODE_LANGUAGES.some((l) => l.value === langValue);
         const exitCodeShortcut =
           resolveActionShortcut("block.insertBelow", preferences?.keybindings) ||
@@ -1037,16 +1037,6 @@ export const BlockRow: React.FC<BlockRowProps> = ({
             </div>
 
             <div className="nb-editor-code-body">
-              {showCodeLineNumbers && (
-                <div className="nb-editor-code-gutter" aria-hidden="true">
-                  {Array.from({ length: codeLineCount }, (_, idx) => (
-                    <div key={idx} className="nb-editor-code-line-num">
-                      {idx + 1}
-                    </div>
-                  ))}
-                </div>
-              )}
-
               <textarea
                 ref={bindCodeTextareaRef}
                 className="nb-editor-code-textarea"
@@ -1152,6 +1142,15 @@ export const BlockRow: React.FC<BlockRowProps> = ({
                   }
                 }}
               />
+              {showCodeLineNumbers && (
+                <LineNumberGutter
+                  textareaRef={codeTextareaRef}
+                  text={block.content}
+                  wrap={codeWordWrap}
+                  className="nb-editor-code-gutter"
+                  lineClassName="nb-editor-code-line-num"
+                />
+              )}
             </div>
           </div>
         );
