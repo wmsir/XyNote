@@ -6,6 +6,7 @@ import {
   Code2,
   FilePlus2,
   Film,
+  Paperclip,
   GitBranch,
   Heading1,
   Heading2,
@@ -79,6 +80,8 @@ function renderSlashIcon(type: SlashActionType): React.ReactNode {
       return <Bookmark size={16} />;
     case "embed":
       return <Film size={16} />;
+    case "file":
+      return <Paperclip size={16} />;
     case "subpage":
       return <FilePlus2 size={16} />;
   }

@@ -14,6 +14,7 @@ pub mod license_format;
 pub mod license;
 pub mod versions;
 pub mod quick;
+pub mod attachments;
 pub mod export_formats;
 #[cfg(not(test))]
 pub mod commands;
@@ -192,6 +193,11 @@ pub fn run() {
             commands::quick_capture_get_config,
             commands::quick_capture_set_config,
             commands::quick_capture_hide,
+            commands::attach_paths,
+            commands::attach_file_bytes,
+            commands::open_attachment,
+            commands::reveal_attachment,
+            commands::download_image_asset,
             commands::save_page_blocks,
             commands::delete_block,
             commands::get_database,

@@ -32,7 +32,8 @@ export type BlockType =
   | "image"
   | "bookmark"
   | "embed"
-  | "mermaid";
+  | "mermaid"
+  | "file";
 
 export interface BlockProps {
   checked?: boolean;
@@ -56,6 +57,11 @@ export interface BlockProps {
   mermaidView?: "preview" | "split" | "code";
   wordWrap?: boolean;
   colAlignments?: Array<"left" | "center" | "right">;
+  /** 附件块：相对 assets/ 的路径、文件名、大小（字节）、类型 */
+  filePath?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
   /** 待办的截止 / 提醒时间，本地时间 YYYY-MM-DDTHH:mm */
   dueAt?: string;
 }

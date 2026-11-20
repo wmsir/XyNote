@@ -8,6 +8,13 @@ export function isStylePluginFilePath(path: string): boolean {
   return /\.(css|(xynote|notion)-theme\.json)$/i.test(trimmed);
 }
 
+/** 拖进来的是不是应当作为附件的文件（有扩展名、且不是可导入的 Markdown / 文本 / 主题） */
+export function isAttachmentCandidate(path: string): boolean {
+  const name = path.trim().split(/[\\/]/).pop() ?? "";
+  if (!/\.[a-z0-9]{1,8}$/i.test(name)) return false;
+  return !/\.(md|markdown|txt|csv|zip|css|(xynote|notion)-theme\.json)$/i.test(name);
+}
+
 export function filterImportableOsPaths(paths: string[]): string[] {
   return paths.filter((p) => {
     const trimmed = p.trim();

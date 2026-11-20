@@ -639,6 +639,12 @@ export function blocksToMarkdown(blocks: Block[], pages: Page[]): string {
         serialized = `[🔖 ${title}](${url})`;
         break;
       }
+      case "file": {
+        const name = (blk.props.fileName || "附件").replace(/[[\]]/g, "");
+        const path = (blk.props.filePath || "").replace(/ /g, "%20");
+        serialized = `[📎 ${name}](assets/${path})`;
+        break;
+      }
       case "embed": {
         const url = blk.props.url || "";
         const caption = blk.props.caption?.trim();
@@ -1010,6 +1016,23 @@ export function markdownToBlocks(
         url,
         bookmarkTitle: bookmarkMatch[1].trim() || url,
         bookmarkSite: site,
+      });
+      i += 1;
+      continue;
+    }
+
+    // 13b. 附件 (`[📎 name](assets/attachments/x.pdf)`)
+    const fileMatch = /^\[📎\s*([^\]]*)\]\((?:assets\/)?([^\s)]*)\)$/.exec(trimmed);
+    if (fileMatch) {
+      pushBlock("file", "", {
+        fileName: fileMatch[1].trim() || "附件",
+        filePath: (() => {
+          try {
+            return decodeURIComponent(fileMatch[2] || "");
+          } catch {
+            return fileMatch[2] || "";
+          }
+        })(),
       });
       i += 1;
       continue;

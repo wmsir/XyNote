@@ -1939,7 +1939,22 @@ const EN: Record<string, string> = {
   "快速记录快捷键已改为 {0}": "Quick capture shortcut changed to {0}",
   "已关闭快速记录快捷键": "Quick capture shortcut turned off",
   "收件箱": "Inbox",
-  "保存失败：": "Couldn't save: "
+  "保存失败：": "Couldn't save: ",
+  "附件": "Attachment",
+  "添加 PDF、Word、表格、压缩包等任意文件，点击用系统程序打开": "Add any file — PDF, Word, spreadsheets, archives — and open it with its app",
+  "添加附件：PDF、Word、表格、压缩包等任意文件，也可以直接把文件拖进窗口": "Add an attachment: any file such as PDF, Word, spreadsheets or archives. You can also drag files into the window.",
+  "选择文件…": "Choose file…",
+  "双击用系统程序打开": "Double-click to open",
+  "用系统程序打开": "Open with default app",
+  "在文件夹中显示": "Show in folder",
+  "转为书签卡片": "Turn into bookmark card",
+  "保持为链接": "Keep as link",
+  "磁盘上的 Markdown 文件暂不支持附件，请在工作区页面里添加": "Markdown files on disk can't hold attachments yet. Add them to a workspace page instead.",
+  "「{0}」超过 200 MB，无法作为附件": "“{0}” is over 200 MB and can't be attached",
+  "添加附件失败：{0}": "Couldn't add attachment: {0}",
+  "正在添加 {0} 个附件…": "Adding {0} attachments…",
+  "有 {0} 个文件没加上：{1}": "{0} files couldn't be added: {1}",
+  "已添加 {0} 个附件到页面末尾": "Added {0} attachments to the end of the page"
 };
 
 export default EN;

@@ -1205,6 +1205,74 @@ pub async fn open_new_window(app: AppHandle, page_id: Option<String>) -> Result<
     Ok(label)
 }
 
+/// 拖入的文件复制成附件；返回成功的和失败原因
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachPathsResult {
+    pub items: Vec<crate::attachments::AttachmentInfo>,
+    pub errors: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn attach_paths(app: AppHandle, paths: Vec<String>) -> Result<AttachPathsResult, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let mut out = AttachPathsResult { items: Vec::new(), errors: Vec::new() };
+        for p in paths {
+            match crate::attachments::attach_from_path(&db, &p) {
+                Ok(info) => out.items.push(info),
+                Err(e) => {
+                    let name = Path::new(&p).file_name().and_then(|s| s.to_str()).unwrap_or(&p).to_string();
+                    out.errors.push(format!("{}：{}", name, String::from(e)));
+                }
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn attach_file_bytes(
+    app: AppHandle,
+    file_name: String,
+    data_base64: String,
+) -> Result<crate::attachments::AttachmentInfo, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::attachments::attach_from_bytes(&db, &file_name, &data_base64).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_attachment(db: State<'_, Database>, rel_path: String) -> Result<(), String> {
+    let full = crate::attachments::resolve(&db, &rel_path).map_err(String::from)?;
+    crate::attachments::open_with_default_app(&full).map_err(String::from)
+}
+
+#[tauri::command]
+pub fn reveal_attachment(db: State<'_, Database>, rel_path: String) -> Result<(), String> {
+    let full = crate::attachments::resolve(&db, &rel_path).map_err(String::from)?;
+    crate::win_dialogs::open_path_in_explorer_sync(&full.to_string_lossy()).map_err(Into::into)
+}
+
+/// 把网页图片下载成本地图片，返回 data URL
+#[tauri::command]
+pub async fn download_image_asset(app: AppHandle, url: String) -> Result<String, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        crate::attachments::download_remote_image(&db, &url).map_err(String::from)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 快速记录与托盘的当前设置
 #[tauri::command]
 pub fn quick_capture_get_config(app: AppHandle, db: State<'_, Database>) -> crate::quick::QuickCaptureConfig {

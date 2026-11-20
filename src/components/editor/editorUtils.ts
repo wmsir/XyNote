@@ -213,6 +213,13 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
     ],
   },
   {
+    type: "file",
+    group: "媒体与公式",
+    label: "附件",
+    description: "添加 PDF、Word、表格、压缩包等任意文件，点击用系统程序打开",
+    keywords: ["file", "attachment", "upload", "pdf", "附件", "文件", "上传", "fujian", "wenjian"],
+  },
+  {
     type: "subpage",
     group: "页面联动",
     label: "新建子页面",
@@ -557,6 +564,9 @@ export function computeBlockPlainText(
       props.url && !props.url.startsWith("data:") ? props.url : "";
     return [props.caption, safeUrl].filter(Boolean).join(" ").trim();
   }
+  if (blockType === "file") {
+    return (props.fileName ?? "").trim();
+  }
   if (blockType === "bookmark") {
     return [
       props.bookmarkTitle,
@@ -707,6 +717,13 @@ export function buildPropsForBlockType(
         embedProvider: currentProps.embedProvider,
         caption: currentProps.caption ?? "",
       };
+    case "file":
+      return {
+        filePath: currentProps.filePath ?? "",
+        fileName: currentProps.fileName ?? "",
+        ...(currentProps.fileSize !== undefined ? { fileSize: currentProps.fileSize } : {}),
+        ...(currentProps.mimeType ? { mimeType: currentProps.mimeType } : {}),
+      };
     case "divider":
       return {};
     default:
@@ -745,7 +762,8 @@ export function isRichTextEditableBlock(blockType: BlockType): boolean {
     blockType !== "math" &&
     blockType !== "image" &&
     blockType !== "bookmark" &&
-    blockType !== "embed"
+    blockType !== "embed" &&
+    blockType !== "file"
   );
 }
 

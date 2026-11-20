@@ -31,6 +31,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExportFormat } from "./components/shell/Topbar";
 import { FreshStart } from "./components/shell/FreshStart";
 import { TodoCenter } from "./components/shell/TodoCenter";
+import { attachPaths, cleanError } from "./api/attachments";
 import { useDailyAndTodos } from "./hooks/useDailyAndTodos";
 import { savePageAsTemplate } from "./api/templates";
 import {
@@ -41,6 +42,7 @@ import {
   emptyTrash,
   exportPageMarkdown,
   getPageDetail,
+  upsertBlock,
   getSettings,
   getStorageInfo,
   importLocalPaths,
@@ -124,6 +126,7 @@ import { StatusBar } from "./components/shell/StatusBar";
 import {
   collectFilesFromDataTransfer,
   filterImportableOsPaths,
+  isAttachmentCandidate,
   formatBatchImportSummary,
   isStylePluginFilePath,
   readFileAsBase64,
@@ -968,6 +971,57 @@ export const App: React.FC = () => {
     [loadPageDetailById, refreshSidebarLists, showToast]
   );
 
+  // 编辑器里发出的提示（附件失败等）
+  useEffect(() => {
+    const onToast = (e: Event) => {
+      const msg = (e as CustomEvent<string>).detail;
+      if (msg) showToast(msg, 4000);
+    };
+    window.addEventListener("xynote:toast", onToast);
+    return () => window.removeEventListener("xynote:toast", onToast);
+  }, [showToast]);
+
+  /** 把拖进窗口的文件作为附件追加到当前页面末尾 */
+  const attachDroppedFiles = useCallback(
+    async (paths: string[]) => {
+      const cur = detailRef.current;
+      if (!cur) return;
+      await flushPendingBlockSave();
+      showToast(`正在添加 ${paths.length} 个附件…`, 3000);
+      const res = await attachPaths(paths);
+      const fresh = await getPageDetail(cur.page.id);
+      let order = fresh.blocks.reduce((m, b) => Math.max(m, b.sortOrder), -1) + 1;
+      for (const info of res.items) {
+        await upsertBlock(
+          info.imageDataUrl
+            ? {
+                pageId: cur.page.id,
+                blockType: "image",
+                content: "",
+                plainText: "",
+                props: { url: info.imageDataUrl, caption: info.fileName.replace(/\.[^.]+$/, ""), imageWidth: "full" },
+                sortOrder: order++,
+              }
+            : {
+                pageId: cur.page.id,
+                blockType: "file",
+                content: "",
+                plainText: info.fileName,
+                props: { filePath: info.relPath, fileName: info.fileName, fileSize: info.size, mimeType: info.mime },
+                sortOrder: order++,
+              }
+        );
+      }
+      if (res.items.length > 0) await loadPageDetailById(cur.page.id, null);
+      if (res.errors.length > 0) {
+        showToast(`有 ${res.errors.length} 个文件没加上：${res.errors.slice(0, 2).join("；")}`, 6000);
+      } else if (res.items.length > 0) {
+        showToast(`已添加 ${res.items.length} 个附件到页面末尾`);
+      }
+    },
+    [flushPendingBlockSave, loadPageDetailById, showToast]
+  );
+
   // Tauri v2 Native Window Drag-and-Drop Subscription
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -995,7 +1049,18 @@ export const App: React.FC = () => {
         } else if (payload.type === "drop") {
           eligibleHover = false;
           setWindowDragActive(false);
-          const importable = filterImportableOsPaths(payload.paths);
+          // 正在看工作区里的文档页时，PDF、Word、图片等文件作为附件加到页面里
+          const canAttach =
+            !!detailRef.current &&
+            detailRef.current.page.pageType === "doc" &&
+            !activeLocalMdRef.current;
+          const attachable = canAttach ? payload.paths.filter(isAttachmentCandidate) : [];
+          if (attachable.length > 0) {
+            attachDroppedFiles(attachable).catch((err) =>
+              showToast(`添加附件失败：${cleanError(err)}`, 5000)
+            );
+          }
+          const importable = filterImportableOsPaths(payload.paths.filter((p) => !attachable.includes(p)));
           if (importable.length === 0) return;
 
           const currentParentId =
@@ -1049,7 +1114,7 @@ export const App: React.FC = () => {
       disposed = true;
       if (unlistenFn) unlistenFn();
     };
-  }, [flushPendingBlockSave, handleBatchImportSuccess, showToast]);
+  }, [attachDroppedFiles, flushPendingBlockSave, handleBatchImportSuccess, showToast]);
 
   // Browser / HTML5 Window Drag-and-Drop Fallback (only external file drops)
   const isExternalFileDrag = (e: React.DragEvent): boolean => {
