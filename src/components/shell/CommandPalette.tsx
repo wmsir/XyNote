@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { PageIcon } from "../../icons/pageIcon";
 import {
   CornerDownLeft,
@@ -252,6 +252,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     window.setTimeout(() => {
       inputRef.current?.focus();
     }, 10);
+  }, [open]);
+
+  // 打开后立刻把焦点放进搜索框（在浏览器绘制之前），
+  // 按下 Ctrl+K 马上接着打字时，字不会落进正文里
+  useLayoutEffect(() => {
+    if (open) inputRef.current?.focus();
   }, [open]);
 
   useEffect(() => {
