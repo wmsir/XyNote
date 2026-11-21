@@ -50,6 +50,10 @@ export interface FolderTreeProps {
   onBeforeRename: () => Promise<void>;
   /** 文件或文件夹被移到回收站后通知外层：正在编辑的文件需要关闭 */
   onEntryRemoved: (path: string) => void;
+  /** 挂载的根文件夹在磁盘上改名后，让外层更新侧栏里记录的路径；不传则根文件夹不能改名 */
+  onRootRenamed?: (oldPath: string, newPath: string, newName: string) => void;
+  /** 外部（全局快捷键）请求重命名某个文件：展开它所在的文件夹并出现输入框 */
+  renameRequest?: { path: string; nonce: number } | null;
   notify: (message: string, durationMs?: number) => void;
 }
 
@@ -61,7 +65,7 @@ interface Listing {
 }
 
 type EditState =
-  | { kind: "rename"; path: string; isDir: boolean; parent: string; value: string }
+  | { kind: "rename"; path: string; isDir: boolean; parent: string; value: string; isRoot?: boolean }
   | { kind: "new-file" | "new-dir"; parent: string; value: string }
   | null;
 
@@ -190,6 +194,8 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
   onEntryRenamed,
   onBeforeRename,
   onEntryRemoved,
+  onRootRenamed,
+  renameRequest,
   notify,
 }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
@@ -409,6 +415,27 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
     return () => window.removeEventListener("xynote:folder-new-file", onNew);
   }, [folders, isTauri, persistExpanded]);
 
+  // 全局快捷键请求重命名当前打开的文件：展开它所在的各级文件夹，再出现输入框
+  useEffect(() => {
+    if (!renameRequest) return;
+    const target = renameRequest.path;
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const root = folders.find((f) => norm(target).startsWith(norm(f.path) + "/"));
+    if (!root) return;
+    const sep = target.includes("\\") ? "\\" : "/";
+    const rel = target.slice(root.path.replace(/[\\/]+$/, "").length + 1).split(/[\\/]/);
+    const name = rel.pop() || "";
+    let dir = root.path.replace(/[\\/]+$/, "");
+    const chain = [dir];
+    for (const part of rel) {
+      dir = dir + sep + part;
+      chain.push(dir);
+    }
+    for (const d of chain) toggle(d, true);
+    setEdit({ kind: "rename", path: target, isDir: false, parent: chain[chain.length - 1], value: name });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameRequest?.nonce]);
+
   // 回车提交后输入框卸载可能再触发一次 blur，用标记避免重复新建 / 重命名
   const committingRef = useRef(false);
   const commitEdit = async () => {
@@ -427,6 +454,25 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
         if (value === oldName) return;
         await onBeforeRename();
         const entry = await renameFolderEntry(current.path, value);
+        if (current.isRoot) {
+          // 根文件夹改名：它和里面所有子文件夹的展开状态都换到新路径下
+          const oldNorm = current.path.replace(/\\/g, "/").toLowerCase();
+          const sep = entry.path.includes("\\") ? "\\" : "/";
+          setExpanded((prev) => {
+            const next: Record<string, boolean> = {};
+            for (const [k, v] of Object.entries(prev as Record<string, boolean>)) {
+              const kn = k.replace(/\\/g, "/").toLowerCase();
+              if (kn === oldNorm) next[entry.path] = v;
+              else if (kn.startsWith(oldNorm + "/")) next[entry.path + sep + k.slice(current.path.length + 1)] = v;
+              else next[k] = v;
+            }
+            persistExpanded(next);
+            return next;
+          });
+          onRootRenamed?.(current.path, entry.path, entry.name);
+          onEntryRenamed(current.path, entry.path);
+          return;
+        }
         // 展开状态跟着新路径走
         setExpanded((prev) => {
           if (!prev[current.path]) return prev;
@@ -751,8 +797,10 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
         const isOpen = Boolean(expanded[root.path]);
         const listing = listings[root.path];
         const menuOpen = menu ? samePath(menu.path, root.path) : false;
+        const renamingRoot = edit?.kind === "rename" && edit.isRoot && samePath(edit.path, root.path);
         return (
           <div key={root.path} className="nb-folder-root" role="treeitem" aria-expanded={isOpen}>
+            {renamingRoot ? renderEditRow(0, true) : (
             <div
               {...dropHandlers(root.path)}
               className={`nb-tree-row nb-folder-root-row${menuOpen ? " menu-open" : ""}${
@@ -763,7 +811,12 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
               tabIndex={0}
               onClick={() => toggle(root.path)}
               onKeyDown={(e) => {
-                if (e.target === e.currentTarget && e.key === "Enter") toggle(root.path);
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter") toggle(root.path);
+                else if (e.key === "F2" && onRootRenamed && isTauri) {
+                  e.preventDefault();
+                  setEdit({ kind: "rename", path: root.path, isDir: true, parent: "", value: root.name, isRoot: true });
+                }
               }}
               onContextMenu={(e) =>
                 openMenu(e, { path: root.path, isDir: true, isRoot: true, parent: "", name: root.name })
@@ -805,6 +858,7 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
                 </button>
               </div>
             </div>
+            )}
             {isOpen && (
               <div role="group">
                 {listing?.error ? (
@@ -878,12 +932,12 @@ export const FolderTree: React.FC<FolderTreeProps> = ({
               </span>
             </button>
           )}
-          {!menu.isRoot && (
+          {(!menu.isRoot || (onRootRenamed && isTauri)) && (
             <button
               type="button"
               className="nb-menu-item"
               onClick={() => {
-                setEdit({ kind: "rename", path: menu.path, isDir: menu.isDir, parent: menu.parent, value: menu.name });
+                setEdit({ kind: "rename", path: menu.path, isDir: menu.isDir, parent: menu.parent, value: menu.name, isRoot: menu.isRoot });
                 setMenu(null);
               }}
             >

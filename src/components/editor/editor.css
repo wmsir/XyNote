@@ -2416,15 +2416,27 @@
 .nb-editor-split-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* 分屏高度固定，两栏各自滚动：栏高不能跟着源码行号或预览内容的高度变，
+     否则每输入一个字栏高都会变一次，源码区的文字就会上下抖动 */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   width: 100%;
-  min-height: 560px;
+  height: calc(100vh - 170px);
+  min-height: 520px;
   align-items: stretch;
+}
+
+.nb-editor-split-layout > .nb-editor-source-pane,
+.nb-editor-split-layout > .nb-editor-preview-pane {
+  min-height: 0;
 }
 
 @media (max-width: 860px) {
   .nb-editor-split-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    height: calc(200vh - 340px);
+    min-height: 1040px;
   }
 }
 
@@ -2479,8 +2491,15 @@
 
 .nb-editor-split-layout .nb-editor-source-body,
 .nb-editor-split-layout .nb-editor-preview-scroll {
-  height: calc(100vh - 230px);
-  min-height: 460px;
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
+
+/* 滚动条出现或消失时不改变文字区宽度，避免整段源码重新折行 */
+.nb-editor-split-layout .nb-editor-source-textarea,
+.nb-editor-split-layout .nb-editor-preview-scroll {
+  scrollbar-gutter: stable;
 }
 
 .nb-editor-source-gutter {

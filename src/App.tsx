@@ -205,6 +205,9 @@ export const App: React.FC = () => {
   >([]);
   // 侧栏「文件夹」里挂载的磁盘文件夹
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
+  // 全局快捷键（默认 F2）发起的重命名请求，交给侧栏显示输入框
+  const [renamePageRequest, setRenamePageRequest] = useState<{ pageId: string; nonce: number } | null>(null);
+  const [renameFileRequest, setRenameFileRequest] = useState<{ path: string; nonce: number } | null>(null);
   /** 文本编辑器里打开的磁盘文件（.txt、.json、代码等） */
   const [activeTextFile, setActiveTextFile] = useState<TextFileDocument | null>(null);
 
@@ -746,6 +749,18 @@ export const App: React.FC = () => {
     (path: string) => {
       setWorkspaceFolders((prev) => {
         const next = prev.filter((f) => f.path !== path);
+        persistWorkspaceFolders(next);
+        return next;
+      });
+    },
+    [persistWorkspaceFolders]
+  );
+
+  // 挂载的根文件夹在磁盘上改名：侧栏记录的路径和显示名跟着换
+  const handleRootFolderRenamed = useCallback(
+    (oldPath: string, newPath: string, newName: string) => {
+      setWorkspaceFolders((prev) => {
+        const next = prev.map((f) => (f.path === oldPath ? { path: newPath, name: newName } : f));
         persistWorkspaceFolders(next);
         return next;
       });
@@ -1658,6 +1673,36 @@ export const App: React.FC = () => {
         return;
       }
 
+      if (combo === kb["app.renamePage"]) {
+        // 正在输入文字（正文、标题、输入框）时不抢这个键
+        const el = document.activeElement as HTMLElement | null;
+        const typing =
+          !!el &&
+          (el.isContentEditable ||
+            el.tagName === "INPUT" ||
+            el.tagName === "TEXTAREA" ||
+            el.tagName === "SELECT");
+        if (typing) return;
+        // 侧栏里有选中（聚焦）的页面就改它，否则改当前打开的页面或文件
+        const focusedRow = el?.closest("[data-page-row-id]") as HTMLElement | null;
+        const focusedId = focusedRow?.getAttribute("data-page-row-id");
+        const filePath = activeTextFileRef.current?.filePath ?? activeLocalMdRef.current?.filePath ?? null;
+        if (focusedId) {
+          e.preventDefault();
+          if (sidebarCollapsed) handleToggleSidebar();
+          setRenamePageRequest({ pageId: focusedId, nonce: Date.now() });
+        } else if (filePath) {
+          e.preventDefault();
+          if (sidebarCollapsed) handleToggleSidebar();
+          setRenameFileRequest({ path: filePath, nonce: Date.now() });
+        } else if (activePageId) {
+          e.preventDefault();
+          if (sidebarCollapsed) handleToggleSidebar();
+          setRenamePageRequest({ pageId: activePageId, nonce: Date.now() });
+        }
+        return;
+      }
+
       if (combo === kb["app.newWindow"]) {
         e.preventDefault();
         openNewWindow(null).catch((err) => showToast(`无法打开新窗口：${err instanceof Error ? err.message : String(err)}`));
@@ -1724,6 +1769,7 @@ export const App: React.FC = () => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    activePageId,
     handleCreatePage,
     handleOpenLocalMdDialog,
     handleSaveAsMarkdown,
@@ -1732,6 +1778,7 @@ export const App: React.FC = () => {
     handleToggleZenMode,
     handleUpdateEditorPrefs,
     showToast,
+    sidebarCollapsed,
   ]);
 
   const handleStorageUpdated = useCallback(
@@ -1798,6 +1845,28 @@ export const App: React.FC = () => {
       }
     },
     [detail]
+  );
+
+  // 侧栏重命名工作区页面（不一定是当前打开的页面）
+  const handleRenamePage = useCallback(
+    async (pageId: string, title: string) => {
+      try {
+        const updated = await updatePage(pageId, { title });
+        setPages((prev) => prev.map((p) => (p.id === pageId ? updated : p)));
+        setDetail((prev) => {
+          if (!prev) return prev;
+          const breadcrumbs = prev.breadcrumbs.map((c) =>
+            c.id === pageId ? { ...c, title: updated.title } : c
+          );
+          return prev.page.id === pageId
+            ? { ...prev, page: updated, breadcrumbs }
+            : { ...prev, breadcrumbs };
+        });
+      } catch (err) {
+        showToast(`重命名失败：${err instanceof Error ? err.message : String(err)}`, 3600);
+      }
+    },
+    [showToast]
   );
 
   const handleToggleFavoriteForPage = useCallback(
@@ -2389,6 +2458,11 @@ export const App: React.FC = () => {
         }}
         onRemoveWorkspaceFolder={handleRemoveWorkspaceFolder}
         onFolderEntryRenamed={handleFolderEntryRenamed}
+        onRootFolderRenamed={handleRootFolderRenamed}
+        onRenamePage={handleRenamePage}
+        renamePageRequest={renamePageRequest}
+        renameFileRequest={renameFileRequest}
+        renameShortcutLabel={keybindings["app.renamePage"] || ""}
         onBeforeFolderRename={flushPendingBlockSave}
         onFolderEntryRemoved={handleFolderEntryRemoved}
         notify={showToast}

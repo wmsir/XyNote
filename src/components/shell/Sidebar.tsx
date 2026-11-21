@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isSvgIcon, PageIcon } from "../../icons/pageIcon";
 import {
   ChevronRight,
@@ -10,6 +10,7 @@ import {
   FileText,
   FolderOpen,
   MoreHorizontal,
+  Pencil,
   PanelLeftClose,
   Plus,
   Search,
@@ -66,6 +67,16 @@ export interface SidebarProps {
   onFolderEntryRenamed: (oldPath: string, newPath: string) => void;
   onBeforeFolderRename: () => Promise<void>;
   onFolderEntryRemoved: (path: string) => void;
+  /** 挂载的根文件夹在磁盘上改名后，更新侧栏里的文件夹路径 */
+  onRootFolderRenamed?: (oldPath: string, newPath: string, newName: string) => void;
+  /** 重命名工作区页面 */
+  onRenamePage: (pageId: string, title: string) => Promise<void> | void;
+  /** 外部（全局快捷键）请求重命名某个页面，nonce 变化即触发 */
+  renamePageRequest?: { pageId: string; nonce: number } | null;
+  /** 外部（全局快捷键）请求重命名文件夹里的某个文件 */
+  renameFileRequest?: { path: string; nonce: number } | null;
+  /** 重命名快捷键的显示文字，例如 F2 */
+  renameShortcutLabel?: string;
   notify: (message: string, durationMs?: number) => void;
 }
 
@@ -155,6 +166,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onFolderEntryRenamed,
   onBeforeFolderRename,
   onFolderEntryRemoved,
+  onRootFolderRenamed,
+  onRenamePage,
+  renamePageRequest,
+  renameFileRequest,
+  renameShortcutLabel = "F2",
   notify,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({
@@ -210,10 +226,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
     page: Page;
     top: number;
     left: number;
+    where?: "tree" | "fav";
   } | null>(null);
 
   const sidebarRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // 行内重命名：where 区分是在页面树还是收藏夹里改，避免两处同时出现输入框
+  const [renaming, setRenaming] = useState<{ pageId: string; where: "tree" | "fav"; value: string } | null>(null);
+  const renameDoneRef = useRef(false);
+  const startRename = useCallback((page: Page, where: "tree" | "fav") => {
+    renameDoneRef.current = false;
+    setMenuState(null);
+    setRenaming({ pageId: page.id, where, value: page.title || "" });
+  }, []);
+  const finishRename = (commit: boolean) => {
+    const cur = renaming;
+    if (!cur || renameDoneRef.current) return;
+    renameDoneRef.current = true;
+    setRenaming(null);
+    if (!commit) return;
+    const page = pages.find((p) => p.id === cur.pageId);
+    const title = cur.value.trim();
+    if (!page || !title || title === page.title) return;
+    void onRenamePage(page.id, title);
+  };
+  const renderRenameInput = () => (
+    <input
+      className="nb-tree-rename-input"
+      autoFocus
+      value={renaming?.value ?? ""}
+      spellCheck={false}
+      aria-label="页面新名称"
+      onFocus={(e) => e.currentTarget.select()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onChange={(e) => setRenaming((cur) => (cur ? { ...cur, value: e.target.value } : cur))}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.nativeEvent.isComposing) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finishRename(true);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          finishRename(false);
+        }
+      }}
+      onBlur={() => finishRename(true)}
+    />
+  );
 
   const childrenMap = useMemo(() => {
     const map = new Map<string | null, Page[]>();
@@ -281,6 +343,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener("mousedown", onOutside);
   }, [menuState]);
 
+  // 全局快捷键请求重命名：展开它的上级页面，在页面树里出现输入框
+  useEffect(() => {
+    if (!renamePageRequest) return;
+    const byId = new Map(pages.map((p) => [p.id, p]));
+    const target = byId.get(renamePageRequest.pageId);
+    if (!target) return;
+    const ancestors: string[] = [];
+    let cur = target.parentId ? byId.get(target.parentId) : undefined;
+    const guard = new Set<string>();
+    while (cur && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      ancestors.push(cur.id);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    if (ancestors.length) {
+      setExpandedIds((prev) => {
+        const next = { ...prev };
+        for (const id of ancestors) next[id] = true;
+        return next;
+      });
+    }
+    setWsOpen(true);
+    startRename(target, "tree");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renamePageRequest?.nonce]);
+
   const favorites = useMemo(() => pages.filter((p) => p.isFavorite), [pages]);
   const rootPages = childrenMap.get(null) ?? [];
   const hasLocalMdFiles = recentLocalMdFiles.length > 0;
@@ -290,12 +378,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setExpandedIds((prev) => ({ ...prev, [pageId]: !prev[pageId] }));
   };
 
-  const openRowMenu = (e: React.MouseEvent, page: Page) => {
+  const openRowMenu = (e: React.MouseEvent, page: Page, where: "tree" | "fav" = "tree") => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const top = Math.min(rect.bottom + 4, window.innerHeight - 230);
+    const top = Math.min(rect.bottom + 4, window.innerHeight - 270);
     const left = Math.min(rect.left, window.innerWidth - 235);
-    setMenuState({ page, top, left });
+    setMenuState({ page, top, left, where });
+  };
+
+  // 右键：菜单出现在鼠标位置
+  const openContextMenu = (e: React.MouseEvent, page: Page, where: "tree" | "fav") => {
+    e.preventDefault();
+    e.stopPropagation();
+    const top = Math.max(8, Math.min(e.clientY, window.innerHeight - 270));
+    const left = Math.max(8, Math.min(e.clientX, window.innerWidth - 235));
+    setMenuState({ page, top, left, where });
   };
 
   const renderTreeNode = (page: Page, depth: number): React.ReactNode => {
@@ -304,15 +401,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanded = Boolean(expandedIds[page.id]);
     const isActive = !activeLocalMdPath && page.id === activePageId;
     const isMenuOpen = menuState?.page.id === page.id;
+    const isRenaming = renaming?.pageId === page.id && renaming.where === "tree";
 
     return (
       <div key={page.id}>
         <div
           className={`nb-tree-row${isActive ? " is-active" : ""}${
             isMenuOpen ? " menu-open" : ""
-          }`}
+          }${isRenaming ? " is-renaming" : ""}`}
           style={{ paddingLeft: `${8 + depth * 15}px` }}
-          onClick={() => onSelectPage(page.id)}
+          data-page-row-id={page.id}
+          tabIndex={0}
+          onClick={() => {
+            if (!isRenaming) onSelectPage(page.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter") onSelectPage(page.id);
+            else if (hasChildren && e.key === "ArrowRight") setExpandedIds((prev) => ({ ...prev, [page.id]: true }));
+            else if (hasChildren && e.key === "ArrowLeft") setExpandedIds((prev) => ({ ...prev, [page.id]: false }));
+          }}
+          onContextMenu={(e) => openContextMenu(e, page, "tree")}
           title={page.title || "无标题"}
         >
           <div
@@ -338,7 +447,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          <span className="nb-tree-title">{page.title || "无标题"}</span>
+          {isRenaming ? (
+            renderRenameInput()
+          ) : (
+            <span className="nb-tree-title">{page.title || "无标题"}</span>
+          )}
 
           <div className="nb-tree-actions">
             <button
@@ -478,7 +591,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       : ""
                   }`}
                   style={{ paddingLeft: "8px" }}
-                  onClick={() => onSelectPage(fav.id)}
+                  data-page-row-id={fav.id}
+                  tabIndex={0}
+                  onClick={() => {
+                    if (!(renaming?.pageId === fav.id && renaming.where === "fav")) onSelectPage(fav.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && e.key === "Enter") onSelectPage(fav.id);
+                  }}
+                  onContextMenu={(e) => openContextMenu(e, fav, "fav")}
                   title={fav.title || "无标题"}
                 >
                   <div className="nb-tree-leading">
@@ -486,7 +607,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <PageNodeGlyph page={fav} />
                     </span>
                   </div>
-                  <span className="nb-tree-title">{fav.title || "无标题"}</span>
+                  {renaming?.pageId === fav.id && renaming.where === "fav" ? (
+                    renderRenameInput()
+                  ) : (
+                    <span className="nb-tree-title">{fav.title || "无标题"}</span>
+                  )}
                   <div className="nb-tree-actions">
                     <button
                       type="button"
@@ -585,6 +710,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onEntryRenamed={onFolderEntryRenamed}
                   onBeforeRename={onBeforeFolderRename}
                   onEntryRemoved={onFolderEntryRemoved}
+                  onRootRenamed={onRootFolderRenamed}
+                  renameRequest={renameFileRequest}
                   notify={notify}
                 />
               )}
@@ -721,6 +848,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             left: `${menuState.left}px`,
           }}
         >
+          <button
+            type="button"
+            className="nb-menu-item"
+            onClick={() => startRename(menuState.page, menuState.where ?? "tree")}
+          >
+            <span className="nb-menu-item-left">
+              <Pencil size={14} />
+              重命名
+            </span>
+            {renameShortcutLabel && <kbd className="nb-menu-kbd">{renameShortcutLabel}</kbd>}
+          </button>
+
           <button
             type="button"
             className="nb-menu-item"

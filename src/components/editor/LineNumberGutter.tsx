@@ -1,4 +1,4 @@
-import React, { type Ref, type RefObject } from "react";
+import React, { useLayoutEffect, useRef, type Ref, type RefObject } from "react";
 import { useWrappedLineHeights } from "../../utils/useWrappedLineHeights";
 
 interface LineNumberGutterProps {
@@ -22,8 +22,21 @@ export const LineNumberGutter: React.FC<LineNumberGutterProps> = ({
 }) => {
   const heights = useWrappedLineHeights(textareaRef, text, true, wrap);
   const count = heights?.length ?? Math.max(1, text.split("\n").length);
+  const localRef = useRef<HTMLDivElement | null>(null);
+  // 行高重新测量后（比如输入导致折行变化），把行号栏的滚动位置对齐到源码框
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (ta && localRef.current && localRef.current.scrollTop !== ta.scrollTop) {
+      localRef.current.scrollTop = ta.scrollTop;
+    }
+  });
+  const setRefs = (el: HTMLDivElement | null) => {
+    localRef.current = el;
+    if (typeof gutterRef === "function") gutterRef(el);
+    else if (gutterRef) (gutterRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+  };
   return (
-    <div ref={gutterRef} className={className} aria-hidden="true" style={{ order: -1 }}>
+    <div ref={setRefs} className={className} aria-hidden="true" style={{ order: -1 }}>
       {Array.from({ length: count }, (_, idx) => (
         <div
           key={idx}

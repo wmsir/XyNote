@@ -1087,6 +1087,31 @@ a {
   color: var(--text-tertiary);
 }
 
+/* 工作区页面：行内重命名 */
+.nb-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 23px;
+  padding: 0 6px;
+  border: 1px solid var(--accent-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.nb-tree-row.is-renaming .nb-tree-actions {
+  display: none;
+}
+
+.nb-tree-row:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
 /* ===== 侧栏「文件夹」：磁盘文件夹树 ===== */
 .nb-folders-section {
   margin-top: 6px;

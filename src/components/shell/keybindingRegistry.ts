@@ -406,6 +406,14 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     defaultShortcut: "Ctrl+Shift+L",
   },
   {
+    id: "app.renamePage",
+    category: "workspace",
+    categoryLabel: "全局与视图",
+    label: "重命名页面或文件",
+    description: "重命名侧栏里选中的页面，没有选中时重命名当前打开的页面或文件（正在输入文字时不生效）",
+    defaultShortcut: "F2",
+  },
+  {
     id: "editor.toggleSource",
     category: "workspace",
     categoryLabel: "全局与视图",
