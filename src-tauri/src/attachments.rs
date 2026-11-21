@@ -38,10 +38,9 @@ fn attachments_dir(db: &Database) -> Result<PathBuf, AppError> {
 
 /// 去掉 Windows 不允许的字符，避免路径穿越
 fn safe_file_name(name: &str) -> String {
-    let base = Path::new(name)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("附件");
+    // 不用 Path 取文件名：Linux / macOS 不认 `\` 是分隔符，Windows 又会把 `a:` 当成盘符，
+    // 结果各平台不一致。这里两种分隔符都切，取最后一段。
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()
         .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
