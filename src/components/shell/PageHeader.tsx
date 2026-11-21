@@ -50,6 +50,31 @@ export interface PageHeaderProps {
   onCreateSubpage: () => void;
 }
 
+/** 把光标放到正文第一个可编辑位置（所见即所得的第一块，或源码模式的文本框开头） */
+function focusEditorStart(): boolean {
+  const root = document.querySelector(".page-editor-container");
+  if (!root) return false;
+  const target = root.querySelector<HTMLElement>(
+    '.nb-editor-source-textarea, [contenteditable="true"], textarea'
+  );
+  if (!target) return false;
+  target.focus({ preventScroll: false });
+  if (target instanceof HTMLTextAreaElement) {
+    target.setSelectionRange(0, 0);
+    target.scrollTop = 0;
+  } else {
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+  return true;
+}
+
 export const PageHeader: React.FC<PageHeaderProps> = ({
   page,
   fontClass,
@@ -310,9 +335,14 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
             onChange={(e) => handleTitleChange(e.target.value)}
             onBlur={handleTitleBlur}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              // 中文输入法用回车确认候选词时不能当成「标题写完了」
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              const el = e.currentTarget as HTMLTextAreaElement;
+              const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+              if (e.key === "Enter" || (e.key === "ArrowDown" && atEnd)) {
                 e.preventDefault();
-                (e.currentTarget as HTMLTextAreaElement).blur();
+                // 回车或在标题末尾按向下键：进入正文开头继续写
+                if (page.pageType === "database" || !focusEditorStart()) el.blur();
               }
             }}
           />

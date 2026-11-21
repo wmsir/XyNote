@@ -1609,6 +1609,11 @@ a {
   overflow: hidden;
 }
 
+/* 对话框打开时焦点落在卡片本身（便于 Tab 进入、Esc 关闭），卡片不需要焦点框 */
+.nb-modal-card:focus {
+  outline: none;
+}
+
 .nb-modal-card.is-wide {
   max-width: 840px;
 }
@@ -1705,6 +1710,15 @@ a {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 搜索结果里命中的词 */
+.nb-cmd-mark {
+  background: rgba(35, 131, 226, 0.2);
+  background: color-mix(in srgb, var(--accent-color, #2383e2) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
 }
 
 .nb-cmd-footer {

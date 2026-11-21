@@ -1,3 +1,13 @@
+import {
+  clearBlockHistory,
+  createBlockHistory,
+  firstChangedBlockId,
+  recordBlockChange,
+  takeRedo,
+  takeUndo,
+} from "./blockHistory";
+import { reconcileBlockIds } from "./blockReconcile";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import React, {
   useCallback,
   useEffect,
@@ -217,6 +227,8 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   const prevPageIdRef = useRef<string>(pageId);
   const prevViewModeRef = useRef<EditorViewMode>(effectiveViewMode);
   const lastEmittedRef = useRef<Block[] | null>(null);
+  // 所见即所得的撤销 / 重做（跨块：分段、删除、转换、拖动都能撤销）
+  const historyRef = useRef(createBlockHistory());
   const localBlocksRef = useRef<Block[]>(localBlocks);
   localBlocksRef.current = localBlocks;
   const focusTargetsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -238,6 +250,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     if (prevPageIdRef.current !== pageId) {
       prevPageIdRef.current = pageId;
       lastEmittedRef.current = null;
+      clearBlockHistory(historyRef.current);
       setActiveMenu(null);
       setActionMenu(null);
       setDraggingBlockId(null);
@@ -254,6 +267,8 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     }
 
     if (blocks !== lastEmittedRef.current) {
+      // 外部改动（磁盘文件被改、同步拉取等）后旧的撤销记录不再对应当前内容
+      clearBlockHistory(historyRef.current);
       const normalized = normalizeIncomingBlocks(pageId, blocks, pages);
       setLocalBlocks(normalized);
       const isSourceTextareaFocused =
@@ -403,6 +418,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       const reindexed = safeList.map((blk, idx) =>
         blk.sortOrder === idx ? blk : { ...blk, sortOrder: idx }
       );
+      recordBlockChange(historyRef.current, localBlocksRef.current, reindexed);
       lastEmittedRef.current = reindexed;
       setLocalBlocks(reindexed);
       onBlocksChange(reindexed);
@@ -924,6 +940,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
             cleanedHtml ? `${cleanedHtml} ${linkHtml}` : linkHtml
           );
           const now = new Date().toISOString();
+          clearBlockHistory(historyRef.current);
           setLocalBlocks((prev) => {
             const next = prev.map((b) =>
               b.id === blockId
@@ -1068,6 +1085,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         )}" class="nb-wiki-link">${icon} ${title}</a>&nbsp;`;
         const merged = normalizeCleanHtml(`${baseHtml}${linkHtml}`);
         const now = new Date().toISOString();
+        clearBlockHistory(historyRef.current);
         setLocalBlocks((prev) => {
           const next = prev.map((b) =>
             b.id === snapshot.blockId
@@ -1480,8 +1498,13 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   // Markdown Source / Split Live Preview handlers
   const handleSourceMarkdownChange = useCallback(
     (nextMd: string) => {
+      // 源码框有自己的撤销；回到所见即所得后不再撤销到源码编辑之前
+      clearBlockHistory(historyRef.current);
       setSourceText(nextMd);
-      const parsed = markdownToBlocks(pageId, nextMd, pages);
+      const parsed = reconcileBlockIds(
+        localBlocksRef.current,
+        markdownToBlocks(pageId, nextMd, pages)
+      );
       const reindexed = parsed.map((blk, idx) =>
         blk.sortOrder === idx ? blk : { ...blk, sortOrder: idx }
       );
@@ -1847,6 +1870,63 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       ? localBlocks[0].id
       : null);
 
+  const applyHistorySnapshot = useCallback(
+    (target: Block[]) => {
+      const current = localBlocksRef.current;
+      const focusId = firstChangedBlockId(current, target);
+      lastEmittedRef.current = target;
+      setLocalBlocks(target);
+      onBlocksChange(target);
+      setActiveMenu(null);
+      setActionMenu(null);
+      if (focusId) pendingFocusRef.current = { blockId: focusId, placement: "end" };
+    },
+    [onBlocksChange]
+  );
+
+  // Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做。
+  // 统一走编辑器自己的记录（不用浏览器逐字撤销），连续输入合并成一步。
+  const handleHistoryKeyDownCapture = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.nativeEvent.isComposing || e.altKey) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      const isUndo = key === "z" && !e.shiftKey;
+      const isRedo = (key === "z" && e.shiftKey) || (key === "y" && e.ctrlKey && !e.shiftKey);
+      if (!isUndo && !isRedo) return;
+      // 单行输入框（链接地址、表格里的输入框等）保留原生撤销
+      if (e.target instanceof HTMLInputElement) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const h = historyRef.current;
+      const current = localBlocksRef.current;
+      const target = isUndo ? takeUndo(h, current) : takeRedo(h, current);
+      if (target) applyHistorySnapshot(target);
+    },
+    [applyHistorySnapshot]
+  );
+
+  // 传给每一行的回调保持同一个引用：BlockRow 是 memo 组件，
+  // 输入时只有被编辑的那一行重新渲染，长文档不再整页重算。
+  const stableRow = {
+    contentChange: useStableCallback(handleContentChange),
+    propsChange: useStableCallback(handlePropsChange),
+    markdownConvert: useStableCallback(handleMarkdownConvert),
+    splitBlockOnEnter: useStableCallback(handleSplitBlockOnEnter),
+    convertEmptyToParagraph: useStableCallback(handleConvertEmptyToParagraph),
+    backspaceAtStart: useStableCallback(handleBackspaceAtStart),
+    deleteBlock: useStableCallback(handleDeleteBlock),
+    exitBlockBelow: useStableCallback(handleExitBlockBelow),
+    focusAdjacentBlock: useStableCallback(handleFocusAdjacentBlock),
+    gutterAddBelow: useStableCallback(handleGutterAddBelow),
+    smartMarkdownPaste: useStableCallback(handleSmartMarkdownPaste),
+    dragOverBlock: useStableCallback(handleDragOverBlock),
+    dropOnBlock: useStableCallback(handleDropOnBlock),
+    pasteImageFile: useStableCallback((id: string, file: File, replace: boolean) => {
+      handlePasteImageFile(id, file, replace).catch(() => {});
+    }),
+  };
+
   return (
     <div
       ref={editorRootRef}
@@ -1872,7 +1952,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         <div className="nb-editor-main-col">
           {effectiveViewMode === "wysiwyg" ? (
             <>
-              <div className="nb-editor-list nb-editor-canvas">
+              <div className="nb-editor-list nb-editor-canvas" onKeyDownCapture={handleHistoryKeyDownCapture}>
                 {localBlocks.map((blk, idx) => (
                   <BlockRow
                     key={blk.id}
@@ -1892,25 +1972,23 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                     preferences={preferences}
                     registerFocusTarget={registerFocusTarget}
                     onBlockFocus={setFocusedBlockId}
-                    onContentChange={handleContentChange}
-                    onPropsChange={handlePropsChange}
-                    onMarkdownConvert={handleMarkdownConvert}
-                    onSplitBlockOnEnter={handleSplitBlockOnEnter}
-                    onConvertEmptyToParagraph={handleConvertEmptyToParagraph}
-                    onBackspaceAtStart={handleBackspaceAtStart}
-                    onDeleteBlock={handleDeleteBlock}
-                    onExitBlockBelow={handleExitBlockBelow}
-                    onFocusAdjacentBlock={handleFocusAdjacentBlock}
+                    onContentChange={stableRow.contentChange}
+                    onPropsChange={stableRow.propsChange}
+                    onMarkdownConvert={stableRow.markdownConvert}
+                    onSplitBlockOnEnter={stableRow.splitBlockOnEnter}
+                    onConvertEmptyToParagraph={stableRow.convertEmptyToParagraph}
+                    onBackspaceAtStart={stableRow.backspaceAtStart}
+                    onDeleteBlock={stableRow.deleteBlock}
+                    onExitBlockBelow={stableRow.exitBlockBelow}
+                    onFocusAdjacentBlock={stableRow.focusAdjacentBlock}
                     onTriggerMenuChange={handleTriggerMenuChange}
-                    onGutterAddBelow={handleGutterAddBelow}
+                    onGutterAddBelow={stableRow.gutterAddBelow}
                     onOpenActionMenu={handleOpenActionMenu}
-                    onSmartMarkdownPaste={handleSmartMarkdownPaste}
-                    onPasteImageFile={(id, file, replace) => {
-                      handlePasteImageFile(id, file, replace).catch(() => {});
-                    }}
+                    onSmartMarkdownPaste={stableRow.smartMarkdownPaste}
+                    onPasteImageFile={stableRow.pasteImageFile}
                     onDragStartBlock={handleDragStartBlock}
-                    onDragOverBlock={handleDragOverBlock}
-                    onDropOnBlock={handleDropOnBlock}
+                    onDragOverBlock={stableRow.dragOverBlock}
+                    onDropOnBlock={stableRow.dropOnBlock}
                     onDragEndBlock={handleDragEndBlock}
                   />
                 ))}

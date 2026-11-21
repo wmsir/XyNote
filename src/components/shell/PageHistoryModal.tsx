@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { PageIcon } from "../../icons/pageIcon";
 import { History, RotateCcw, X } from "lucide-react";
 import {
@@ -74,12 +75,7 @@ export function PageHistoryModal({
     };
   }, [selected]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const dialogRef = useDialog(open, onClose);
 
   if (!open) return null;
 
@@ -101,6 +97,8 @@ export function PageHistoryModal({
   return (
     <div className="nb-modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="nb-modal-card is-wide nb-history-card"
         role="dialog"
         aria-modal="true"

@@ -48,6 +48,36 @@ interface QuickActionItem {
   run: () => void;
 }
 
+/** 把搜索词在标题、摘要里标出来（不区分大小写，空格分开的多个词分别标） */
+function HighlightText({ text, query }: { text: string; query: string }) {
+  const terms = Array.from(
+    new Set(
+      query
+        .trim()
+        .split(/\s+/)
+        .filter((t) => t.length > 0)
+        .map((t) => t.toLowerCase())
+    )
+  ).sort((a, b) => b.length - a.length);
+  if (!text || terms.length === 0) return <>{text}</>;
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const re = new RegExp(`(${escaped.join("|")})`, "gi");
+  const parts = text.split(re);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <mark key={i} className="nb-cmd-mark">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
   open,
   onClose,
@@ -469,7 +499,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         )}
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            {hit.title || "无标题"}
+                            <HighlightText text={hit.title || "无标题"} query={query} />
                             {hit.rootName && (
                               <span className="nb-cmd-item-meta">{hit.rootName}</span>
                             )}
@@ -479,7 +509,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                           </div>
                           {hit.snippet && (
                             <div className="nb-cmd-item-snippet">
-                              {hit.lineStart ? `第 ${hit.lineStart} 行 · ${hit.snippet}` : hit.snippet}
+                              {hit.lineStart ? `第 ${hit.lineStart} 行 · ` : null}
+                              <HighlightText text={hit.snippet} query={query} />
                             </div>
                           )}
                           {hit.sharedEntities.length > 0 && (
@@ -538,7 +569,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         )}
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            {hit.title || "无标题"}
+                            <HighlightText text={hit.title || "无标题"} query={query} />
                             {hit.rootName && (
                               <span className="nb-cmd-item-meta">{hit.rootName}</span>
                             )}
@@ -548,7 +579,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                           </div>
                           {hit.snippet && (
                             <div className="nb-cmd-item-snippet">
-                              {hit.lineStart ? `第 ${hit.lineStart} 行 · ${hit.snippet}` : hit.snippet}
+                              {hit.lineStart ? `第 ${hit.lineStart} 行 · ` : null}
+                              <HighlightText text={hit.snippet} query={query} />
                             </div>
                           )}
                           {hit.sharedEntities.length > 0 && (
@@ -596,7 +628,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         <PageIcon icon={item.pageIcon} size={17} className="nb-inline-page-icon" />
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            {item.pageTitle || "无标题"}
+                            <HighlightText text={item.pageTitle || "无标题"} query={query} />
                             {item.pageType === "database" && (
                               <span
                                 className="nb-tree-badge"
@@ -607,7 +639,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                             )}
                           </div>
                           {item.snippet && (
-                            <div className="nb-cmd-item-snippet">{item.snippet}</div>
+                            <div className="nb-cmd-item-snippet">
+                              <HighlightText text={item.snippet} query={query} />
+                            </div>
                           )}
                         </div>
                         {isSelected && (
@@ -645,11 +679,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         </span>
                         <div className="nb-cmd-item-body">
                           <div className="nb-cmd-item-title">
-                            {hit.name.replace(/\.(md|markdown|mdown|mkd)$/i, "")}
+                            <HighlightText text={hit.name.replace(/\.(md|markdown|mdown|mkd)$/i, "")} query={query} />
                             <span className="nb-cmd-item-meta">{hit.rootName}</span>
                           </div>
                           <div className="nb-cmd-item-snippet">
-                            {hit.line > 0 ? `第 ${hit.line} 行 · ${hit.snippet}` : "文件名匹配"}
+                            {hit.line > 0 ? (
+                              <>
+                                第 {hit.line} 行 · <HighlightText text={hit.snippet} query={query} />
+                              </>
+                            ) : (
+                              "文件名匹配"
+                            )}
                           </div>
                         </div>
                         {isSelected && (

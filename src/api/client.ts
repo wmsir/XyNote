@@ -484,7 +484,7 @@ function createInitialSeedStore(): LocalStore {
     makeBlock(welcomeId, 9, "bullet", "右键笔记：重命名（也可以按 <code>F2</code>）、在文件管理器中显示、复制路径。"),
     makeBlock(welcomeId, 10, "bullet", "只显示子文件夹和 .md / .markdown / .txt 笔记；隐藏文件、node_modules 等目录不会出现。"),
     makeBlock(welcomeId, 11, "bullet", "从侧栏移除文件夹只是不再显示，不会删除磁盘上的任何文件。"),
-    makeBlock(welcomeId, 12, "toggle", "常用快捷键", { collapsed: true, childrenText: "Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）" }),
+    makeBlock(welcomeId, 12, "toggle", "常用快捷键", { collapsed: true, childrenText: "Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + Z / Ctrl + Shift + Z：撤销 / 重做\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）" }),
     makeBlock(welcomeId, 13, "paragraph", "这篇文档可以随意修改或删除。"),
   ];
 

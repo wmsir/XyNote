@@ -505,7 +505,7 @@ impl Database {
             "常用快捷键",
             BlockProps {
                 collapsed: Some(true),
-                children_text: Some("Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）".into()),
+                children_text: Some("Ctrl + K：搜索与命令面板\nCtrl + N：新建页面\nCtrl + O：打开单个 .md 文件\nCtrl + S：立即保存\nCtrl + Z / Ctrl + Shift + Z：撤销 / 重做\nCtrl + /：切换源码模式\nCtrl + Shift + L：显示或隐藏侧栏\nCtrl + ,：偏好设置（可自定义全部快捷键）".into()),
                 ..Default::default()
             },
         )?;
