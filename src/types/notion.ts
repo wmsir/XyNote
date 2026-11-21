@@ -127,7 +127,7 @@ export interface DbRow {
 
 export interface DatabaseFull {
   pageId: string;
-  activeView: "table" | "board" | "gallery";
+  activeView: "table" | "board" | "gallery" | "calendar" | "timeline";
   groupByColId: string | null;
   columns: DbColumn[];
   rows: DbRow[];

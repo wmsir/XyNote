@@ -33,6 +33,8 @@ import { FilterSortBar } from "./FilterSortBar";
 import { TableView } from "./TableView";
 import { BoardView } from "./BoardView";
 import { GalleryView } from "./GalleryView";
+import { CalendarView } from "./CalendarView";
+import { TimelineView } from "./TimelineView";
 import { RowDetailDrawer } from "./RowDetailDrawer";
 import "./database.css";
 
@@ -158,11 +160,16 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
     async (nextView: ViewMode) => {
       if (!db) return;
       let nextGroupColId = db.groupByColId;
-      if (nextView === "board" && !nextGroupColId) {
+      const current = sortedColumns.find((c) => c.id === nextGroupColId);
+      // 看板按状态 / 单选分组；日历和时间线按日期列排
+      if (nextView === "board" && !(current && (current.colType === "status" || current.colType === "select"))) {
         const candidate = sortedColumns.find(
           (c) => c.colType === "status" || c.colType === "select"
         );
         nextGroupColId = candidate?.id ?? null;
+      }
+      if ((nextView === "calendar" || nextView === "timeline") && !(current && current.colType === "date")) {
+        nextGroupColId = sortedColumns.find((c) => c.colType === "date")?.id ?? null;
       }
 
       setDb((prev) =>
@@ -228,6 +235,52 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
       return { ...prev, columns: getSortedColumns(nextCols) };
     });
   }, []);
+
+  /** 日历 / 时间线没有日期列时，一键加一个 */
+  const handleCreateDateColumn = useCallback(async () => {
+    if (!db) return;
+    const existingNames = new Set(db.columns.map((c) => c.name));
+    let name = "日期";
+    let idx = 2;
+    while (existingNames.has(name)) name = `日期 ${idx++}`;
+    const nextSort = db.columns.reduce((m, c) => Math.max(m, c.sortOrder), 0) + 1;
+    const created = await upsertDbColumn({
+      pageId,
+      name,
+      colType: "date",
+      options: [],
+      width: 140,
+      sortOrder: nextSort,
+    });
+    setDb((prev) =>
+      prev && prev.pageId === pageId
+        ? { ...prev, groupByColId: created.id, columns: getSortedColumns([...prev.columns, created]) }
+        : prev
+    );
+    await updateDatabaseView(pageId, db.activeView, created.id);
+  }, [db, pageId]);
+
+  /** 时间线的结束日期列，按数据库记在本机 */
+  const timelineEndKey = `xynote.db.timelineEnd.${pageId}`;
+  const [timelineEndColId, setTimelineEndColId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(timelineEndKey);
+    } catch {
+      return null;
+    }
+  });
+  const changeTimelineEnd = useCallback(
+    (colId: string | null) => {
+      setTimelineEndColId(colId);
+      try {
+        if (colId) localStorage.setItem(timelineEndKey, colId);
+        else localStorage.removeItem(timelineEndKey);
+      } catch {
+        /* ignore */
+      }
+    },
+    [timelineEndKey]
+  );
 
   const handleCreateDefaultStatusColumn = useCallback(async () => {
     if (!db) return;
@@ -574,6 +627,36 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
             onCreateRowWithCells={handleCreateRowWithCells}
             onDeleteRow={handleDeleteRow}
             onOpenOrCreateLinkedPage={handleOpenOrCreateLinkedPage}
+            onOpenRowDrawer={setDrawerRowId}
+          />
+        )}
+
+        {db.activeView === "calendar" && (
+          <CalendarView
+            columns={sortedColumns}
+            rows={visibleRows}
+            dateColId={db.groupByColId}
+            onChangeDateCol={handleChangeGroupBy}
+            onCreateDateColumn={() => {
+              handleCreateDateColumn().catch(() => {});
+            }}
+            onUpdateCell={handleUpdateCell}
+            onCreateRowWithCells={handleCreateRowWithCells}
+            onOpenRowDrawer={setDrawerRowId}
+          />
+        )}
+
+        {db.activeView === "timeline" && (
+          <TimelineView
+            columns={sortedColumns}
+            rows={visibleRows}
+            startColId={db.groupByColId}
+            endColId={timelineEndColId}
+            onChangeStartCol={handleChangeGroupBy}
+            onChangeEndCol={changeTimelineEnd}
+            onCreateDateColumn={() => {
+              handleCreateDateColumn().catch(() => {});
+            }}
             onOpenRowDrawer={setDrawerRowId}
           />
         )}
