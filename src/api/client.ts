@@ -54,7 +54,7 @@ interface PageLinkRecord {
 }
 
 interface DbMetaRecord {
-  activeView: "table" | "board" | "gallery";
+  activeView: DatabaseFull["activeView"];
   groupByColId: string | null;
 }
 
@@ -2182,7 +2182,7 @@ export async function getDatabase(pageId: string): Promise<DatabaseFull> {
 
 export async function updateDatabaseView(
   pageId: string,
-  activeView: "table" | "board" | "gallery",
+  activeView: DatabaseFull["activeView"],
   groupByColId?: string | null
 ): Promise<DatabaseFull> {
   if (isTauriRuntime()) {
