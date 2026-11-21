@@ -1667,6 +1667,12 @@ fn format_single_block_lines(
             lines.push(format!("![{}]({})", caption, url));
             lines.push(String::new());
         }
+        "file" => {
+            let name = props.file_name.as_deref().filter(|s| !s.is_empty()).unwrap_or("附件");
+            let path = props.file_path.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
+            lines.push(format!("[📎 {}](assets/{})", name, path.replace(' ', "%20")));
+            lines.push(String::new());
+        }
         "bookmark" => {
             let url = props
                 .url

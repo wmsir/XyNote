@@ -1440,6 +1440,12 @@ impl Database {
         Self::compute_storage_info_inner(&inner)
     }
 
+    /// 当前数据目录下的 assets/ 路径（未配置存储时为 None）
+    pub fn assets_dir(&self) -> Result<Option<PathBuf>, AppError> {
+        let inner = self.lock()?;
+        Ok(inner.storage.as_ref().map(|st| st.assets_path()))
+    }
+
     pub fn save_asset_image(
         &self,
         filename: &str,

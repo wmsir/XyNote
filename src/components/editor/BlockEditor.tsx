@@ -17,7 +17,9 @@ import React, {
   useState,
 } from "react";
 import { iconAsText } from "../../icons/pageIcon";
-import { openPathInExplorer, saveAssetImage, saveLocalNoteImage } from "../../api/client";
+import { isTauriRuntime, openPathInExplorer, saveAssetImage, saveLocalNoteImage } from "../../api/client";
+import { attachFileBytes, cleanError, downloadImageAsset } from "../../api/attachments";
+import { readFileAsBase64 } from "../shell/fileDropUtils";
 import type {
   Block,
   BlockProps,
@@ -1329,6 +1331,84 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   }, []);
 
   // Smart Multi-line / Block Markdown Paste -> Splices rich Notion/Typora blocks at current block
+  /** 粘贴进来的网页图片：后台下载到本地，成功后把链接换成本地图片（失败就保留原链接） */
+  const localizeRemoteImages = useCallback(
+    (blocks: Block[]) => {
+      if (pageId.startsWith("local:") || !isTauriRuntime()) return;
+      const targets = blocks.filter(
+        (b) => b.blockType === "image" && /^https?:\/\//i.test(b.props.url || "")
+      );
+      for (const b of targets.slice(0, 30)) {
+        const remote = b.props.url!;
+        downloadImageAsset(remote)
+          .then((dataUrl) => {
+            if (!dataUrl) return;
+            const list = localBlocksRef.current;
+            const i = list.findIndex((x) => x.id === b.id);
+            if (i === -1 || list[i].props.url !== remote) return;
+            const next = [...list];
+            next[i] = {
+              ...list[i],
+              props: { ...list[i].props, url: dataUrl },
+              updatedAt: new Date().toISOString(),
+            };
+            commitBlocks(next);
+          })
+          .catch(() => {});
+      }
+    },
+    [commitBlocks, pageId]
+  );
+
+  /** 粘贴的非图片文件存为附件块（图片文件仍然变成图片块） */
+  const handlePasteAttachmentFile = useCallback(
+    async (blockId: string, file: File, replaceCurrentBlock: boolean) => {
+      if (pageId.startsWith("local:")) {
+        window.dispatchEvent(
+          new CustomEvent("xynote:toast", { detail: "磁盘上的 Markdown 文件暂不支持附件，请在工作区页面里添加" })
+        );
+        return;
+      }
+      if (file.size > 200 * 1024 * 1024) {
+        window.dispatchEvent(new CustomEvent("xynote:toast", { detail: `「${file.name}」超过 200 MB，无法作为附件` }));
+        return;
+      }
+      let info;
+      try {
+        const b64 = await readFileAsBase64(file);
+        info = await attachFileBytes(file.name || "附件", b64);
+      } catch (err) {
+        window.dispatchEvent(new CustomEvent("xynote:toast", { detail: `添加附件失败：${cleanError(err)}` }));
+        return;
+      }
+      const newBlock = info.imageDataUrl
+        ? createNewBlock(pageId, "image", 0, "", {
+            url: info.imageDataUrl,
+            caption: (info.fileName || file.name).replace(/\.[^.]+$/, ""),
+            imageWidth: "full",
+          })
+        : createNewBlock(pageId, "file", 0, "", {
+            filePath: info.relPath,
+            fileName: info.fileName || file.name,
+            fileSize: info.size || file.size,
+            mimeType: info.mime || file.type,
+          });
+      const list = localBlocksRef.current;
+      const idx = list.findIndex((b) => b.id === blockId);
+      const nextList =
+        idx !== -1 && replaceCurrentBlock
+          ? [...list.slice(0, idx), newBlock, ...list.slice(idx + 1)]
+          : [...list.slice(0, idx === -1 ? list.length : idx + 1), newBlock, ...list.slice(idx === -1 ? list.length : idx + 1)];
+      if (nextList[nextList.length - 1].id === newBlock.id) {
+        const after = createNewBlock(pageId, "paragraph", nextList.length, "");
+        nextList.push(after);
+        pendingFocusRef.current = { blockId: after.id, placement: "start" };
+      }
+      commitBlocks(nextList);
+    },
+    [commitBlocks, pageId]
+  );
+
   const handleSmartMarkdownPaste = useCallback(
     (blockId: string, markdown: string) => {
       const parsed = markdownToBlocks(pageId, markdown, pages);
@@ -1370,8 +1450,9 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       }
 
       commitBlocks(nextList);
+      localizeRemoteImages(parsed);
     },
-    [commitBlocks, pageId, pages]
+    [commitBlocks, pageId, pages, localizeRemoteImages]
   );
 
   // Clipboard Screenshot / Local Image Paste -> Saves to `<activeDataDir>/assets/` (or Base64 fallback)
@@ -1925,6 +2006,9 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     pasteImageFile: useStableCallback((id: string, file: File, replace: boolean) => {
       handlePasteImageFile(id, file, replace).catch(() => {});
     }),
+    pasteAttachmentFile: useStableCallback((id: string, file: File, replace: boolean) => {
+      handlePasteAttachmentFile(id, file, replace).catch(() => {});
+    }),
   };
 
   return (
@@ -1986,6 +2070,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                     onOpenActionMenu={handleOpenActionMenu}
                     onSmartMarkdownPaste={stableRow.smartMarkdownPaste}
                     onPasteImageFile={stableRow.pasteImageFile}
+                    onPasteAttachmentFile={stableRow.pasteAttachmentFile}
                     onDragStartBlock={handleDragStartBlock}
                     onDragOverBlock={stableRow.dragOverBlock}
                     onDropOnBlock={stableRow.dropOnBlock}

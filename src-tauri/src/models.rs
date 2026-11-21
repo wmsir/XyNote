@@ -101,6 +101,15 @@ pub struct BlockProps {
     pub word_wrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub col_alignments: Option<Vec<String>>,
+    /// 附件块：相对 assets/ 的路径、文件名、大小、类型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
     /// 待办的截止 / 提醒时间（本地时间 `YYYY-MM-DDTHH:mm`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_at: Option<String>,

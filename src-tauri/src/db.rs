@@ -135,6 +135,12 @@ pub(crate) fn effective_plain_text(
             }
             parts.join(" ")
         }
+        "file" => props
+            .file_name
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string(),
         "bookmark" => {
             let mut parts = Vec::new();
             for opt in [

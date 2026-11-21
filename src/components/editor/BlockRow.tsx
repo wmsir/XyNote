@@ -1,5 +1,7 @@
 import { LineNumberGutter } from "./LineNumberGutter";
 import { TodoDueChip } from "./TodoDue";
+import { FileBlock } from "./FileBlock";
+import { htmlToMarkdown, isStructuredHtml } from "../../utils/htmlToMarkdown";
 import React, {
   useCallback,
   useEffect,
@@ -127,6 +129,8 @@ export interface BlockRowProps {
     file: File,
     replaceCurrentBlock: boolean
   ) => void;
+  /** 粘贴了非图片文件：存为附件块 */
+  onPasteAttachmentFile?: (blockId: string, file: File, replaceCurrentBlock: boolean) => void;
   onDragStartBlock: (blockId: string, e: React.DragEvent<HTMLElement>) => void;
   onDragOverBlock: (blockId: string, e: React.DragEvent<HTMLDivElement>) => void;
   onDropOnBlock: (blockId: string, e: React.DragEvent<HTMLDivElement>) => void;
@@ -160,6 +164,7 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
   onOpenActionMenu,
   onSmartMarkdownPaste,
   onPasteImageFile,
+  onPasteAttachmentFile,
   onDragStartBlock,
   onDragOverBlock,
   onDropOnBlock,
@@ -200,6 +205,8 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
   const [editingBookmark, setEditingBookmark] = useState(false);
   const [draftBookmarkUrl, setDraftBookmarkUrl] = useState("");
   const [loadingBookmark, setLoadingBookmark] = useState(false);
+  /** 刚粘贴进空段落的网址：提供「转为书签卡片」 */
+  const [urlOffer, setUrlOffer] = useState<string | null>(null);
   const [faviconFailed, setFaviconFailed] = useState(false);
 
   // Embed block state
@@ -602,8 +609,55 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
       return;
     }
 
+    // 1b. 从资源管理器复制的其他文件 → 附件块
+    if (onPasteAttachmentFile) {
+      const otherFile =
+        clipItems.find((item) => item.kind === "file")?.getAsFile() ??
+        (e.clipboardData?.files && e.clipboardData.files.length > 0 ? e.clipboardData.files[0] : null);
+      if (otherFile) {
+        e.preventDefault();
+        e.stopPropagation();
+        onPasteAttachmentFile(block.id, otherFile, isHtmlVisuallyEmpty(el.innerHTML));
+        return;
+      }
+    }
+
     const plain = e.clipboardData.getData("text/plain");
+
+    // 1c. 网页、Word、飞书等复制来的带格式内容 → 转成 Markdown 再拆成块
+    if (preferences?.smartMarkdownPaste !== false) {
+      const html = e.clipboardData.getData("text/html");
+      if (html && isStructuredHtml(html)) {
+        const md = htmlToMarkdown(html);
+        if (md && (md.includes("\n") || /^(#{1,3} |> |[-*] |\d+\. |!\[|\x60{3}|\|)/.test(md))) {
+          e.preventDefault();
+          setUrlOffer(null);
+          onSmartMarkdownPaste(block.id, md);
+          return;
+        }
+      }
+    }
+
     if (!plain) return;
+
+    // 1d. 只粘贴了一个网址：插入链接；空段落里再给一个「转为书签卡片」的选项
+    const urlOnly = plain.trim();
+    if (
+      /^https?:\/\/[^\s<>"]+$/i.test(urlOnly) &&
+      block.blockType !== "code" &&
+      block.blockType !== "math" &&
+      block.blockType !== "mermaid"
+    ) {
+      e.preventDefault();
+      const wasEmpty = isHtmlVisuallyEmpty(el.innerHTML);
+      insertHtmlAtCaret(el, `<a href="${escapeHtml(urlOnly)}">${escapeHtml(urlOnly)}</a>&nbsp;`);
+      const linkedHtml = normalizeCleanHtml(el.innerHTML);
+      lastCommittedHtmlRef.current = linkedHtml;
+      el.setAttribute("data-empty", "false");
+      onContentChange(block.id, linkedHtml);
+      setUrlOffer(wasEmpty && block.blockType === "paragraph" ? urlOnly : null);
+      return;
+    }
 
     // 2. Smart Multi-line / Structured Markdown Paste -> Parse into rich Notion/Typora blocks
     if (
@@ -712,6 +766,23 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
     onPasteImageFile(block.id, file, true);
   };
 
+  // 「转为书签卡片」后自动抓取标题和图标；继续输入或几秒后收起选项
+  useEffect(() => {
+    if (!urlOffer) return;
+    const t = window.setTimeout(() => setUrlOffer(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [urlOffer]);
+
+  const autoFetchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const url = block.props.url;
+    if (block.blockType !== "bookmark" || !url || block.props.bookmarkTitle || loadingBookmark) return;
+    if (autoFetchedRef.current === url) return;
+    autoFetchedRef.current = url;
+    handleSubmitBookmarkUrl(url).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.blockType, block.props.url, block.props.bookmarkTitle]);
+
   // Fetch URL metadata for Bookmark Card
   const handleSubmitBookmarkUrl = async (rawInput: string) => {
     const normalized = normalizeExternalUrl(rawInput);
@@ -753,7 +824,37 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
   const renderBlockBody = () => {
     switch (block.blockType) {
       case "paragraph":
-        return renderRichEditable("is-paragraph");
+        return (
+          <>
+            {renderRichEditable("is-paragraph")}
+            {urlOffer && (
+              <div className="nb-url-offer" contentEditable={false}>
+                <button
+                  type="button"
+                  className="nb-url-offer-btn"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    const url = urlOffer;
+                    setUrlOffer(null);
+                    onMarkdownConvert(block.id, "bookmark", "", { url });
+                  }}
+                >
+                  <Link2 size={13} /> 转为书签卡片
+                </button>
+                <button
+                  type="button"
+                  className="nb-url-offer-dismiss"
+                  aria-label="保持为链接"
+                  title="保持为链接"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setUrlOffer(null)}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+          </>
+        );
 
       case "heading1":
         return renderRichEditable("nb-editor-heading1 nb-editor-h1");
@@ -1619,6 +1720,9 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
           </div>
         );
       }
+
+      case "file":
+        return <FileBlock block={block} onPropsChange={onPropsChange} />;
 
       case "embed": {
         const rawUrl = block.props.url || "";
