@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { Globe, Loader2, X } from "lucide-react";
 
 interface Props {
@@ -24,6 +25,9 @@ export const ClipperModal: React.FC<Props> = ({ open, initialUrl = "", onClose, 
     window.setTimeout(() => inputRef.current?.focus(), 30);
   }, [open, initialUrl]);
 
+  // 正在处理时按 Esc 不关闭
+  const dialogRef = useDialog(open, onClose, { closeOnEscape: !busy });
+
   if (!open) return null;
 
   const submit = async () => {
@@ -40,7 +44,13 @@ export const ClipperModal: React.FC<Props> = ({ open, initialUrl = "", onClose, 
 
   return (
     <div className="nb-modal-backdrop" onMouseDown={() => !busy && onClose()}>
-      <div className="nb-modal-card nb-clipper" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="剪藏网页"
+        tabIndex={-1}
+        className="nb-modal-card nb-clipper" onMouseDown={(e) => e.stopPropagation()}>
         <div className="nb-modal-header">
           <div className="nb-modal-title">
             <Globe size={17} />

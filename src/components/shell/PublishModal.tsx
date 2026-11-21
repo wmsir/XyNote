@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { Copy, ExternalLink, Globe, Loader2, X } from "lucide-react";
 import { publishedPageUrl, publishPageWeb, unpublishPageWeb } from "../../api/publish";
 import { openExternalUrl } from "../../api/sync";
@@ -26,6 +27,9 @@ export const PublishModal: React.FC<Props> = ({ open, pageId, pageTitle, onClose
     setConfirmUnpublish(false);
     publishedPageUrl(pageId).then(setUrl).catch(() => setUrl(null));
   }, [open, pageId]);
+
+  // 正在处理时按 Esc 不关闭
+  const dialogRef = useDialog(open && Boolean(pageId), onClose, { closeOnEscape: !busy });
 
   if (!open || !pageId) return null;
 
@@ -67,7 +71,13 @@ export const PublishModal: React.FC<Props> = ({ open, pageId, pageTitle, onClose
 
   return (
     <div className="nb-modal-backdrop" onMouseDown={() => !busy && onClose()}>
-      <div className="nb-modal-card nb-publish" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="发布为网页"
+        tabIndex={-1}
+        className="nb-modal-card nb-publish" onMouseDown={(e) => e.stopPropagation()}>
         <div className="nb-modal-header">
           <div className="nb-modal-title">
             <Globe size={17} />
