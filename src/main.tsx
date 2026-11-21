@@ -8,6 +8,10 @@ import { initUiLanguage } from "./i18n/domTranslator";
 import { markPlatformOnBody } from "./utils/platform";
 import { installWebviewGuards } from "./utils/webviewGuards";
 import { WindowControls } from "./components/shell/WindowControls";
+import { QuickCapture } from "./components/shell/QuickCapture";
+
+/** 全局快捷键唤出的快速记录小窗只渲染输入框 */
+const IS_QUICK_WINDOW = new URLSearchParams(window.location.search).get("quick") === "1";
 
 interface RootErrorBoundaryState {
   error: Error | null;
@@ -104,13 +108,14 @@ class RootErrorBoundary extends React.Component<
 
 markPlatformOnBody();
 installWebviewGuards();
+if (IS_QUICK_WINDOW) document.body.classList.add("is-quick-window");
 
 // 英文界面先加载词典再渲染，避免先闪出中文
 void initUiLanguage().finally(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <RootErrorBoundary>
-        <App />
+        {IS_QUICK_WINDOW ? <QuickCapture /> : <App />}
       </RootErrorBoundary>
     </React.StrictMode>
   );

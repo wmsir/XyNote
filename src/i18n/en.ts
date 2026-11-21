@@ -1915,7 +1915,31 @@ const EN: Record<string, string> = {
   "按标题分层，可导入 XMind 等思维导图工具": "Headings become an outline you can import into XMind and other mind-map tools",
   "更多导出与源码…": "More exports and source…",
   "未命名文档": "Untitled document",
-  "检查更新失败（{0}）": "Update check failed ({0})"
+  "检查更新失败（{0}）": "Update check failed ({0})",
+  "记到收件箱": "Save to Inbox",
+  "想到什么就写下来…  以 [] 开头会变成待办": "Jot it down…  start with [] to make a to-do",
+  "快速记录内容": "Quick note",
+  "已存入收件箱": "Saved to Inbox",
+  "快速记录与托盘": "Quick capture & tray",
+  "在任何程序里按下快捷键，弹出一个小输入框，写一句话回车就存进「收件箱」页面，不用切回小悦笔记。": "Press a shortcut in any app to open a small box; type a line and press Enter to save it to your Inbox page without switching back to XyNote.",
+  "快速记录和托盘只在桌面版里可用。": "Quick capture and the tray are only available in the desktop app.",
+  "全局快捷键": "Global shortcut",
+  "随时按下即可弹出快速记录": "Press it anytime to open quick capture",
+  "这个组合键没有注册成功，可能被其他程序占用了，换一个试试": "This shortcut couldn't be registered. Another app may be using it; try a different one.",
+  "已关闭": "Off",
+  "录制快捷键": "Record shortcut",
+  "请按下组合键…": "Press keys…",
+  "未设置": "Not set",
+  "恢复默认": "Reset",
+  "在系统托盘显示图标": "Show icon in system tray",
+  "当前桌面环境没有托盘，图标无法显示": "This desktop has no system tray, so the icon can't be shown",
+  "托盘菜单里可以快速记录、打开今天的每日笔记": "Use the tray menu for quick capture and today's daily note",
+  "关闭主窗口时留在托盘": "Keep running in tray when closed",
+  "点关闭只是隐藏窗口，快捷键继续可用；要彻底退出请用托盘菜单里的「退出小悦笔记」": "Closing just hides the window so the shortcut keeps working. To quit, use “Quit XyNote” in the tray menu.",
+  "快速记录快捷键已改为 {0}": "Quick capture shortcut changed to {0}",
+  "已关闭快速记录快捷键": "Quick capture shortcut turned off",
+  "收件箱": "Inbox",
+  "保存失败：": "Couldn't save: "
 };
 
 export default EN;

@@ -13,6 +13,7 @@ pub mod sync_config;
 pub mod license_format;
 pub mod license;
 pub mod versions;
+pub mod quick;
 pub mod export_formats;
 #[cfg(not(test))]
 pub mod commands;
@@ -96,6 +97,15 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(quick::QuickState::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    quick::on_main_close_requested(window, api);
+                }
+            }
+        })
         .setup(move |app| {
             let fallback_app_data_dir = app
                 .path()
@@ -161,6 +171,9 @@ pub fn run() {
 
             telemetry::spawn_background_ping(app.handle().clone());
 
+            // 全局快捷键（快速记录）和托盘
+            quick::init(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -176,6 +189,9 @@ pub fn run() {
             commands::duplicate_page,
             commands::upsert_block,
             commands::list_open_todos,
+            commands::quick_capture_get_config,
+            commands::quick_capture_set_config,
+            commands::quick_capture_hide,
             commands::save_page_blocks,
             commands::delete_block,
             commands::get_database,

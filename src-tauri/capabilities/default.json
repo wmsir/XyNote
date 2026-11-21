@@ -4,7 +4,8 @@
   "description": "Default capabilities for XyNote windows (main and extra windows opened with Ctrl+Shift+N)",
   "windows": [
     "main",
-    "win-*"
+    "win-*",
+    "quick"
   ],
   "permissions": [
     "core:default",
@@ -20,6 +21,9 @@
     "core:window:allow-set-theme",
     "core:window:allow-set-title",
     "core:window:allow-is-fullscreen",
-    "notification:default"
+    "notification:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
   ]
 }
