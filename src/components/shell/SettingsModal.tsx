@@ -70,6 +70,7 @@ import { SyncSettingsPanel } from "./SyncSettingsPanel";
 import { DonatePanel } from "./DonatePanel";
 import { FeedbackPanel } from "./FeedbackPanel";
 import { QuickCaptureSettingsPanel } from "./QuickCaptureSettingsPanel";
+import { AiSettingsPanel } from "./AiSettingsPanel";
 import { openExternalUrl, type SyncConfig } from "../../api/sync";
 import {
   getShellIntegrationStatus,
@@ -102,6 +103,7 @@ export type SettingsTabId =
   | "appearance"
   | "shortcuts"
   | "quick"
+  | "ai"
   | "editor"
   | "backup"
   | "about";
@@ -794,6 +796,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: "themes", label: "主题与样式插件", icon: <Sparkles size={15} /> },
     { id: "shortcuts", label: "快捷键配置", icon: <Keyboard size={15} /> },
     { id: "quick", label: "快速记录与托盘", icon: <Zap size={15} /> },
+    { id: "ai", label: "AI 写作助手", icon: <Sparkles size={15} /> },
     { id: "editor", label: "编辑器与排版模式", icon: <Sliders size={15} /> },
     { id: "appearance", label: "外观与排版", icon: <Palette size={15} /> },
     { id: "backup", label: "备份与数据安全", icon: <ShieldCheck size={15} /> },
@@ -2113,6 +2116,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
 
             {activeTab === "quick" && <QuickCaptureSettingsPanel onNotify={onNotify} />}
+
+            {activeTab === "ai" && <AiSettingsPanel onNotify={onNotify} />}
 
             {/* TAB 6: 关于软件 */}
             {activeTab === "about" && (

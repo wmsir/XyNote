@@ -2,6 +2,8 @@ import { LineNumberGutter } from "./LineNumberGutter";
 import { TodoDueChip } from "./TodoDue";
 import { FileBlock } from "./FileBlock";
 import { RefBlock } from "./RefBlock";
+import { OcrPanel } from "./OcrPanel";
+import { recognizeImageText } from "../../api/attachments";
 import { htmlToMarkdown, isStructuredHtml } from "../../utils/htmlToMarkdown";
 import React, {
   useCallback,
@@ -208,6 +210,7 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
   const [loadingBookmark, setLoadingBookmark] = useState(false);
   /** 刚粘贴进空段落的网址：提供「转为书签卡片」 */
   const [urlOffer, setUrlOffer] = useState<string | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const [faviconFailed, setFaviconFailed] = useState(false);
 
   // Embed block state
@@ -853,6 +856,18 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
                   }}
                 >
                   <Link2 size={13} /> 转为书签卡片
+                </button>
+                <button
+                  type="button"
+                  className="nb-url-offer-btn"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    const url = urlOffer;
+                    setUrlOffer(null);
+                    window.dispatchEvent(new CustomEvent("xynote:clip", { detail: url }));
+                  }}
+                >
+                  剪藏为新页面
                 </button>
                 <button
                   type="button"
@@ -1559,6 +1574,27 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
                     <button
                       type="button"
                       className="nb-editor-image-tool-btn"
+                      disabled={ocrBusy}
+                      title="识别图片里的文字，识别结果可以复制，也能被搜索到"
+                      onClick={() => {
+                        setOcrBusy(true);
+                        recognizeImageText(imageUrl)
+                          .then((text) => onPropsChange(block.id, { ...block.props, ocrText: text }))
+                          .catch((err) =>
+                            window.dispatchEvent(
+                              new CustomEvent("xynote:toast", {
+                                detail: err instanceof Error ? err.message : String(err),
+                              })
+                            )
+                          )
+                          .finally(() => setOcrBusy(false));
+                      }}
+                    >
+                      {ocrBusy ? "识别中…" : "识别文字"}
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-editor-image-tool-btn"
                       onClick={() => {
                         setDraftImageUrl(
                           imageUrl.startsWith("data:") ? "" : imageUrl
@@ -1570,6 +1606,25 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
                     </button>
                   </div>
                 </div>
+                {block.props.ocrText && (
+                  <OcrPanel
+                    text={block.props.ocrText}
+                    onInsertAsText={(text) =>
+                      onSmartMarkdownPaste(
+                        block.id,
+                        text
+                          .split("\n")
+                          .map((l) => l.replace(/^([#>*+-]|\d+\.)\s/, "\\$1 "))
+                          .join("\n\n")
+                      )
+                    }
+                    onClear={() => {
+                      const next = { ...block.props };
+                      delete next.ocrText;
+                      onPropsChange(block.id, next);
+                    }}
+                  />
+                )}
                 <input
                   type="text"
                   className="nb-editor-media-caption"

@@ -17,6 +17,7 @@ mod oneid;
 mod store;
 mod licensing;
 mod feedback;
+mod publish;
 mod marketplace;
 mod telemetry;
 #[path = "../../src-tauri/src/license_format.rs"]

@@ -22,6 +22,7 @@ import {
   isFreshWindow,
   onExternalOpenFiles,
   openNewWindow,
+  isMainWindow,
   saveExportImages,
   takePendingOpenFiles,
 } from "./api/desktop";
@@ -32,7 +33,14 @@ import type { ExportFormat } from "./components/shell/Topbar";
 import { FreshStart } from "./components/shell/FreshStart";
 import { TodoCenter } from "./components/shell/TodoCenter";
 import { PageLockGuard } from "./components/shell/PageLockGuard";
-import { attachPaths, cleanError } from "./api/attachments";
+import { attachPaths, cleanError, downloadImageAsset, fetchWebPage } from "./api/attachments";
+import { ClipperModal } from "./components/shell/ClipperModal";
+import { PublishModal } from "./components/shell/PublishModal";
+import { ackServerInbox, pullServerInbox } from "./api/publish";
+import { appendToInbox } from "./api/quick";
+import { extractArticle } from "./utils/readability";
+import { htmlToMarkdown } from "./utils/htmlToMarkdown";
+import { CalendarDays as CalendarDaysIcon, Globe as GlobeIcon, ListTodo as ListTodoIcon } from "lucide-react";
 import { useDailyAndTodos } from "./hooks/useDailyAndTodos";
 import { useWritingStats } from "./hooks/useWritingStats";
 import { savePageAsTemplate } from "./api/templates";
@@ -625,6 +633,35 @@ export const App: React.FC = () => {
   const productivityRef = useRef(productivity);
   productivityRef.current = productivity;
 
+  const paletteExtraActions = useMemo(
+    () => [
+      {
+        id: "act-daily",
+        label: "打开今天的每日笔记",
+        sublabel: "按日期自动建好今天这一页 (Ctrl+Shift+D)",
+        icon: <CalendarDaysIcon size={16} />,
+        run: () => {
+          productivityRef.current.openDailyNote().catch(() => {});
+        },
+      },
+      {
+        id: "act-todos",
+        label: "打开待办汇总",
+        sublabel: "所有页面里没做完的待办 (Ctrl+Shift+T)",
+        icon: <ListTodoIcon size={16} />,
+        run: () => productivityRef.current.openTodoCenter(),
+      },
+      {
+        id: "act-clip",
+        label: "剪藏网页…",
+        sublabel: "输入网址，提取正文存成新页面",
+        icon: <GlobeIcon size={16} />,
+        run: () => setClipper({ open: true, url: "" }),
+      },
+    ],
+    []
+  );
+
   /** 同步下载了远端变更：刷新列表；当前页在别处被改过或被删除时重新载入 */
   const handleRemoteSyncChanges = useCallback(async () => {
     const { activeList } = await refreshSidebarLists();
@@ -1007,6 +1044,102 @@ export const App: React.FC = () => {
       showToast(formatBatchImportSummary(res), 4200);
     },
     [loadPageDetailById, refreshSidebarLists, showToast]
+  );
+
+  // 发布为网页
+  const [publishOpen, setPublishOpen] = useState(false);
+
+  // 手机随手记：使用小悦同步服务器时，定时把手机上记的内容放进收件箱（只在主窗口里做）
+  const inboxPullingRef = useRef(false);
+  const pullPhoneInbox = useCallback(async () => {
+    if (inboxPullingRef.current || !isTauriRuntime() || !isMainWindow()) return;
+    inboxPullingRef.current = true;
+    try {
+      const items = await pullServerInbox();
+      if (items.length === 0) return;
+      for (const it of items) {
+        await appendToInbox(it.text);
+      }
+      await ackServerInbox(items.map((i) => i.id));
+      await handleRemoteSyncChanges();
+      showToast(`手机上记的 ${items.length} 条内容已放进「收件箱」`, 4000);
+    } catch {
+      /* 网络不通时下次再试 */
+    } finally {
+      inboxPullingRef.current = false;
+    }
+  }, [handleRemoteSyncChanges, showToast]);
+  useEffect(() => {
+    const first = window.setTimeout(() => void pullPhoneInbox(), 8000);
+    const timer = window.setInterval(() => void pullPhoneInbox(), 5 * 60 * 1000);
+    let lastFocus = 0;
+    const onFocus = () => {
+      if (Date.now() - lastFocus < 60_000) return;
+      lastFocus = Date.now();
+      void pullPhoneInbox();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [pullPhoneInbox]);
+
+  // 网页剪藏
+  const [clipper, setClipper] = useState<{ open: boolean; url: string }>({ open: false, url: "" });
+  useEffect(() => {
+    const onClipEvt = (e: Event) => {
+      const url = (e as CustomEvent<string>).detail || "";
+      setClipper({ open: true, url });
+    };
+    window.addEventListener("xynote:clip", onClipEvt);
+    return () => window.removeEventListener("xynote:clip", onClipEvt);
+  }, []);
+
+  /** 剪藏的页面里的网页图片：后台下载到本地 */
+  const localizePageImages = useCallback(async (pageId: string) => {
+    const d = await getPageDetail(pageId);
+    let changed = 0;
+    for (const b of d.blocks.filter((x) => x.blockType === "image" && /^https?:\/\//i.test(x.props.url || "")).slice(0, 40)) {
+      try {
+        const dataUrl = await downloadImageAsset(b.props.url!);
+        if (!dataUrl) continue;
+        await upsertBlock({ ...b, props: { ...b.props, url: dataUrl } });
+        changed += 1;
+      } catch {
+        /* 下载失败保留原链接 */
+      }
+    }
+    if (changed > 0 && detailRef.current?.page.id === pageId) {
+      await loadPageDetailById(pageId, null);
+    }
+  }, [loadPageDetailById]);
+
+  const handleClipWebPage = useCallback(
+    async (url: string): Promise<string | null> => {
+      try {
+        const page = await fetchWebPage(url);
+        const article = extractArticle(page.html, page.url);
+        const body = htmlToMarkdown(article.html);
+        if (!body.trim()) return "没有找到正文，可能需要登录或是动态加载的网页";
+        const today = new Date();
+        const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const source = `> 来源：[${(article.siteName || page.url).replace(/[[\]]/g, "")}](${page.url})${
+          article.byline ? ` · ${article.byline}` : ""
+        } · 剪藏于 ${stamp}`;
+        await flushPendingBlockSave();
+        const created = await importMarkdownPage(article.title.slice(0, 200), `${source}\n\n${body}`, null);
+        await refreshSidebarLists();
+        await loadPageDetailById(created.id, null);
+        showToast("已剪藏为新页面，图片正在后台下载到本地");
+        localizePageImages(created.id).catch(() => {});
+        return null;
+      } catch (err) {
+        return cleanError(err);
+      }
+    },
+    [flushPendingBlockSave, loadPageDetailById, localizePageImages, refreshSidebarLists, showToast]
   );
 
   // 块引用里点「来自…」跳到原文
@@ -2659,6 +2792,7 @@ export const App: React.FC = () => {
         <Topbar
           pageLocked={!!detail && lockedPages.has(detail.page.id)}
           onToggleLock={detail ? () => toggleLockPage(detail.page.id) : undefined}
+          onOpenPublish={detail && detail.page.pageType === "doc" ? () => setPublishOpen(true) : undefined}
           page={detail?.page ?? null}
           activeLocalMd={activeLocalMd}
           textFile={activeTextFile}
@@ -3139,6 +3273,7 @@ export const App: React.FC = () => {
 
       {/* Modals */}
       <CommandPalette
+        extraActions={paletteExtraActions}
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         folderRoots={workspaceFolders.map((f) => [f.path, f.name] as [string, string])}
@@ -3253,6 +3388,25 @@ export const App: React.FC = () => {
           onSaveCopy={() => void resolveConflict("copy")}
         />
       )}
+
+      <PublishModal
+        open={publishOpen}
+        pageId={detail?.page.id ?? null}
+        pageTitle={detail?.page.title || "无标题"}
+        onClose={() => setPublishOpen(false)}
+        onOpenSyncSettings={() => {
+          setPublishOpen(false);
+          handleOpenSettingsAtTab("sync");
+        }}
+        onNotify={(m) => showToast(m)}
+      />
+
+      <ClipperModal
+        open={clipper.open}
+        initialUrl={clipper.url}
+        onClose={() => setClipper({ open: false, url: "" })}
+        onClip={handleClipWebPage}
+      />
 
       <TodoCenter
         open={productivity.todoOpen}

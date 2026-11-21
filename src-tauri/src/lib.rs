@@ -15,6 +15,8 @@ pub mod license;
 pub mod versions;
 pub mod quick;
 pub mod attachments;
+pub mod ocr;
+pub mod ai;
 pub mod export_formats;
 #[cfg(not(test))]
 pub mod commands;
@@ -198,6 +200,14 @@ pub fn run() {
             commands::open_attachment,
             commands::reveal_attachment,
             commands::download_image_asset,
+            commands::ocr_image,
+            commands::fetch_web_page,
+            commands::ai_complete,
+            commands::publish_page_web,
+            commands::unpublish_page_web,
+            commands::published_page_url,
+            commands::server_inbox_pull,
+            commands::server_inbox_ack,
             commands::save_page_blocks,
             commands::delete_block,
             commands::get_database,

@@ -63,6 +63,8 @@ export interface BlockProps {
   fileName?: string;
   fileSize?: number;
   mimeType?: string;
+  /** 图片里识别出的文字（参与搜索） */
+  ocrText?: string;
   /** 块引用：被引用块所在页面和块 */
   refPageId?: string;
   refBlockId?: string;

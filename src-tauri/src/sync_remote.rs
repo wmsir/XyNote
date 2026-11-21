@@ -371,6 +371,64 @@ impl ServerRemote {
         serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.base
+    }
+
+    fn json_call(&self, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, AppError> {
+        let url = format!("{}{}", self.base, path);
+        let payload = body.map(|b| b.to_string());
+        let res = crate::security::send_signed_ureq(
+            &self.agent,
+            method,
+            &url,
+            Some(&self.bearer()),
+            payload.as_ref().map(|_| "application/json"),
+            payload.as_ref().map(|p| p.as_bytes()),
+        );
+        let resp = server_error(res, false)?.expect("non-404");
+        serde_json::from_slice(&read_body(resp)?).map_err(|_| AppError::Validation("服务器返回的数据无法识别".into()))
+    }
+
+    /// 发布或更新网页，返回 (slug, 完整网址)
+    pub fn publish(&self, slug: Option<&str>, title: &str, html: &str) -> Result<(String, String), AppError> {
+        let v = self.json_call(
+            "POST",
+            "/api/v1/publish",
+            Some(serde_json::json!({ "slug": slug, "title": title, "html": html })),
+        )
+        .map_err(|e| match e {
+            AppError::Validation(m) if m.contains("404") => {
+                AppError::Validation("同步服务器版本太旧，不支持发布网页，请先升级服务器".into())
+            }
+            other => other,
+        })?;
+        let slug = v["slug"].as_str().unwrap_or_default().to_string();
+        let path = v["path"].as_str().unwrap_or_default().to_string();
+        Ok((slug, format!("{}{}", self.base, path)))
+    }
+
+    pub fn unpublish(&self, slug: &str) -> Result<(), AppError> {
+        self.json_call("DELETE", &format!("/api/v1/publish/{}", encode_path(slug)), None).map(|_| ())
+    }
+
+    /// 手机随手记里还没同步到电脑的内容
+    pub fn inbox_list(&self) -> Result<Vec<(i64, String)>, AppError> {
+        let v = self.json_call("GET", "/api/v1/inbox", None)?;
+        Ok(v["items"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| Some((it["id"].as_i64()?, it["text"].as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    pub fn inbox_delete(&self, id: i64) -> Result<(), AppError> {
+        self.json_call("DELETE", &format!("/api/v1/inbox/{}", id), None).map(|_| ())
+    }
+
     /// 兑换激活码（在官网购买），返回兑换后的账号信息
     pub fn redeem(&self, code: &str) -> Result<AccountInfo, AppError> {
         let url = format!("{}{}", self.base, crate::obf!("/api/v1/redeem"));

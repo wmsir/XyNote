@@ -49,3 +49,20 @@ export function formatFileSize(bytes: number | undefined): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
+
+/** 识别图片里的文字（系统自带 OCR，离线） */
+export async function recognizeImageText(src: string): Promise<string> {
+  if (!isTauriRuntime()) throw new Error("文字识别只在桌面版里可用");
+  return invoke<string>("ocr_image", { src });
+}
+
+export interface WebPage {
+  url: string;
+  html: string;
+}
+
+/** 网页剪藏：抓取网页 HTML（桌面版由后端抓取，避开跨域限制） */
+export async function fetchWebPage(url: string): Promise<WebPage> {
+  if (!isTauriRuntime()) throw new Error("网页剪藏只在桌面版里可用");
+  return invoke<WebPage>("fetch_web_page", { url });
+}
