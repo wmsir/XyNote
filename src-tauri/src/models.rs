@@ -101,6 +101,21 @@ pub struct BlockProps {
     pub word_wrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub col_alignments: Option<Vec<String>>,
+    /// 待办的截止 / 提醒时间（本地时间 `YYYY-MM-DDTHH:mm`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<String>,
+}
+
+/// 「待办汇总」里的一条未完成待办
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    pub block_id: String,
+    pub page_id: String,
+    pub page_title: String,
+    pub page_icon: String,
+    pub text: String,
+    pub due_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

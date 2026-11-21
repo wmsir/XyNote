@@ -15,7 +15,7 @@ import { PageIcon } from "../../icons/pageIcon";
 import { IconPicker } from "./IconPicker";
 import type { CreatePageInput, PageType } from "../../types/notion";
 
-interface TemplateDefinition {
+export interface TemplateDefinition {
   id: string;
   title: string;
   icon: string;
@@ -25,7 +25,7 @@ interface TemplateDefinition {
   bullets: string[];
 }
 
-const TEMPLATES: TemplateDefinition[] = [
+export const TEMPLATES: TemplateDefinition[] = [
   {
     id: "meeting-notes",
     title: "团队周会纪要",

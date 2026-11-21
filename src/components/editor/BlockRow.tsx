@@ -1,4 +1,5 @@
 import { LineNumberGutter } from "./LineNumberGutter";
+import { TodoDueChip } from "./TodoDue";
 import React, {
   useCallback,
   useEffect,
@@ -781,6 +782,16 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
               {checked && <Check size={11} strokeWidth={3} />}
             </button>
             {renderRichEditable()}
+            <TodoDueChip
+              dueAt={block.props.dueAt}
+              checked={checked}
+              onChange={(dueAt) => {
+                const next = { ...block.props };
+                if (dueAt) next.dueAt = dueAt;
+                else delete next.dueAt;
+                onPropsChange(block.id, next);
+              }}
+            />
           </div>
         );
       }

@@ -95,6 +95,7 @@ pub fn run() {
     let mut cli_files_opt = Some(cli_files);
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let fallback_app_data_dir = app
                 .path()
@@ -174,6 +175,7 @@ pub fn run() {
             commands::empty_trash,
             commands::duplicate_page,
             commands::upsert_block,
+            commands::list_open_todos,
             commands::save_page_blocks,
             commands::delete_block,
             commands::get_database,
