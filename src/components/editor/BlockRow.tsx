@@ -1,6 +1,7 @@
 import { LineNumberGutter } from "./LineNumberGutter";
 import { TodoDueChip } from "./TodoDue";
 import { FileBlock } from "./FileBlock";
+import { RefBlock } from "./RefBlock";
 import { htmlToMarkdown, isStructuredHtml } from "../../utils/htmlToMarkdown";
 import React, {
   useCallback,
@@ -639,6 +640,18 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
     }
 
     if (!plain) return;
+
+    // 1c'. 粘贴了「复制块引用」得到的链接：空段落直接变成块引用
+    const refLink = /^xynote:\/\/block\/([^/\s]+)\/([^/\s]+)$/.exec(plain.trim());
+    if (refLink) {
+      e.preventDefault();
+      if (block.blockType === "paragraph" && isHtmlVisuallyEmpty(el.innerHTML)) {
+        onMarkdownConvert(block.id, "ref", "", { refPageId: refLink[1], refBlockId: refLink[2] });
+      } else {
+        onSmartMarkdownPaste(block.id, `[↪ 块引用](${plain.trim()})`);
+      }
+      return;
+    }
 
     // 1d. 只粘贴了一个网址：插入链接；空段落里再给一个「转为书签卡片」的选项
     const urlOnly = plain.trim();
@@ -1723,6 +1736,9 @@ const BlockRowInner: React.FC<BlockRowProps> = ({
 
       case "file":
         return <FileBlock block={block} onPropsChange={onPropsChange} />;
+
+      case "ref":
+        return <RefBlock block={block} pages={pages} />;
 
       case "embed": {
         const rawUrl = block.props.url || "";

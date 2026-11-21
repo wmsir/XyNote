@@ -5,6 +5,8 @@ import {
   BookOpen,
   Columns2,
   Copy,
+  Lock,
+  LockOpen,
   Download,
   Eye,
   FileCode2,
@@ -83,6 +85,9 @@ export interface TopbarProps {
   onImportLocalMdToWorkspace: () => void;
   onDuplicatePage: () => void;
   onExportMarkdown: () => void;
+  /** 当前页面是否锁定（防误改） */
+  pageLocked?: boolean;
+  onToggleLock?: () => void;
   /** 导出：html / pdf / docx */
   onExportAs?: (format: ExportFormat) => void;
   /** 在新窗口中打开当前页面 */
@@ -131,6 +136,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   onSaveAsMarkdown,
   onImportLocalMdToWorkspace,
   onDuplicatePage,
+  pageLocked = false,
+  onToggleLock,
   onExportMarkdown,
   onExportAs,
   onOpenInNewWindow,
@@ -565,6 +572,22 @@ export const Topbar: React.FC<TopbarProps> = ({
                         <Copy size={14} /> 复制页面副本
                       </span>
                     </button>
+
+                    {onToggleLock && (
+                      <button
+                        type="button"
+                        className="nb-menu-item"
+                        onClick={() => {
+                          onToggleLock();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span className="nb-menu-item-left">
+                          {pageLocked ? <LockOpen size={14} /> : <Lock size={14} />}
+                          {pageLocked ? "解锁页面" : "锁定页面（防误改）"}
+                        </span>
+                      </button>
+                    )}
 
                     <button
                       type="button"

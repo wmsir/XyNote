@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { WritingStatsPanel } from "./WritingStatsPanel";
 import {
   AlignCenter,
   Columns2,
@@ -43,6 +44,13 @@ export interface StatusBarProps {
   onCycleViewMode: () => void;
   sync?: StatusBarSync | null;
   onOpenSyncSettings?: () => void;
+  /** 写作统计与字数目标 */
+  writing?: {
+    goal: number | null;
+    daily: Record<string, number>;
+    canSetGoal: boolean;
+    onSetGoal: (goal: number | null) => void;
+  };
 }
 
 const VIEW_MODE_LABELS: Record<EditorViewMode, string> = {
@@ -76,7 +84,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   onToggleTypewriterMode,
   onToggleOutline,
   onCycleViewMode,
+  writing,
 }) => {
+  const [statsOpen, setStatsOpen] = useState(false);
   const viewMode: EditorViewMode = editorPrefs.viewMode ?? "wysiwyg";
 
   const storageLabel = storageInfo
@@ -202,9 +212,39 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
             <span className="nb-statusbar-sep">·</span>
 
-            <span className="nb-statusbar-stats" title={`共 ${stats.lines} 行 · ${stats.blockCount} 个内容块`}>
-              字数 {stats.words} · 字符 {stats.chars} · 约{" "}
-              {Math.max(1, stats.readingMinutes || 1)} 分钟阅读
+            <span className="nb-statusbar-stats-wrap">
+              <button
+                type="button"
+                className="nb-statusbar-stats is-clickable"
+                title={`共 ${stats.lines} 行 · ${stats.blockCount} 个内容块（点击查看写作统计、设字数目标）`}
+                onClick={() => setStatsOpen((v) => !v)}
+                aria-expanded={statsOpen}
+              >
+                {writing?.goal ? (
+                  <>
+                    <span className="nb-statusbar-goal" aria-hidden="true">
+                      <span
+                        style={{ width: `${Math.min(100, (stats.words / writing.goal) * 100)}%` }}
+                        className={stats.words >= writing.goal ? "is-done" : ""}
+                      />
+                    </span>
+                    <span data-i18n-skip="">{`${stats.words} / ${writing.goal}`}</span>
+                    <span>{`字 · 约 ${Math.max(1, stats.readingMinutes || 1)} 分钟阅读`}</span>
+                  </>
+                ) : (
+                  <span>{`字数 ${stats.words} · 字符 ${stats.chars} · 约 ${Math.max(1, stats.readingMinutes || 1)} 分钟阅读`}</span>
+                )}
+              </button>
+              {statsOpen && writing && (
+                <WritingStatsPanel
+                  words={stats.words}
+                  goal={writing.goal}
+                  daily={writing.daily}
+                  canSetGoal={writing.canSetGoal}
+                  onSetGoal={writing.onSetGoal}
+                  onClose={() => setStatsOpen(false)}
+                />
+              )}
             </span>
           </>
         )}

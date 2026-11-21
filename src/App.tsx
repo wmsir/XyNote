@@ -31,8 +31,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExportFormat } from "./components/shell/Topbar";
 import { FreshStart } from "./components/shell/FreshStart";
 import { TodoCenter } from "./components/shell/TodoCenter";
+import { PageLockGuard } from "./components/shell/PageLockGuard";
 import { attachPaths, cleanError } from "./api/attachments";
 import { useDailyAndTodos } from "./hooks/useDailyAndTodos";
+import { useWritingStats } from "./hooks/useWritingStats";
 import { savePageAsTemplate } from "./api/templates";
 import {
   convertMarkdownBlocks,
@@ -584,6 +586,42 @@ export const App: React.FC = () => {
     flushPendingBlockSave,
     showToast,
   });
+  const writingKey = activeLocalMd
+    ? `local:${activeLocalMd.filePath}`
+    : detail && detail.page.pageType === "doc"
+    ? detail.page.id
+    : null;
+  const writing = useWritingStats(writingKey, docStats.words);
+
+  // 锁定的页面（防误改），记在设置里
+  const [lockedPages, setLockedPages] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        try {
+          const v = JSON.parse(s.lockedPages || "[]");
+          if (Array.isArray(v)) setLockedPages(new Set(v.filter((x) => typeof x === "string")));
+        } catch {
+          /* ignore */
+        }
+      })
+      .catch(() => {});
+  }, []);
+  const toggleLockPage = useCallback(
+    (pageId: string) => {
+      setLockedPages((prev) => {
+        const next = new Set(prev);
+        const nowLocked = !next.has(pageId);
+        if (nowLocked) next.add(pageId);
+        else next.delete(pageId);
+        setSetting("lockedPages", JSON.stringify([...next])).catch(() => {});
+        showToast(nowLocked ? "已锁定此页，防止误改" : "已解锁，可以编辑了");
+        return next;
+      });
+    },
+    [showToast]
+  );
+
   const productivityRef = useRef(productivity);
   productivityRef.current = productivity;
 
@@ -970,6 +1008,16 @@ export const App: React.FC = () => {
     },
     [loadPageDetailById, refreshSidebarLists, showToast]
   );
+
+  // 块引用里点「来自…」跳到原文
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ pageId: string; blockId: string | null }>).detail;
+      if (d?.pageId) loadPageDetailById(d.pageId, d.blockId ?? null).catch(() => showToast("找不到原文所在页面"));
+    };
+    window.addEventListener("xynote:open-page", onOpen);
+    return () => window.removeEventListener("xynote:open-page", onOpen);
+  }, [loadPageDetailById, showToast]);
 
   // 编辑器里发出的提示（附件失败等）
   useEffect(() => {
@@ -2609,6 +2657,8 @@ export const App: React.FC = () => {
 
       <main className="nb-main-area">
         <Topbar
+          pageLocked={!!detail && lockedPages.has(detail.page.id)}
+          onToggleLock={detail ? () => toggleLockPage(detail.page.id) : undefined}
           page={detail?.page ?? null}
           activeLocalMd={activeLocalMd}
           textFile={activeTextFile}
@@ -2807,7 +2857,10 @@ export const App: React.FC = () => {
               />
             </div>
           ) : detail ? (
-            <>
+            <PageLockGuard
+              locked={lockedPages.has(detail.page.id)}
+              onUnlock={() => toggleLockPage(detail.page.id)}
+            >
               <PageHeader
                 page={detail.page}
                 fontClass={fontClass}
@@ -2876,7 +2929,7 @@ export const App: React.FC = () => {
                   }}
                 />
               </div>
-            </>
+            </PageLockGuard>
           ) : freshWindowRef.current ? (
             <FreshStart
               onCreateDoc={async (title) => {
@@ -3030,6 +3083,14 @@ export const App: React.FC = () => {
                 : null
             }
             onOpenSyncSettings={() => handleOpenSettingsAtTab("sync")}
+            writing={{
+              goal: writing.goal,
+              daily: writing.daily,
+              canSetGoal: !!writingKey,
+              onSetGoal: (g) => {
+                if (writingKey) writing.setGoal(writingKey, g);
+              },
+            }}
             onRevealActiveLocalMd={(fp) => {
               if (isTauriRuntime()) {
                 openPathInExplorer(fp).catch(() => {});

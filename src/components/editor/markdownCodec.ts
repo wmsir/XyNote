@@ -639,6 +639,10 @@ export function blocksToMarkdown(blocks: Block[], pages: Page[]): string {
         serialized = `[🔖 ${title}](${url})`;
         break;
       }
+      case "ref": {
+        serialized = `[↪ 块引用](xynote://block/${blk.props.refPageId || ""}/${blk.props.refBlockId || ""})`;
+        break;
+      }
       case "file": {
         const name = (blk.props.fileName || "附件").replace(/[[\]]/g, "");
         const path = (blk.props.filePath || "").replace(/ /g, "%20");
@@ -1017,6 +1021,14 @@ export function markdownToBlocks(
         bookmarkTitle: bookmarkMatch[1].trim() || url,
         bookmarkSite: site,
       });
+      i += 1;
+      continue;
+    }
+
+    // 13a. 块引用 (`[↪ 块引用](xynote://block/页面/块)`)
+    const refMatch = /^\[↪[^\]]*\]\(xynote:\/\/block\/([^/\s)]+)\/([^/\s)]+)\)$/.exec(trimmed);
+    if (refMatch) {
+      pushBlock("ref", "", { refPageId: refMatch[1], refBlockId: refMatch[2] });
       i += 1;
       continue;
     }
