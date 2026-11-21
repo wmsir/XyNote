@@ -132,7 +132,7 @@ export interface BlockRowProps {
   onDragEndBlock: () => void;
 }
 
-export const BlockRow: React.FC<BlockRowProps> = ({
+const BlockRowInner: React.FC<BlockRowProps> = ({
   block,
   pages,
   isOnlyBlock,
@@ -2150,3 +2150,7 @@ export const BlockRow: React.FC<BlockRowProps> = ({
     </div>
   );
 };
+
+// 只有自己的属性变化时才重新渲染：长文档里输入一个字只更新正在编辑的那一行
+export const BlockRow = React.memo(BlockRowInner);
+BlockRow.displayName = "BlockRow";

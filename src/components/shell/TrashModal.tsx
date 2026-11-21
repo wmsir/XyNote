@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { Page } from "../../types/notion";
 
@@ -28,6 +29,11 @@ export const TrashModal: React.FC<TrashModalProps> = ({
     return trashedPages.filter((p) => p.title.toLowerCase().includes(q));
   }, [filter, trashedPages]);
 
+  const dialogRef = useDialog(open, () => {
+    setConfirmEmpty(false);
+    onClose();
+  });
+
   if (!open) return null;
 
   return (
@@ -39,6 +45,11 @@ export const TrashModal: React.FC<TrashModalProps> = ({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="回收站"
+        tabIndex={-1}
         className="nb-modal-card"
         onMouseDown={(e) => e.stopPropagation()}
       >

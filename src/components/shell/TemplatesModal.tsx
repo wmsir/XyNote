@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { Download, FilePlus2, RefreshCw, Sparkles, Trash2, Upload, X } from "lucide-react";
 import {
   deleteCustomTemplate,
@@ -192,6 +193,8 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [custom?.id]);
 
+  const dialogRef = useDialog(open, onClose);
+
   if (!open) return null;
 
   const builtin = TEMPLATES.find((t) => selection.kind === "builtin" && t.id === selection.id) ?? (custom ? null : TEMPLATES[0]);
@@ -281,7 +284,12 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
 
   return (
     <div className="nb-modal-backdrop" onMouseDown={onClose}>
-      <div className="nb-modal-card is-wide" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="模板中心"
+        tabIndex={-1} className="nb-modal-card is-wide" onMouseDown={(e) => e.stopPropagation()}>
         <input ref={importRef} type="file" accept=".json,application/json" hidden onChange={onImportPicked} />
         <div className="nb-modal-header">
           <div className="nb-modal-title">

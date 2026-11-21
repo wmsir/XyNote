@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useDialog } from "../../hooks/useDialog";
 import { iconAsText } from "../../icons/pageIcon";
 import {
   Archive,
@@ -95,6 +96,8 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
+  // 正在导入时按 Esc 不关闭，避免以为取消了实际还在后台写入
+  const dialogRef = useDialog(Boolean(mode), onClose, { closeOnEscape: !submitting });
 
   // Tab B: Batch .md / folder state
   const [pendingEntries, setPendingEntries] = useState<MarkdownTreeEntry[]>([]);
@@ -375,6 +378,11 @@ export const MarkdownModal: React.FC<MarkdownModalProps> = ({
   return (
     <div className="nb-modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="导入与导出"
+        tabIndex={-1}
         className="nb-modal-card is-wide"
         style={{ maxWidth: "700px" }}
         onMouseDown={(e) => e.stopPropagation()}

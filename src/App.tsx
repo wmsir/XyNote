@@ -365,6 +365,18 @@ export const App: React.FC = () => {
     }
   }, [effectiveTheme]);
 
+  // 窗口标题跟随当前打开的页面或文件：任务栏、Alt+Tab 里能分清多个窗口
+  const windowDocName = activeTextFile?.fileName
+    ?? activeLocalMd?.fileName
+    ?? (detail ? detail.page.title || "无标题" : null);
+  useEffect(() => {
+    const title = windowDocName ? `${windowDocName} - 小悦 (XyNote)` : "小悦 (XyNote)";
+    if (document.title !== title) document.title = title;
+    if (isTauriRuntime()) {
+      getCurrentWindow().setTitle(title).catch(() => {});
+    }
+  }, [windowDocName]);
+
   // Inject custom ThemeTokens & active CSS Snippet Plugins into <head>
   useEffect(() => {
     applyRuntimeStylePluginsToDom(stylePluginState, themePreviewOverride);

@@ -1,5 +1,5 @@
 import { LineNumberGutter } from "./LineNumberGutter";
-import React, { useLayoutEffect, useMemo, useRef } from "react";
+import React, { useDeferredValue, useLayoutEffect, useMemo, useRef } from "react";
 import katex from "katex";
 import {
   Check,
@@ -389,6 +389,36 @@ function renderLivePreviewBlock(
   }
 }
 
+function samePreviewBlock(a: Block, b: Block): boolean {
+  if (a === b) return true;
+  if (a.id !== b.id || a.blockType !== b.blockType || a.content !== b.content) return false;
+  if (a.props === b.props) return true;
+  try {
+    return JSON.stringify(a.props) === JSON.stringify(b.props);
+  } catch {
+    return false;
+  }
+}
+
+interface LivePreviewBlockProps {
+  blk: Block;
+  numberedIdx: number;
+  pages: Page[];
+  onToggleTodo?: (blockId: string) => void;
+}
+
+/** 预览里的一块；内容没变就不重新渲染（长文档分屏输入时只重绘改动的那几块） */
+const LivePreviewBlock = React.memo(
+  function LivePreviewBlock({ blk, numberedIdx, pages, onToggleTodo }: LivePreviewBlockProps) {
+    return <>{renderLivePreviewBlock(blk, numberedIdx, pages, onToggleTodo)}</>;
+  },
+  (a, b) =>
+    a.numberedIdx === b.numberedIdx &&
+    a.pages === b.pages &&
+    a.onToggleTodo === b.onToggleTodo &&
+    samePreviewBlock(a.blk, b.blk)
+);
+
 export const SourceEditor: React.FC<SourceEditorProps> = ({
   mode,
   markdown,
@@ -400,6 +430,8 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
   onNavigatePage,
   onToggleViewMode,
 }) => {
+  // 预览低优先级渲染：输入先更新源码框和行号，长文档预览随后跟上，打字不卡
+  const deferredPreviewBlocks = useDeferredValue(previewBlocks);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
@@ -573,7 +605,7 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
   // Compute consecutive numbered list index for Split Preview
   const previewNumberedIndices = useMemo(() => {
     let c = 0;
-    return previewBlocks.map((b) => {
+    return deferredPreviewBlocks.map((b) => {
       if (b.blockType === "numbered") {
         c += 1;
         return c;
@@ -581,7 +613,7 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
       c = 0;
       return 0;
     });
-  }, [previewBlocks]);
+  }, [deferredPreviewBlocks]);
 
   const sourceHintParts = useMemo(() => {
     const kb = preferences?.keybindings;
@@ -687,14 +719,15 @@ export const SourceEditor: React.FC<SourceEditorProps> = ({
         </div>
 
         <div className="nb-editor-preview-scroll nb-editor-canvas">
-          {previewBlocks.map((blk, i) =>
-            renderLivePreviewBlock(
-              blk,
-              previewNumberedIndices[i],
-              pages,
-              onToggleTodoInPreview
-            )
-          )}
+          {deferredPreviewBlocks.map((blk, i) => (
+            <LivePreviewBlock
+              key={blk.id}
+              blk={blk}
+              numberedIdx={previewNumberedIndices[i]}
+              pages={pages}
+              onToggleTodo={onToggleTodoInPreview}
+            />
+          ))}
         </div>
       </div>
     </div>

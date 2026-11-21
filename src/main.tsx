@@ -6,6 +6,7 @@ import App from "./App";
 import "./styles/global.css";
 import { initUiLanguage } from "./i18n/domTranslator";
 import { markPlatformOnBody } from "./utils/platform";
+import { installWebviewGuards } from "./utils/webviewGuards";
 import { WindowControls } from "./components/shell/WindowControls";
 
 interface RootErrorBoundaryState {
@@ -102,6 +103,7 @@ class RootErrorBoundary extends React.Component<
 }
 
 markPlatformOnBody();
+installWebviewGuards();
 
 // 英文界面先加载词典再渲染，避免先闪出中文
 void initUiLanguage().finally(() => {
